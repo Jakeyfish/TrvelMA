@@ -47,12 +47,12 @@ struct TripCollectionView: View {
             .padding(.bottom, 30)
         } header: {
             VStack(alignment: .leading, spacing: 0) {
-                Text(tripCollection.name)
+                Text(LocalizedStringKey(tripCollection.name))
                     .font(.title3)
                     .fontWidth(.expanded)
 
                 if let summary = tripCollection.summary {
-                    Text(summary)
+                    Text(LocalizedStringKey(summary))
                         .font(.subheadline)
                         .foregroundColor(.secondary)
                 }
@@ -82,13 +82,16 @@ struct TripCard: View {
                 .clipShape(.rect(cornerRadius: 16))
                 .overlay(alignment: .bottomLeading) {
                     if !trip.activities.isEmpty {
-                        Text("^[\(trip.activities.count) ACTIVITIES](inflect: true)")
-                            .font(.footnote)
-                            .fontWidth(.condensed)
-                            .foregroundStyle(.secondary)
-                            .padding(4)
-                            .background(.regularMaterial, in: .rect(cornerRadius: 8))
-                            .padding([.leading, .bottom], 8)
+                        HStack(spacing: 3) {
+                            Text("\(trip.activities.count)")
+                            Text("项活动")
+                        }
+                        .font(.footnote)
+                        .fontWidth(.condensed)
+                        .foregroundStyle(.secondary)
+                        .padding(4)
+                        .background(.regularMaterial, in: .rect(cornerRadius: 8))
+                        .padding([.leading, .bottom], 8)
                     }
                 }
 

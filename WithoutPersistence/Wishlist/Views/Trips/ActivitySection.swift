@@ -34,16 +34,16 @@ private struct ActivitiesHeader: View {
 
     var body: some View {
         HStack {
-            Text("Activities")
+            Text("活动")
                 .font(.title3)
                 .fontWidth(.expanded)
 
             Spacer()
 
-            Menu("Sort", systemImage: "arrow.up.arrow.down") {
-                Picker("Sort By", selection: $sortOption) {
+            Menu("排序", systemImage: "arrow.up.arrow.down") {
+                Picker("排序方式", selection: $sortOption) {
                     ForEach(SortOption.allCases) { option in
-                        Text(option.title)
+                    Text(LocalizedStringKey(option.title))
                             .tag(option)
                     }
                 }
@@ -88,7 +88,7 @@ extension ActivityList {
                 Image(systemName: "plus")
 
                 VStack(alignment: .leading) {
-                    Text("Add an Activity")
+                    Text("添加活动")
                         .font(.body)
 
                     Divider()
@@ -151,21 +151,21 @@ private struct ActivityItemView: View {
         activityNameStack
             .matchedGeometryEffect(id: "activityName", in: editingTransition)
 
-        Button("Delete", systemImage: "minus.circle", role: .destructive) {
+        Button("删除", systemImage: "minus.circle", role: .destructive) {
                 isShowingDeleteConfirmation = true
         }
         .symbolVariant(.fill)
         .labelStyle(.iconOnly)
         .imageScale(.large)
-        .confirmationDialog("Delete Activity", isPresented: $isShowingDeleteConfirmation) {
-            Button("Delete", role: .destructive) {
+        .confirmationDialog("删除活动", isPresented: $isShowingDeleteConfirmation) {
+            Button("删除", role: .destructive) {
                 withAnimation {
                     model.removeActivity(activity)
                 }
             }
-            Button("Cancel", role: .cancel) { }
+            Button("取消", role: .cancel) { }
         } message: {
-            Text("Are you sure you want to delete this activity?")
+            Text("确定要删除此活动吗？")
         }
     }
 
@@ -176,7 +176,7 @@ private struct ActivityItemView: View {
         } label: {
             HStack(alignment: .firstTextBaseline, spacing: 17) {
                 Image(systemName: activity.isComplete ? "checkmark.circle.fill" : "circle")
-                .foregroundStyle(activity.isComplete ? Color.accentColor : .gray)
+                .foregroundStyle(activity.isComplete ? Color.accentColor : Color.secondary)
                 .contentTransition(.symbolEffect)
                 .animation(.snappy, value: activity.isComplete)
                 .imageScale(.large)
@@ -222,9 +222,10 @@ private struct ActivityTextField: View {
 
     var body: some View {
         TextField(
-            "Enter activity name",
+            "请输入活动名称",
             text: $activity.name
         )
+        .nativeIMEInput()
         .textFieldStyle(.plain)
         .onSubmit {
             model.addNewActivity()

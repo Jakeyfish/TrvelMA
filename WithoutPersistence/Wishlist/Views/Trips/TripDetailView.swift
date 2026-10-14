@@ -65,7 +65,7 @@ struct TripDetailView: View {
                         model.isEditing.toggle()
                     }
                 } else {
-                    Button("Edit") {
+                    Button("编辑") {
                         model.isEditing.toggle()
                     }
                 }
@@ -116,10 +116,10 @@ private struct ActivityProgressView: View {
             .animation(.smooth, value: completionValue)
 
             CustomProgressBar(value: completionValue)
-                .tint(.limeGreen)
+                .tint(Color("LimeGreen"))
                 .frame(width: barWidth, height: barHeight)
 
-            Text("Trip Activities")
+            Text("行程活动")
                 .font(.footnote.smallCaps())
                 .fontWidth(.condensed)
                 .foregroundStyle(.secondary)

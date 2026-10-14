@@ -26,10 +26,10 @@ struct RecentTripsPageView: View {
                     TripImageView(url: trip.photoURL)
                         .overlay(alignment: .bottomLeading) {
                             VStack(alignment: .leading) {
-                                Text("RECENTLY ADDED")
+                                Text("最近添加")
                                     .font(.subheadline)
                                     .fontWeight(.bold)
-                                    .foregroundStyle(.limeGreen)
+                                    .foregroundStyle(Color("LimeGreen"))
 
                                 Text(trip.name)
                                     .font(.title)

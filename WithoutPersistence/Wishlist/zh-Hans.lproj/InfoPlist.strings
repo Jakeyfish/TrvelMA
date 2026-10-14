@@ -1,0 +1,3 @@
+"CFBundleDisplayName" = "行程管家";
+"CFBundleName" = "行程管家";
+"NSLocationWhenInUseUsageDescription" = "用于填入当前位置并提供附近地址建议。";

@@ -13,7 +13,7 @@ struct GoalsView: View {
     /// The data source providing goals and achievement data.
     @Environment(DataSource.self) private var dataSource
 
-    /// Three flexible columns for the "Next milestones" grid.
+    /// Three flexible columns for the "下一个里程碑" grid.
     private let columns = [
         GridItem(.flexible(), spacing: 16),
         GridItem(.flexible(), spacing: 16),
@@ -60,11 +60,11 @@ struct GoalsView: View {
                             }
                         } header: {
                             VStack(alignment: .leading) {
-                                Text("Next milestones")
+                                Text("下一个里程碑")
                                     .font(.title3)
                                     .fontWidth(.expanded)
 
-                                Text("Earn these awards by completing trips and activities")
+                                Text("完成行程和活动即可获得奖励")
                                     .font(.subheadline)
                                     .foregroundColor(.secondary)
                                     .lineLimit(2)
@@ -80,12 +80,12 @@ struct GoalsView: View {
                 // other custom views, use a toolbar item with the title
                 // placement.
                 ToolbarItem(placement: .title) {
-                    ExpandedNavigationTitle(title: "Goals")
+                    ExpandedNavigationTitle(title: "目标")
                 }
             }
             // Always add a navigation title. It's used for the
             // accessibility label when navigating back from a detail view.
-            .navigationTitle("Goals")
+            .navigationTitle("目标")
             .toolbarTitleDisplayMode(.inline)
             // Leading-align the custom title.
             .toolbarRole(.editor)
@@ -126,12 +126,12 @@ private struct AchievedGoalTile: View {
                 .frame(width: 250, height: 250)
                 .padding(.bottom, 10)
 
-            Text(goal.name)
+            Text(LocalizedStringKey(goal.name))
                 .font(.title2)
                 .fontWidth(.expanded)
                 .multilineTextAlignment(.center)
 
-            Text(goal.subtitle)
+            Text(goal.localizedSubtitle)
                 .font(.subheadline)
                 .multilineTextAlignment(.center)
                 .foregroundStyle(.secondary)
@@ -168,12 +168,16 @@ private struct GoalTile: View {
                 .multilineTextAlignment(.center)
                 .lineLimit(2)
 
-            Text("\(min(completedCount, goal.target)) of \(goal.target)")
-                .font(.caption)
-                .foregroundStyle(.secondary)
+            HStack(spacing: 3) {
+                Text("\(min(completedCount, goal.target))")
+                Text("共")
+                Text("\(goal.target)")
+            }
+            .font(.caption)
+            .foregroundStyle(.secondary)
 
             CustomProgressBar(value: goal.progress(for: completedCount))
-                .tint(.limeGreen)
+                .tint(Color("LimeGreen"))
                 .frame(height: 6)
                 .padding(.horizontal, 12)
                 .padding(.bottom, 4)
@@ -187,27 +191,26 @@ private struct GoalTile: View {
 // MARK: - Goal subtitle
 
 private extension Goal {
-    
-    /// A subtitle describing how this award was earned.
-    var subtitle: String {
+
+    var localizedSubtitle: LocalizedStringKey {
         switch kind {
         case .tripsCompleted:
             if target == 1 {
-                "You earned this award for completing your first trip in your Wishlist."
+                "完成首次行程即可获得此奖励。"
             } else {
-                "You earned this award for completing your \(target.ordinal) trip in your Wishlist."
+                "完成 \(target) 次行程即可获得此奖励。"
             }
         case .activitiesCompleted:
             if target == 1 {
-                "You earned this award for completing your first trip activity."
+                "完成首个行程活动即可获得此奖励。"
             } else {
-                "You earned this award for completing your \(target.ordinal) trip activity."
+                "完成 \(target) 个行程活动即可获得此奖励。"
             }
-        case .collectionTripsCompleted(let collection):
+        case .collectionTripsCompleted:
             if target == 1 {
-                "You earned this award for completing your first \(collection.season) trip."
+                "完成一次季节主题行程即可获得此奖励。"
             } else {
-                "You earned this award for completing your \(target.ordinal) \(collection.season) trip."
+                "完成 \(target) 次季节主题行程即可获得此奖励。"
             }
         }
     }

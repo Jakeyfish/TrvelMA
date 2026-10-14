@@ -26,13 +26,13 @@ struct ExpandedNavigationTitle: View {
 
 #Preview {
     NavigationStack {
-        Text("Hello world")
+        Text("你好，世界")
             .toolbar {
                 ToolbarItem(placement: .largeTitle) {
-                    ExpandedNavigationTitle(title: "Title")
+                    ExpandedNavigationTitle(title: "标题")
                 }
             }
             .toolbarTitleDisplayMode(.inlineLarge)
-            .navigationTitle("Title")
+            .navigationTitle("标题")
     }
 }

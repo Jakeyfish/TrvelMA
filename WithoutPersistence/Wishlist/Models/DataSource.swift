@@ -136,6 +136,13 @@ class DataSource {
             }
         }
     }
+
+    /// Removes all user-created in-memory trip data and search state.
+    func clearAllUserData() {
+        searchText = ""
+        trips = [:]
+        achievementDates = [:]
+    }
 }
 
 // MARK: - Trip Extension

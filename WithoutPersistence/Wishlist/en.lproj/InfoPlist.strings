@@ -1,0 +1,3 @@
+"CFBundleDisplayName" = "Trip Manager";
+"CFBundleName" = "Trip Manager";
+"NSLocationWhenInUseUsageDescription" = "Your location is used to fill the current address and provide nearby place suggestions while using the app.";

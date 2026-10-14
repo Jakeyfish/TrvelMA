@@ -1,0 +1,3 @@
+"CFBundleDisplayName" = "旅行管理";
+"CFBundleName" = "旅行管理";
+"NSLocationWhenInUseUsageDescription" = "アプリの使用中に、現在地の入力と近くの場所の候補表示に位置情報を使用します。";

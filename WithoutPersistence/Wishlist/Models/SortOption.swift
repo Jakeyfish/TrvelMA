@@ -26,10 +26,10 @@ enum SortOption: String, CaseIterable, Identifiable {
 
     var title: String {
         switch self {
-        case .title: "Title"
-        case .dateCreated: "Date Created"
-        case .dateEdited: "Date Edited"
-        case .completed: "Completed"
+        case .title: "标题"
+        case .dateCreated: "建立日期"
+        case .dateEdited: "修改日期"
+        case .completed: "已完成"
         }
     }
 }

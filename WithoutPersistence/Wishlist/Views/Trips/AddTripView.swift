@@ -29,12 +29,11 @@ struct AddTripView: View {
     var body: some View {
         NavigationStack {
             VStack(alignment: .center, spacing: 34) {
-                TripImagePicker(selectedPhotoURL: $model.selectedPhotoURL)
-
+//                TripImagePicker(selectedPhotoURL: $model.selectedPhotoURL)
                 TripDetailsForm()
             }
             .padding()
-            .navigationTitle("New Trip")
+            .navigationTitle("新增行程")
             .navigationBarTitleDisplayMode(.inline)
             .environment(model)
             .toolbar {
@@ -46,11 +45,11 @@ struct AddTripView: View {
                             isPresented = false
                         }
                     }
-                    .confirmationDialog("Discard changes?", isPresented: $isDiscardConfirmationShowing) {
+                    .confirmationDialog("放弃更改？", isPresented: $isDiscardConfirmationShowing) {
                         Button(role: .destructive) {
                             isPresented = false
                         } label: {
-                            Text("Discard")
+                            Text("放弃")
                         }
                     }
                 }
@@ -140,6 +139,20 @@ private extension TripImagePicker {
     }
 }
 
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 /// A form view containing the trip details input fields.
 private struct TripDetailsForm: View {
     
@@ -151,6 +164,7 @@ private struct TripDetailsForm: View {
             TripTitleField(model: model)
 
             TripGroupPicker(model: model)
+            
         }
         .scrollContentBackground(.hidden)
     }
@@ -162,7 +176,8 @@ private struct TripTitleField: View {
     @Bindable var model: Model
 
     var body: some View {
-        TextField("Trip Title", text: $model.name)
+        TextField("行程标题", text: $model.name)
+            .nativeIMEInput()
     }
 }
 
@@ -173,7 +188,7 @@ private struct TripGroupPicker: View {
     @Bindable var model: Model
 
     var body: some View {
-        Picker("Collection", selection: $model.selectedCollection) {
+        Picker("行程分类", selection: $model.selectedCollection) {
             ForEach(TripCollection.allCases) { collection in
                 Text(collection.name)
                     .tag(collection)

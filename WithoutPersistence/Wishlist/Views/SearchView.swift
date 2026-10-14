@@ -28,19 +28,19 @@ struct SearchView: View {
                     // To customize the font of the navigation title, or add other
                     // custom views, use a toolbar item with the title placement.
                     ToolbarItem(placement: .title) {
-                        ExpandedNavigationTitle(title: "Search")
+                        ExpandedNavigationTitle(title: "查找")
                     }
                 }
                 // Always add a navigation title. It's used for the
                 // accessibility label when navigating back from a detail
                 // view.
-                .navigationTitle("Search")
+                .navigationTitle("搜索")
                 .toolbarTitleDisplayMode(.inline)
                 // Leading-align the custom title.
                 .toolbarRole(.editor)
                 .searchable(
                     text: $dataSource.searchText,
-                    prompt: "Trips, Destinations and More."
+                    prompt: "行程, 目的地或其它."
                 )
                 .scrollDismissesKeyboard(.immediately)
         }
@@ -63,9 +63,9 @@ private struct SearchResultsListView: View {
         .overlay {
             if dataSource.searchResults.isEmpty {
                 ContentUnavailableView(
-                    "No results for “\(dataSource.searchText)”",
+                    "未找到“\(dataSource.searchText)”",
                     systemImage: "magnifyingglass",
-                    description: Text("Check spelling or try a new search.")
+                    description: Text("请检查拼写或尝试其他搜索。")
                 )
             }
         }
@@ -135,7 +135,7 @@ private extension SearchSection {
         switch self {
         case .recentlyCreatedTrips: "Recently Created"
         case .trips: "Trips"
-        case .activities: "Activities"
+        case .activities: "活动"
         }
     }
 }
@@ -218,7 +218,7 @@ private struct SearchSectionView: View {
                 .font(.title3)
                 .fontWeight(.semibold)
                 .fontWidth(.expanded)
-                .foregroundStyle(.white)
+                .foregroundStyle(.primary)
         }
     }
 }

@@ -32,17 +32,17 @@ extension TripCollection {
     /// The display name of the collection.
     var name: String {
         switch self {
-        case .springEscapes: "Spring Escapes"
-        case .summerVibes: "Summer Vibes"
-        case .fallGetaways: "Fall Getaways"
-        case .winterRetreats: "Winter Retreats"
+        case .springEscapes: "春日出游"
+        case .summerVibes: "夏日畅游"
+        case .fallGetaways: "秋日旅行"
+        case .winterRetreats: "冬日静居"
         }
     }
     
     /// A brief description summarizing the collection.
     var summary: String? {
         switch self {
-        case .summerVibes: "Soak up open roads, salt water, and endless daylight"
+        case .summerVibes: "尽情享受公路、海浪与漫长日光"
         default: nil
         }
     }
