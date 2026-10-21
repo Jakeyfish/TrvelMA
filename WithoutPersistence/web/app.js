@@ -12,6 +12,7 @@ let sessionRefreshTask = null;
 let offlineReplayTask = null;
 let offlineRetryTimer = null;
 let offlineRetryCount = 0;
+let lastNetworkToastAt = 0;
 const webReminderTimers = new Map();
 
 const state = {
@@ -124,7 +125,12 @@ async function authRequest(path, body) {
     body: JSON.stringify(body),
   });
   const payload = await response.json().catch(() => ({}));
-  if (!response.ok) throw new Error(friendlyError(payload));
+  if (!response.ok) {
+    const error = new Error(friendlyError(payload));
+    error.status = response.status;
+    error.code = payload.code || payload.error_code || payload.error || "";
+    throw error;
+  }
   return payload;
 }
 
@@ -142,15 +148,27 @@ async function currentSession() {
   if (!state.session?.access_token) return null;
   if (state.session.expires_at && Date.now() < state.session.expires_at - 60_000) return state.session;
   if (!state.session.refresh_token) { clearSession(); return null; }
+  const sessionBeingRefreshed = state.session;
   if (!sessionRefreshTask) {
     sessionRefreshTask = (async () => {
       try {
-        const fresh = await authRequest("token?grant_type=refresh_token", { refresh_token: state.session.refresh_token });
+        const fresh = await authRequest("token?grant_type=refresh_token", { refresh_token: sessionBeingRefreshed.refresh_token });
+        if (state.session !== sessionBeingRefreshed) return state.session;
         writeSession({ ...fresh, expires_at: Date.now() + (fresh.expires_in || 3600) * 1000 });
         return state.session;
       } catch (error) {
+        if (state.session !== sessionBeingRefreshed) return state.session;
         if (error instanceof TypeError && state.session?.user) return state.session;
+        if (error.status === 429 || error.status >= 500) {
+          error.message = "云端暂时无法验证登录状态，离线修改仍保存在本机；请稍后重新同步。";
+          throw error;
+        }
+        const hadQueuedChanges = readOfflineQueue(sessionBeingRefreshed.user?.id).operations.length > 0;
         clearSession();
+        state.error = hadQueuedChanges
+          ? "云端登录凭证已失效，离线修改仍保存在本机。请重新登录原云端账号，登录后会继续同步。"
+          : "云端登录凭证已失效，请重新登录。";
+        renderLogin();
         return null;
       } finally {
         sessionRefreshTask = null;
@@ -298,7 +316,12 @@ async function replayOfflineQueue() {
         const envelope = readOfflineQueue(replayUserID);
         const operation = envelope.operations[0];
         if (!operation) break;
-        if (operation.owner_id !== replayUserID) break;
+        if (operation.owner_id !== replayUserID) {
+          // Fail closed if a persisted queue entry does not belong to its account-scoped queue.
+          blockedByServer = true;
+          showToast("离线修改的账号标记异常，已暂停同步以保护账号资料。请联系支持人员处理。", true);
+          break;
+        }
         if (operation.kind === "storage-upload") {
           const binary = atob(operation.base64);
           const bytes = Uint8Array.from(binary, character => character.charCodeAt(0));
@@ -358,7 +381,7 @@ async function replayOfflineQueue() {
 }
 
 function isNetworkFailure(error) {
-  return !navigator.onLine || error instanceof TypeError;
+  return !navigator.onLine || error instanceof TypeError || error.status === 429 || error.status >= 500;
 }
 
 async function request(tableOrPath, { method = "GET", query = {}, body, prefer, queueOffline = true } = {}) {
@@ -1431,6 +1454,12 @@ function openTripForm(trip = null, copying = false) {
 }
 
 function showToast(message, error = false) {
+  const networkNotice = /无法连接云端|无法验证云端|连接云端失败|网络.*(断开|连接|恢复)|failed to fetch|network error/i.test(String(message));
+  if (networkNotice) {
+    const now = Date.now();
+    if (now - lastNetworkToastAt < 30_000) return;
+    lastNetworkToastAt = now;
+  }
   if (!error && queuedOperationCount() > 0) {
     message = message.replace("并同步到云端", "，联网后同步").replace("同步到云端", "待联网同步");
     if (!message.includes("待同步") && !message.includes("待联网")) message += "（有修改待联网同步）";
@@ -1459,6 +1488,7 @@ async function doLogin(form) {
     if (state.user?.id !== attemptedUserID) return;
     state.page = "home";
     renderApp();
+    if (navigator.onLine && queuedOperationCount() > 0) void replayOfflineQueue();
   } catch (error) {
     if (attemptedUserID && state.user?.id !== attemptedUserID) return;
     state.error = error.message || "登录失败。";
@@ -1844,7 +1874,6 @@ document.addEventListener("click", async event => {
       if (queuedOperationCount() > 0 && navigator.onLine) await replayOfflineQueue();
       await loadData(); renderApp(); showToast(state.offline ? "当前显示本机缓存，联网后会继续同步。" : "已从云端更新数据。");
     }
-    else if (action === "retry-offline-load") await initialize();
     else if (action === "retry-offline-load") await initialize();
     else if (action === "new-trip") openTripForm();
     else if (action === "new-customer") openCustomerForm();
