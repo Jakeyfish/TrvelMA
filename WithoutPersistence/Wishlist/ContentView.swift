@@ -706,7 +706,7 @@ private struct CustomerDetailView: View {
     @Environment(\.dismiss) private var dismiss
     @Environment(\.openURL) private var openURL
 
-    private let customer: Custumer?
+    private let isNewCustomer: Bool
     private let registryCustomerID: String?
     private let registryOwnerScope: String?
     @State private var name: String
@@ -725,7 +725,7 @@ private struct CustomerDetailView: View {
     @StateObject private var addressSearcher = AddressAutocompleteSearcher()
 
     init(customer: Custumer?) {
-        self.customer = customer
+        isNewCustomer = customer == nil
         registryCustomerID = customer?.uuid
         registryOwnerScope = customer?.ownerScope
         _name = State(initialValue: customer?.name ?? "")
@@ -760,7 +760,6 @@ private struct CustomerDetailView: View {
         _remark = State(initialValue: customer?.remark ?? "")
     }
 
-    private var isNewCustomer: Bool { customer == nil }
     private let contactTypes = ["电话", "微信", "邮箱", "WhatsApp", "LINE"]
     private let addressTypes = ["家", "公司", "其他"]
 
