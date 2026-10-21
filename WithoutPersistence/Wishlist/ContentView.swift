@@ -400,6 +400,56 @@ private struct CustomerCardView: View {
     }
 }
 
+private struct CustomerContactSnapshot: Identifiable {
+    let id = UUID()
+    let type: String
+    let value: String
+    let isDefault: Bool
+}
+
+private struct CustomerAddressSnapshot: Identifiable {
+    let id = UUID()
+    let type: String
+    let value: String
+    let isDefault: Bool
+}
+
+/// A value snapshot prevents a pushed detail/editor screen from retaining a
+/// SwiftData object while another device's sync changes or removes that row.
+private struct CustomerProfileSnapshot {
+    let id: String
+    let ownerScope: String
+    let name: String
+    let email: String
+    let avatarUrl: String
+    let customerCategory: Int
+    let travelAgencyCode: String
+    let travelAgencyName: String
+    let languagePreference: String
+    let remark: String
+    let contacts: [CustomerContactSnapshot]
+    let addresses: [CustomerAddressSnapshot]
+
+    init(_ customer: Custumer) {
+        id = customer.uuid
+        ownerScope = customer.ownerScope
+        name = customer.name
+        email = customer.email
+        avatarUrl = customer.avatarUrl
+        customerCategory = customer.customerCategory
+        travelAgencyCode = customer.travelAgencyCode
+        travelAgencyName = customer.travelAgencyName
+        languagePreference = customer.languagePreference
+        remark = customer.remark
+        contacts = customer.connecttype.map {
+            CustomerContactSnapshot(type: $0.connectlable, value: $0.connecttype, isDefault: $0.isDefault)
+        }
+        addresses = customer.addresses.map {
+            CustomerAddressSnapshot(type: $0.addlable, value: $0.addresses, isDefault: $0.isDefault)
+        }
+    }
+}
+
 private struct CustomerBrowseView: View {
     @Environment(\.modelContext) private var modelContext
     @Environment(\.dismiss) private var dismiss
@@ -408,29 +458,39 @@ private struct CustomerBrowseView: View {
     @AppStorage(BaseCurrencyCatalog.countryCodeKey) private var baseCurrencyCountry = BaseCurrencyCatalog.defaultCountryCode
     @Query private var tripBookings: [TripBookingRecord]
     @Query private var allCustomers: [Custumer]
-    let customer: Custumer
+    let customer: CustomerProfileSnapshot
     private let registryCustomerID: String
     private let registryOwnerScope: String
     @State private var isConfirmingDelete = false
     @State private var errorMessage: String?
 
     init(customer: Custumer) {
-        self.customer = customer
-        registryCustomerID = customer.uuid
-        registryOwnerScope = customer.ownerScope
+        let snapshot = CustomerProfileSnapshot(customer)
+        self.customer = snapshot
+        registryCustomerID = snapshot.id
+        registryOwnerScope = snapshot.ownerScope
         let scope = DataOwnership.activeScope
         _tripBookings = Query(filter: #Predicate { $0.ownerScope == scope })
         _allCustomers = Query(filter: #Predicate { $0.ownerScope == scope })
     }
 
     private var customerTrips: [TripBookingRecord] {
-        customerTripRecords(for: customer, customers: allCustomers, bookings: tripBookings)
+        let isUniqueCustomerName = allCustomers.filter { $0.name == customer.name }.count == 1
+        return tripBookings
+            .filter { booking in
+                guard !booking.isCancelled else { return false }
+                if booking.customerUUID == customer.id { return true }
+                return booking.customerUUID == nil
+                    && isUniqueCustomerName
+                    && booking.customerName == customer.name
+            }
+            .sorted { $0.appointmentDate > $1.appointmentDate }
     }
 
     private var hasAnyTripHistory: Bool {
         let isUniqueCustomerName = allCustomers.filter { $0.name == customer.name }.count == 1
         return tripBookings.contains { booking in
-            if booking.customerUUID == customer.uuid { return true }
+            if booking.customerUUID == customer.id { return true }
             return booking.customerUUID == nil
                 && isUniqueCustomerName
                 && booking.customerName == customer.name
@@ -459,9 +519,9 @@ private struct CustomerBrowseView: View {
             }
 
             Section("联系方式") {
-                ForEach(customer.connecttype) { contact in
+                ForEach(customer.contacts) { contact in
                     HStack(spacing: 8) {
-                        Text(LocalizedStringKey(contact.connectlable))
+                        Text(LocalizedStringKey(contact.type))
                             .font(.caption.weight(.medium))
                             .foregroundStyle(.secondary)
                         if contact.isDefault {
@@ -472,22 +532,22 @@ private struct CustomerBrowseView: View {
                                 .padding(.vertical, 3)
                                 .background(Color.accentColor.opacity(0.10), in: Capsule())
                         }
-                        Text(contact.connecttype)
+                        Text(contact.value)
                             .font(.subheadline)
                             .lineLimit(1)
                             .minimumScaleFactor(0.75)
                             .frame(maxWidth: .infinity, alignment: .leading)
-                        if contact.connectlable == "电话" {
-                            Button { openContactURL("tel://\(contact.connecttype)") } label: {
+                        if contact.type == "电话" {
+                            Button { openContactURL("tel://\(contact.value)") } label: {
                                 Image(systemName: "phone.fill")
                             }
                             .accessibilityLabel("拨打电话")
-                            Button { openContactURL("sms:\(contact.connecttype)") } label: {
+                            Button { openContactURL("sms:\(contact.value)") } label: {
                                 Image(systemName: "message.fill")
                             }
                             .accessibilityLabel("发送信息")
-                        } else if contact.connectlable == "邮箱" {
-                            Button { openContactURL("mailto:\(contact.connecttype)") } label: {
+                        } else if contact.type == "邮箱" {
+                            Button { openContactURL("mailto:\(contact.value)") } label: {
                                 Image(systemName: "envelope.fill")
                             }
                             .accessibilityLabel("发送邮件")
@@ -496,9 +556,9 @@ private struct CustomerBrowseView: View {
                     .font(.system(size: 12))
                     .padding(.vertical, 3)
                 }
-                if customer.connecttype.isEmpty && customer.email.isEmpty {
+                if customer.contacts.isEmpty && customer.email.isEmpty {
                     Text("暂无联系方式").foregroundStyle(.secondary)
-                } else if customer.connecttype.isEmpty {
+                } else if customer.contacts.isEmpty {
                     HStack {
                         Text("邮箱")
                         Spacer()
@@ -511,12 +571,12 @@ private struct CustomerBrowseView: View {
                 ForEach(customer.addresses) { address in
                     VStack(alignment: .leading, spacing: 6) {
                         HStack {
-                            Text(LocalizedStringKey(address.addlable)).font(.footnote.weight(.medium))
+                            Text(LocalizedStringKey(address.type)).font(.footnote.weight(.medium))
                             if address.isDefault { Text("默认").font(.system(size: 11)).foregroundStyle(Color.accentColor) }
                         }
-                        Button { openMap(address.addresses) } label: {
+                        Button { openMap(address.value) } label: {
                             VStack(alignment: .leading, spacing: 7) {
-                                Text(address.addresses)
+                                Text(address.value)
                                     .foregroundStyle(.primary)
                                     .frame(maxWidth: .infinity, alignment: .leading)
                                 Label("使用默认导航", systemImage: "arrow.triangle.turn.up.right.diamond.fill")
@@ -558,7 +618,7 @@ private struct CustomerBrowseView: View {
         .toolbar {
             ToolbarItem(placement: .topBarTrailing) {
                 NavigationLink {
-                    CustomerDetailView(customer: customer)
+                    CustomerDetailView(profile: customer)
                 } label: {
                     Label("编辑", systemImage: "pencil")
                 }
@@ -613,9 +673,18 @@ private struct CustomerBrowseView: View {
     }
 
     private func deleteCustomer() {
-        SupabaseDataSync.recordDeletion(table: "customers", id: customer.uuid, context: modelContext)
-        modelContext.delete(customer)
+        let customerID = customer.id
+        let ownerScope = customer.ownerScope
+        let descriptor = FetchDescriptor<Custumer>(predicate: #Predicate {
+            $0.uuid == customerID && $0.ownerScope == ownerScope
+        })
         do {
+            guard let current = try modelContext.fetch(descriptor).first else {
+                dismiss()
+                return
+            }
+            SupabaseDataSync.recordDeletion(table: "customers", id: customerID, context: modelContext)
+            modelContext.delete(current)
             try modelContext.save()
             dismiss()
         } catch {
@@ -725,19 +794,23 @@ private struct CustomerDetailView: View {
     @StateObject private var addressSearcher = AddressAutocompleteSearcher()
 
     init(customer: Custumer?) {
-        isNewCustomer = customer == nil
-        registryCustomerID = customer?.uuid
-        registryOwnerScope = customer?.ownerScope
-        _name = State(initialValue: customer?.name ?? "")
-        _avatarData = State(initialValue: Self.loadAvatar(customer?.avatarUrl ?? ""))
-        _customerCategory = State(initialValue: customer?.customerCategory ?? 1)
-        _travelAgencyCode = State(initialValue: customer?.travelAgencyCode ?? "")
-        _travelAgencyName = State(initialValue: customer?.travelAgencyName ?? "")
-        _languagePreference = State(initialValue: customer?.languagePreference ?? "zh-Hans")
-        var savedContacts = customer?.connecttype.map {
-            ContactDraft(type: $0.connectlable, value: $0.connecttype, isDefault: $0.isDefault)
+        self.init(profile: customer.map { CustomerProfileSnapshot($0) })
+    }
+
+    init(profile: CustomerProfileSnapshot?) {
+        isNewCustomer = profile == nil
+        registryCustomerID = profile?.id
+        registryOwnerScope = profile?.ownerScope
+        _name = State(initialValue: profile?.name ?? "")
+        _avatarData = State(initialValue: Self.loadAvatar(profile?.avatarUrl ?? ""))
+        _customerCategory = State(initialValue: profile?.customerCategory ?? 1)
+        _travelAgencyCode = State(initialValue: profile?.travelAgencyCode ?? "")
+        _travelAgencyName = State(initialValue: profile?.travelAgencyName ?? "")
+        _languagePreference = State(initialValue: profile?.languagePreference ?? "zh-Hans")
+        var savedContacts = profile?.contacts.map {
+            ContactDraft(type: $0.type, value: $0.value, isDefault: $0.isDefault)
         } ?? []
-        if savedContacts.isEmpty, let email = customer?.email, !email.isEmpty {
+        if savedContacts.isEmpty, let email = profile?.email, !email.isEmpty {
             savedContacts = [ContactDraft(type: "邮箱", value: email)]
         }
         if !savedContacts.isEmpty, !savedContacts.contains(where: { $0.isDefault }) {
@@ -746,8 +819,8 @@ private struct CustomerDetailView: View {
         if let selected = savedContacts.firstIndex(where: { $0.isDefault }) {
             for index in savedContacts.indices { savedContacts[index].isDefault = index == selected }
         }
-        var savedAddresses = customer?.addresses.map {
-            AddressDraft(type: $0.addlable, value: $0.addresses, isDefault: $0.isDefault)
+        var savedAddresses = profile?.addresses.map {
+            AddressDraft(type: $0.type, value: $0.value, isDefault: $0.isDefault)
         } ?? []
         if !savedAddresses.isEmpty, !savedAddresses.contains(where: { $0.isDefault }) {
             savedAddresses[0].isDefault = true
@@ -757,7 +830,7 @@ private struct CustomerDetailView: View {
         }
         _contacts = State(initialValue: savedContacts)
         _addresses = State(initialValue: savedAddresses)
-        _remark = State(initialValue: customer?.remark ?? "")
+        _remark = State(initialValue: profile?.remark ?? "")
     }
 
     private let contactTypes = ["电话", "微信", "邮箱", "WhatsApp", "LINE"]
