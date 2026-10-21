@@ -59,6 +59,31 @@ final class CloudSyncConflict {
     }
 }
 
+/// Keeps a record alive while its detail screen is on screen. A remote delete
+/// during that interval must become a resolvable conflict instead of deleting
+/// the SwiftData object out from under the active SwiftUI navigation stack.
+@MainActor
+enum SyncEditRegistry {
+    private static var activeRecords: [String: Int] = [:]
+
+    static func begin(table: String, id: String, scope: String) {
+        let key = "\(scope)|\(table)|\(id.lowercased())"
+        activeRecords[key, default: 0] += 1
+    }
+
+    static func end(table: String, id: String, scope: String) {
+        let key = "\(scope)|\(table)|\(id.lowercased())"
+        let remaining = (activeRecords[key] ?? 1) - 1
+        if remaining <= 0 { activeRecords.removeValue(forKey: key) }
+        else { activeRecords[key] = remaining }
+    }
+
+    static func isEditing(table: String, id: String, scope: String) -> Bool {
+        let key = "\(scope)|\(table)|\(id.lowercased())"
+        return activeRecords[key, default: 0] > 0
+    }
+}
+
 /// Reconciles local SwiftData rows with the authenticated Supabase account.
 /// RLS uses the JWT, so every row is explicitly tagged with the JWT's owner id.
 enum SupabaseDataSync {
@@ -287,6 +312,10 @@ enum SupabaseDataSync {
     static func resolveConflict(_ conflict: CloudSyncConflict, keepRemote: Bool, context: ModelContext) throws {
         guard conflict.ownerScope == DataOwnership.activeScope else {
             throw SyncError.response("当前账号无权处理此同步冲突。")
+        }
+        if conflict.tableName == "customers", conflict.isRemoteDeletion, keepRemote,
+           SyncEditRegistry.isEditing(table: "customers", id: conflict.recordID, scope: conflict.ownerScope) {
+            throw SyncError.response("客户资料仍在打开，请先退出客户资料页面，再接受删除。")
         }
         guard let data = conflict.remotePayloadJSON.data(using: .utf8),
               let row = try JSONSerialization.jsonObject(with: data) as? [String: Any] else {
@@ -704,14 +733,12 @@ enum SupabaseDataSync {
             if conflictExists(table: "customers", id: id, scope: scope, context: context) { continue }
             if isDeleted(row) {
                 if let local = customerMap[id.lowercased()] {
-                    let localChanged = local.syncBaseUpdatedAt.map { local.updateAt > $0 } ?? true
-                    let remoteChanged = local.syncBaseUpdatedAt.map { remoteDate > $0 } ?? true
-                    if localChanged && remoteChanged {
-                        try storeConflict(table: "customers", id: id, scope: scope, localUpdatedAt: local.updateAt,
-                                          remoteUpdatedAt: remoteDate, row: row, context: context, isRemoteDeletion: true)
-                        continue
-                    }
-                    if remoteDate >= local.updateAt { context.delete(local); changed += 1 }
+                    // Keep a local customer model until the user explicitly
+                    // accepts the remote delete. The detail/edit stack may be
+                    // holding this SwiftData object even when its fields have
+                    // not changed yet; deleting it here can terminate the app.
+                    try storeConflict(table: "customers", id: id, scope: scope, localUpdatedAt: local.updateAt,
+                                      remoteUpdatedAt: remoteDate, row: row, context: context, isRemoteDeletion: true)
                 }
                 continue
             }

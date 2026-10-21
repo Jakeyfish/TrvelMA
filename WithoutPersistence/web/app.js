@@ -12,7 +12,7 @@ let sessionRefreshTask = null;
 let offlineReplayTask = null;
 let offlineRetryTimer = null;
 let offlineRetryCount = 0;
-let lastNetworkToastAt = 0;
+let networkToastShownForCurrentOutage = false;
 const webReminderTimers = new Map();
 
 const state = {
@@ -131,6 +131,7 @@ async function authRequest(path, body) {
     error.code = payload.code || payload.error_code || payload.error || "";
     throw error;
   }
+  networkToastShownForCurrentOutage = false;
   return payload;
 }
 
@@ -419,6 +420,7 @@ async function request(tableOrPath, { method = "GET", query = {}, body, prefer, 
   const text = await response.text();
   const payload = text ? (() => { try { return JSON.parse(text); } catch { return text; } })() : null;
   if (!response.ok) throw new Error(friendlyError(typeof payload === "object" && payload ? payload : { message: text }));
+  networkToastShownForCurrentOutage = false;
   return payload;
 }
 
@@ -1456,9 +1458,8 @@ function openTripForm(trip = null, copying = false) {
 function showToast(message, error = false) {
   const networkNotice = /无法连接云端|无法验证云端|连接云端失败|网络.*(断开|连接|恢复)|failed to fetch|network error/i.test(String(message));
   if (networkNotice) {
-    const now = Date.now();
-    if (now - lastNetworkToastAt < 30_000) return;
-    lastNetworkToastAt = now;
+    if (networkToastShownForCurrentOutage) return;
+    networkToastShownForCurrentOutage = true;
   }
   if (!error && queuedOperationCount() > 0) {
     message = message.replace("并同步到云端", "，联网后同步").replace("同步到云端", "待联网同步");

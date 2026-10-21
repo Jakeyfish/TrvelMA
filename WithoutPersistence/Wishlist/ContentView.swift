@@ -409,11 +409,15 @@ private struct CustomerBrowseView: View {
     @Query private var tripBookings: [TripBookingRecord]
     @Query private var allCustomers: [Custumer]
     let customer: Custumer
+    private let registryCustomerID: String
+    private let registryOwnerScope: String
     @State private var isConfirmingDelete = false
     @State private var errorMessage: String?
 
     init(customer: Custumer) {
         self.customer = customer
+        registryCustomerID = customer.uuid
+        registryOwnerScope = customer.ownerScope
         let scope = DataOwnership.activeScope
         _tripBookings = Query(filter: #Predicate { $0.ownerScope == scope })
         _allCustomers = Query(filter: #Predicate { $0.ownerScope == scope })
@@ -580,6 +584,12 @@ private struct CustomerBrowseView: View {
             Button("确定", role: .cancel) { errorMessage = nil }
         } message: { Text(errorMessage ?? "") }
         .font(.system(size: 15))
+        .onAppear {
+            SyncEditRegistry.begin(table: "customers", id: registryCustomerID, scope: registryOwnerScope)
+        }
+        .onDisappear {
+            SyncEditRegistry.end(table: "customers", id: registryCustomerID, scope: registryOwnerScope)
+        }
     }
 
     private func compactCustomerValue(_ title: String, _ value: String) -> some View {
@@ -697,6 +707,8 @@ private struct CustomerDetailView: View {
     @Environment(\.openURL) private var openURL
 
     private let customer: Custumer?
+    private let registryCustomerID: String?
+    private let registryOwnerScope: String?
     @State private var name: String
     @State private var avatarData: Data?
     @State private var selectedPhoto: PhotosPickerItem?
@@ -714,6 +726,8 @@ private struct CustomerDetailView: View {
 
     init(customer: Custumer?) {
         self.customer = customer
+        registryCustomerID = customer?.uuid
+        registryOwnerScope = customer?.ownerScope
         _name = State(initialValue: customer?.name ?? "")
         _avatarData = State(initialValue: Self.loadAvatar(customer?.avatarUrl ?? ""))
         _customerCategory = State(initialValue: customer?.customerCategory ?? 1)
@@ -1012,6 +1026,16 @@ private struct CustomerDetailView: View {
                 }
             }
         }
+        .onAppear {
+            if let registryCustomerID, let registryOwnerScope {
+                SyncEditRegistry.begin(table: "customers", id: registryCustomerID, scope: registryOwnerScope)
+            }
+        }
+        .onDisappear {
+            if let registryCustomerID, let registryOwnerScope {
+                SyncEditRegistry.end(table: "customers", id: registryCustomerID, scope: registryOwnerScope)
+            }
+        }
     }
 
     private func customerTypeOption(_ title: String, subtitle: String, icon: String, value: Int) -> some View {
@@ -1097,8 +1121,33 @@ private struct CustomerDetailView: View {
         guard !trimmedName.isEmpty else { message = "请输入客户名称"; return }
 
         let record: Custumer
-        if let customer { record = customer }
-        else {
+        if let customerID = registryCustomerID, let ownerScope = registryOwnerScope {
+            guard DataOwnership.activeScope == ownerScope else {
+                message = "账号已切换，请返回当前账号后重新打开客户资料。"
+                return
+            }
+            let descriptor = FetchDescriptor<Custumer>(predicate: #Predicate {
+                $0.uuid == customerID && $0.ownerScope == ownerScope
+            })
+            do {
+                if let current = try modelContext.fetch(descriptor).first {
+                    record = current
+                } else {
+                    // The other device may have deleted this customer while the form
+                    // was open. Recreate the edited draft with the same ID; the next
+                    // sync will surface the remote deletion as a normal conflict.
+                    record = Custumer(uuid: customerID, name: trimmedName, email: "", csource: "客户",
+                                      type: 1, customerCategory: customerCategory,
+                                      languagePreference: languagePreference, remark: String(remark.prefix(256)),
+                                      syncBaseUpdatedAt: nil)
+                    record.ownerScope = ownerScope
+                    modelContext.insert(record)
+                }
+            } catch {
+                message = "客户资料读取失败，修改尚未保存。请返回后重试。"
+                return
+            }
+        } else {
             record = Custumer(name: trimmedName, email: "", csource: "客户", type: 1, customerCategory: customerCategory)
             modelContext.insert(record)
         }
