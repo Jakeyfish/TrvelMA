@@ -6,6 +6,7 @@ struct RegisterView: View {
     @Environment(AuthViewModel.self) private var auth
     @Environment(\.modelContext) private var modelContext
     @Environment(\.dismiss) private var dismiss
+    @AppStorage("auth.accountMode.cloud") private var useCloudAccount = false
 
     @State private var email = ""
     @State private var salutation = ""
@@ -18,6 +19,7 @@ struct RegisterView: View {
     @State private var isShowingCodeNotice = false
     @State private var message: String?
     @State private var isError = true
+    @State private var isSubmitting = false
 
     var body: some View {
         NavigationStack {
@@ -26,11 +28,13 @@ struct RegisterView: View {
                     SystemIMETextField(text: $salutation, placeholder: "称呼")
                         .frame(minHeight: 22)
                     TextField("邮箱", text: $email)
+                        .keyboardDoneToolbar()
                         .textContentType(.emailAddress)
                         .keyboardType(.emailAddress)
                         .textInputAutocapitalization(.never)
                         .autocorrectionDisabled()
                     TextField("手机号", text: $phone)
+                        .keyboardDoneToolbar()
                         .textContentType(.telephoneNumber)
                         .keyboardType(.phonePad)
                 }
@@ -40,6 +44,7 @@ struct RegisterView: View {
                     passwordField(title: "检验密码", value: $confirmPassword)
                     HStack {
                         TextField("验证码", text: $verificationCode)
+                            .keyboardDoneToolbar()
                             .keyboardType(.numberPad)
                         Button {
                             codeRequested = true
@@ -69,6 +74,7 @@ struct RegisterView: View {
                 Section {
                     Button("提交") { submit() }
                         .frame(maxWidth: .infinity, alignment: .center)
+                        .disabled(isSubmitting)
                 }
             }
             .navigationTitle("用户注册")
@@ -86,8 +92,10 @@ struct RegisterView: View {
             Group {
                 if isPasswordVisible {
                     TextField(LocalizedStringKey(title), text: value)
+                        .keyboardDoneToolbar()
                 } else {
                     SecureField(title, text: value)
+                        .keyboardDoneToolbar()
                 }
             }
             .textContentType(.newPassword)
@@ -108,11 +116,26 @@ struct RegisterView: View {
             message = "两次输入的密码不一致。"
             return
         }
-        if let error = auth.register(email: email, salutation: salutation, phone: phone, password: password, context: modelContext) {
-            isError = true
-            message = error
-        } else {
-            dismiss()
+        isSubmitting = true
+        Task {
+            let error: String?
+            if useCloudAccount {
+                error = await auth.registerCloud(email: email, salutation: salutation, phone: phone, password: password)
+            } else {
+                error = auth.register(email: email, salutation: salutation, phone: phone, password: password, context: modelContext)
+            }
+            isSubmitting = false
+            if let error {
+                if useCloudAccount && error.hasPrefix("注册成功。") {
+                    isError = false
+                    message = error
+                } else {
+                    isError = true
+                    message = error
+                }
+            } else {
+                dismiss()
+            }
         }
     }
 }
@@ -120,57 +143,4 @@ struct RegisterView: View {
 #Preview {
     @Previewable @State var auth = AuthViewModel()
     RegisterView().environment(auth)
-}
-/// A system UITextField for short text that preserves active Chinese IME composition.
-struct SystemIMETextField: UIViewRepresentable {
-    @Binding var text: String
-    let placeholder: String
-
-    func makeCoordinator() -> Coordinator {
-        Coordinator(text: $text)
-    }
-
-    func makeUIView(context: Context) -> UITextField {
-        let field = UITextField()
-        field.placeholder = placeholder
-        field.keyboardType = .default
-        field.autocapitalizationType = .sentences
-        field.autocorrectionType = .default
-        field.delegate = context.coordinator
-        field.addTarget(context.coordinator, action: #selector(Coordinator.editingChanged(_:)), for: .editingChanged)
-        field.accessibilityLabel = placeholder
-        return field
-    }
-
-    func updateUIView(_ field: UITextField, context: Context) {
-        context.coordinator.text = $text
-        field.placeholder = placeholder
-        // Do not overwrite pinyin/Wubi marked text while the user is composing.
-        guard field.markedTextRange == nil, field.text != text else { return }
-        field.text = text
-    }
-
-    final class Coordinator: NSObject, UITextFieldDelegate {
-        var text: Binding<String>
-
-        init(text: Binding<String>) {
-            self.text = text
-        }
-
-        @objc func editingChanged(_ field: UITextField) {
-            updateBinding(from: field)
-        }
-
-        func textFieldDidChangeSelection(_ field: UITextField) {
-            updateBinding(from: field)
-        }
-
-        private func updateBinding(from field: UITextField) {
-            guard field.markedTextRange == nil else { return }
-            let value = field.text ?? ""
-            if text.wrappedValue != value {
-                text.wrappedValue = value
-            }
-        }
-    }
 }

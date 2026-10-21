@@ -3,15 +3,40 @@ import Observation
 import Security
 import SwiftData
 
-/// Local authentication backed by SwiftData account metadata and Keychain passwords.
+/// Supports on-device accounts and Supabase email/password authentication.
 @Observable
 final class AuthViewModel {
     private(set) var isLoggedIn = false
     private(set) var currentEmail = ""
     private(set) var currentSalutation = ""
+    private(set) var currentPhone = ""
+    private(set) var isCloudAccount = false
+    var cloudAccessToken: String? {
+        guard isCloudAccount else { return nil }
+        return SecureCloudSession.load(key: "auth.cloud.accessToken")
+    }
+
+    func refreshCloudAccessToken() async -> String? {
+        guard isCloudAccount,
+              let refreshToken = SecureCloudSession.load(key: "auth.cloud.refreshToken") else { return nil }
+        do {
+            let response = try await SupabaseAuthClient.refreshSession(refreshToken: refreshToken)
+            guard let access = response.accessToken, let refresh = response.refreshToken,
+                  SecureCloudSession.save(access, key: "auth.cloud.accessToken"),
+                  SecureCloudSession.save(refresh, key: "auth.cloud.refreshToken") else { return nil }
+            if let phone = response.user?.userMetadata?.phone {
+                currentPhone = phone
+                UserDefaults.standard.set(phone, forKey: sessionPhoneKey)
+            }
+            return access
+        } catch {
+            return nil
+        }
+    }
 
     private let sessionEmailKey = "auth.session.email"
     private let sessionSalutationKey = "auth.session.salutation"
+    private let sessionPhoneKey = "auth.session.phone"
     private let sessionExpirationKey = "auth.session.expiresAt"
 
     init() {
@@ -34,11 +59,97 @@ final class AuthViewModel {
         guard storedPassword == password || isLegacyDemoLogin else {
             return "邮箱或密码不正确。"
         }
+        let localScope = DataOwnership.localScope(email: normalizedEmail)
+        DataOwnership.activateLocal(scope: localScope)
+        do {
+            try DataOwnership.adoptLegacyLocalRecords(context: context, scope: localScope)
+        } catch {
+            return "迁移本机资料失败：\(error.localizedDescription)"
+        }
         currentEmail = normalizedEmail
         currentSalutation = localAccount?.salutation ?? ""
+        currentPhone = localAccount?.phone ?? ""
+        UserDefaults.standard.set(normalizedEmail, forKey: "auth.lastLocalEmail")
+        isCloudAccount = false
         isLoggedIn = true
-        saveSession(for: normalizedEmail, salutation: currentSalutation)
+        saveSession(for: normalizedEmail, salutation: currentSalutation, phone: currentPhone)
         return nil
+    }
+
+    func loginToCloud(email: String, password: String) async -> String? {
+        let normalizedEmail = Self.normalize(email)
+        guard Self.isValidEmail(normalizedEmail), !password.isEmpty else {
+            return "请输入有效的邮箱和密码。"
+        }
+        do {
+            let response = try await SupabaseAuthClient.signIn(email: normalizedEmail, password: password)
+            guard let accessToken = response.accessToken, let refreshToken = response.refreshToken else {
+                return "登录未完成，请检查邮箱验证状态后重试。"
+            }
+            let accessSaved = SecureCloudSession.save(accessToken, key: "auth.cloud.accessToken")
+            let refreshSaved = SecureCloudSession.save(refreshToken, key: "auth.cloud.refreshToken")
+            guard accessSaved && refreshSaved else {
+                SecureCloudSession.delete(key: "auth.cloud.accessToken")
+                SecureCloudSession.delete(key: "auth.cloud.refreshToken")
+                return "无法在此设备安全保存云端登录状态，请检查钥匙串设置后重试。"
+            }
+            currentEmail = response.user?.email ?? normalizedEmail
+            currentSalutation = response.user?.userMetadata?.salutation ?? ""
+            currentPhone = response.user?.userMetadata?.phone ?? ""
+            DataOwnership.activateCloud(email: currentEmail)
+            isCloudAccount = true
+            isLoggedIn = true
+            saveSession(for: currentEmail, salutation: currentSalutation, phone: currentPhone, isCloud: true)
+            return nil
+        } catch {
+            return error.localizedDescription
+        }
+    }
+
+    func registerCloud(email: String, salutation: String, phone: String, password: String) async -> String? {
+        let normalizedEmail = Self.normalize(email)
+        guard Self.isValidEmail(normalizedEmail) else { return "请输入有效的邮箱地址。" }
+        guard phone.filter(\.isNumber).count >= 6 else { return "请输入有效的手机号。" }
+        guard password.count >= 6 else { return "密码至少需要 6 位。" }
+        do {
+            let response = try await SupabaseAuthClient.signUp(
+                email: normalizedEmail,
+                password: password,
+                salutation: salutation.trimmingCharacters(in: .whitespacesAndNewlines),
+                phone: phone
+            )
+            guard let accessToken = response.accessToken, let refreshToken = response.refreshToken else {
+                return "注册成功。请先到邮箱完成验证，再返回登录。"
+            }
+            let accessSaved = SecureCloudSession.save(accessToken, key: "auth.cloud.accessToken")
+            let refreshSaved = SecureCloudSession.save(refreshToken, key: "auth.cloud.refreshToken")
+            guard accessSaved && refreshSaved else {
+                SecureCloudSession.delete(key: "auth.cloud.accessToken")
+                SecureCloudSession.delete(key: "auth.cloud.refreshToken")
+                return "账号已创建，但无法在此设备安全保存登录状态。请重新登录。"
+            }
+            currentEmail = response.user?.email ?? normalizedEmail
+            currentSalutation = response.user?.userMetadata?.salutation ?? ""
+            currentPhone = response.user?.userMetadata?.phone ?? phone
+            DataOwnership.activateCloud(email: currentEmail)
+            isCloudAccount = true
+            isLoggedIn = true
+            saveSession(for: currentEmail, salutation: currentSalutation, phone: currentPhone, isCloud: true)
+            return nil
+        } catch {
+            return error.localizedDescription
+        }
+    }
+
+    func sendCloudPasswordRecovery(email: String) async -> String? {
+        let normalizedEmail = Self.normalize(email)
+        guard Self.isValidEmail(normalizedEmail) else { return "请输入有效的邮箱地址。" }
+        do {
+            try await SupabaseAuthClient.requestPasswordRecovery(email: normalizedEmail)
+            return nil
+        } catch {
+            return error.localizedDescription
+        }
     }
 
     func register(email: String, salutation: String, phone: String, password: String, context: ModelContext) -> String? {
@@ -82,28 +193,49 @@ final class AuthViewModel {
     }
 
     func logout() {
+        if isCloudAccount, let accessToken = SecureCloudSession.load(key: "auth.cloud.accessToken") {
+            Task { await Self.remoteLogout(accessToken: accessToken) }
+        }
         isLoggedIn = false
         currentEmail = ""
         currentSalutation = ""
+        currentPhone = ""
+        isCloudAccount = false
+        DataOwnership.activateLocal(email: currentEmail)
+        SecureCloudSession.delete(key: "auth.cloud.accessToken")
+        SecureCloudSession.delete(key: "auth.cloud.refreshToken")
         clearSavedSession()
     }
 
-    /// Deletes every locally stored account and app-owned user record.
-    /// No cloud service is configured in this app, so there is no remote data to delete.
+    /// Deletes device data only for local accounts. Cloud account deletion requires a
+    /// trusted server function and is deliberately blocked here to avoid partial deletion.
     func deleteAllLocalData(context: ModelContext) throws {
-        try context.delete(model: Address.self)
-        try context.delete(model: Connect.self)
-        try context.delete(model: Custumer.self)
-        try context.delete(model: ProfileInfo.self)
-        try context.delete(model: LoginInfo.self)
-        try context.delete(model: LocalAccount.self)
-        try context.delete(model: TripBookingRecord.self)
+        guard !isCloudAccount else {
+            throw SupabaseAuthClient.AuthError.message("当前登录的是云端账号。云端账号删除需要额外的安全服务配置，请勿误以为本次会删除云端账号或数据。")
+        }
+        let scope = DataOwnership.activeScope
+        let customers = try context.fetch(FetchDescriptor<Custumer>(predicate: #Predicate { $0.ownerScope == scope }))
+        let agencies = try context.fetch(FetchDescriptor<TravelAgency>(predicate: #Predicate { $0.ownerScope == scope }))
+        let trips = try context.fetch(FetchDescriptor<TripBookingRecord>(predicate: #Predicate { $0.ownerScope == scope }))
+        let deletions = try context.fetch(FetchDescriptor<CloudSyncDeletion>(predicate: #Predicate { $0.ownerScope == scope }))
+        for customer in customers { context.delete(customer) }
+        for agency in agencies { context.delete(agency) }
+        for trip in trips { context.delete(trip) }
+        for deletion in deletions { context.delete(deletion) }
+
+        let email = currentEmail
+        if let localAccount = account(for: email, in: context) {
+            context.delete(localAccount)
+        }
+        let loginRecords = try context.fetch(FetchDescriptor<LoginInfo>(predicate: #Predicate { $0.username == email }))
+        for login in loginRecords { context.delete(login) }
         try context.save()
 
-        PasswordKeychain.deleteAll()
+        PasswordKeychain.delete(for: email)
         logout()
         UserDefaults.standard.removeObject(forKey: "auth.rememberEmail")
         UserDefaults.standard.removeObject(forKey: "auth.rememberedEmail")
+        AccountAssetStore.removeLocalAssets(email: email)
         clearLocalCaches()
     }
 
@@ -121,7 +253,9 @@ final class AuthViewModel {
         guard !currentEmail.isEmpty,
               let account = account(for: currentEmail, in: context) else { return }
         currentSalutation = account.salutation
+        currentPhone = account.phone
         UserDefaults.standard.set(account.salutation, forKey: sessionSalutationKey)
+        UserDefaults.standard.set(account.phone, forKey: sessionPhoneKey)
     }
 
     private func restoreSession(now: Date = .now) {
@@ -133,21 +267,39 @@ final class AuthViewModel {
         }
         currentEmail = email
         currentSalutation = UserDefaults.standard.string(forKey: sessionSalutationKey) ?? ""
+        currentPhone = UserDefaults.standard.string(forKey: sessionPhoneKey) ?? ""
+        isCloudAccount = UserDefaults.standard.bool(forKey: "auth.session.isCloud")
+        if isCloudAccount {
+            DataOwnership.activateCloud(email: currentEmail)
+        } else {
+            DataOwnership.activateLocal(email: currentEmail)
+        }
         isLoggedIn = true
     }
 
-    private func saveSession(for email: String, salutation: String, now: Date = .now) {
+    private func saveSession(for email: String, salutation: String, phone: String, isCloud: Bool = false, now: Date = .now) {
         let expiration = Calendar.current.date(byAdding: .month, value: 1, to: now)
             ?? now.addingTimeInterval(30 * 24 * 60 * 60)
         UserDefaults.standard.set(email, forKey: sessionEmailKey)
         UserDefaults.standard.set(salutation, forKey: sessionSalutationKey)
+        UserDefaults.standard.set(phone, forKey: sessionPhoneKey)
         UserDefaults.standard.set(expiration, forKey: sessionExpirationKey)
+        UserDefaults.standard.set(isCloud, forKey: "auth.session.isCloud")
+        if isCloud {
+            DataOwnership.activateCloud(email: email)
+        } else {
+            DataOwnership.activateLocal(email: email)
+        }
     }
 
     private func clearSavedSession() {
         UserDefaults.standard.removeObject(forKey: sessionEmailKey)
         UserDefaults.standard.removeObject(forKey: sessionSalutationKey)
+        UserDefaults.standard.removeObject(forKey: sessionPhoneKey)
         UserDefaults.standard.removeObject(forKey: sessionExpirationKey)
+        UserDefaults.standard.removeObject(forKey: "auth.session.isCloud")
+        SecureCloudSession.delete(key: "auth.cloud.accessToken")
+        SecureCloudSession.delete(key: "auth.cloud.refreshToken")
     }
 
     private func clearLocalCaches() {
@@ -166,6 +318,14 @@ final class AuthViewModel {
                 try? fileManager.removeItem(at: item)
             }
         }
+    }
+
+    private static func remoteLogout(accessToken: String) async {
+        var request = URLRequest(url: SupabaseAuthClient.endpoint(path: "/auth/v1/logout"))
+        request.httpMethod = "POST"
+        request.setValue(SupabaseAuthClient.publishableKey, forHTTPHeaderField: "apikey")
+        request.setValue("Bearer \(accessToken)", forHTTPHeaderField: "Authorization")
+        _ = try? await URLSession.shared.data(for: request)
     }
 
     private func account(for email: String, in context: ModelContext) -> LocalAccount? {
@@ -197,6 +357,51 @@ final class AuthViewModel {
                 && label.last != "-"
                 && label.allSatisfy { $0.isLetter || $0.isNumber || $0 == "-" }
         }
+    }
+}
+
+private enum SecureCloudSession {
+    private static let service = "com.yunshengtech.travelmanager.cloud-session"
+
+    @discardableResult
+    static func save(_ value: String, key: String) -> Bool {
+        let query: [String: Any] = [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrService as String: service,
+            kSecAttrAccount as String: key
+        ]
+        let data = Data(value.utf8)
+        let status = SecItemUpdate(query as CFDictionary, [kSecValueData as String: data] as CFDictionary)
+        if status == errSecItemNotFound {
+            var insert = query
+            insert[kSecValueData as String] = data
+            insert[kSecAttrAccessible as String] = kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly
+            return SecItemAdd(insert as CFDictionary, nil) == errSecSuccess
+        }
+        return status == errSecSuccess
+    }
+
+    static func load(key: String) -> String? {
+        let query: [String: Any] = [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrService as String: service,
+            kSecAttrAccount as String: key,
+            kSecReturnData as String: true,
+            kSecMatchLimit as String: kSecMatchLimitOne
+        ]
+        var result: CFTypeRef?
+        guard SecItemCopyMatching(query as CFDictionary, &result) == errSecSuccess,
+              let data = result as? Data else { return nil }
+        return String(data: data, encoding: .utf8)
+    }
+
+    static func delete(key: String) {
+        let query: [String: Any] = [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrService as String: service,
+            kSecAttrAccount as String: key
+        ]
+        SecItemDelete(query as CFDictionary)
     }
 }
 

@@ -5,6 +5,7 @@ struct ForgotPasswordView: View {
     @Environment(AuthViewModel.self) private var auth
     @Environment(\.modelContext) private var modelContext
     @Environment(\.dismiss) private var dismiss
+    @AppStorage("auth.accountMode.cloud") private var useCloudAccount = false
 
     @State private var email = ""
     @State private var verificationCode = ""
@@ -20,26 +21,34 @@ struct ForgotPasswordView: View {
             Form {
                 Section {
                     TextField("邮箱", text: $email)
+                        .keyboardDoneToolbar()
                         .textContentType(.emailAddress)
                         .keyboardType(.emailAddress)
                         .textInputAutocapitalization(.never)
                         .autocorrectionDisabled()
-                    HStack {
-                        TextField("验证码", text: $verificationCode)
-                            .keyboardType(.numberPad)
-                        Button {
-                            codeRequested = true
-                            isError = false
-                            message = nil
-                            isShowingCodeNotice = true
-                        } label: {
-                            Text(LocalizedStringKey(codeRequested ? "重新获取" : "获取验证码"))
+                    if useCloudAccount {
+                        Button("发送云端重置邮件") { sendCloudRecovery() }
+                    } else {
+                        HStack {
+                            TextField("验证码", text: $verificationCode)
+                                .keyboardDoneToolbar()
+                                .keyboardType(.numberPad)
+                            Button {
+                                codeRequested = true
+                                isError = false
+                                message = nil
+                                isShowingCodeNotice = true
+                            } label: {
+                                Text(LocalizedStringKey(codeRequested ? "重新获取" : "获取验证码"))
+                            }
                         }
+                        SecureField("新密码（至少 6 位）", text: $newPassword)
+                            .keyboardDoneToolbar()
+                            .textContentType(.newPassword)
+                        SecureField("确认新密码", text: $confirmPassword)
+                            .keyboardDoneToolbar()
+                            .textContentType(.newPassword)
                     }
-                    SecureField("新密码（至少 6 位）", text: $newPassword)
-                        .textContentType(.newPassword)
-                    SecureField("确认新密码", text: $confirmPassword)
-                        .textContentType(.newPassword)
                 }
 
                 if let message {
@@ -56,10 +65,12 @@ struct ForgotPasswordView: View {
                     }
                 }
 
-                Section {
-                    Button("重置密码") { resetPassword() }
-                        .frame(maxWidth: .infinity, alignment: .center)
-                        .disabled(!codeRequested)
+                if !useCloudAccount {
+                    Section {
+                        Button("重置密码") { resetPassword() }
+                            .frame(maxWidth: .infinity, alignment: .center)
+                            .disabled(!codeRequested)
+                    }
                 }
             }
             .navigationTitle("忘记密码")
@@ -89,6 +100,20 @@ struct ForgotPasswordView: View {
             message = error
         } else {
             dismiss()
+        }
+    }
+
+    private func sendCloudRecovery() {
+        isError = false
+        message = "正在发送重置邮件…"
+        Task {
+            if let error = await auth.sendCloudPasswordRecovery(email: email) {
+                isError = true
+                message = error
+            } else {
+                isError = false
+                message = "如果该邮箱已注册，Supabase 会发送密码重置邮件。请按邮件提示完成重置。"
+            }
         }
     }
 }

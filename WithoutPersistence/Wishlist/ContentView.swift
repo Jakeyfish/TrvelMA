@@ -22,13 +22,13 @@ struct ContentView: View {
                 }
                 
                 Tab("行程", systemImage: "books.vertical") {
-                    GoalsView()
+                    TripsPageView()
                 }
                 Tab("名片", systemImage: "person.text.rectangle.fill") {
-                    //GoalsView()
+                    BusinessCardView()
                 }
                 Tab("钱包", systemImage: "wallet.bifold.fill") {
-                    //GoalsView()
+                    WalletView()
                 }
                 Tab("客户", systemImage: "person.crop.rectangle.badge.plus.fill") {
                     CustomerListView()
@@ -44,13 +44,59 @@ struct ContentView: View {
 
 
 struct CustomerListView: View {
+    @Environment(\.locale) private var locale
     @Query private var customers: [Custumer]
+    @Query private var tripBookings: [TripBookingRecord]
+    @AppStorage(BaseCurrencyCatalog.countryCodeKey) private var baseCurrencyCountry = BaseCurrencyCatalog.defaultCountryCode
     @State private var isAddingCustomer = false
     @State private var selectedFilter: CustomerListFilter = .all
     @State private var searchText = ""
 
+    init() {
+        let scope = DataOwnership.activeScope
+        _customers = Query(filter: #Predicate { $0.ownerScope == scope })
+        _tripBookings = Query(filter: #Predicate { $0.ownerScope == scope })
+    }
+
     private var sortedCustomers: [Custumer] {
         customers.sorted { $0.updateAt > $1.updateAt }
+    }
+
+    private var tripCountsByCustomerID: [String: Int] {
+        let customersByName = Dictionary(grouping: customers, by: { $0.name })
+        var counts: [String: Int] = [:]
+        for booking in tripBookings where !booking.isCancelled {
+            if let customerID = booking.customerUUID {
+                counts[customerID, default: 0] += 1
+            } else if let matches = customersByName[booking.customerName], matches.count == 1,
+                      let customerID = matches.first?.uuid {
+                counts[customerID, default: 0] += 1
+            }
+        }
+        return counts
+    }
+
+    private var customerContributionTrips: [TripBookingRecord] {
+        var seen = Set<UUID>()
+        return customers
+            .flatMap { customerTripRecords(for: $0, customers: customers, bookings: tripBookings) }
+            .filter { seen.insert($0.id).inserted }
+    }
+
+    private var customerContributionTotalIncome: Double {
+        customerContributionTrips.reduce(0) { $0 + netIncome(for: $1) }
+    }
+
+    private var customerContributionUnpaid: Double {
+        customerContributionTrips
+            .filter { !$0.isPaid }
+            .reduce(0) { $0 + max(0, netIncome(for: $1)) }
+    }
+
+    private func netIncome(for booking: TripBookingRecord) -> Double {
+        booking.price + booking.tip + booking.expenseAdjustments.reduce(0) { total, item in
+            total + (item.isAddition ? abs(item.amount) : -abs(item.amount))
+        }
     }
 
     private var filteredCustomers: [Custumer] {
@@ -74,73 +120,7 @@ struct CustomerListView: View {
 
     var body: some View {
         NavigationStack {
-            ScrollView {
-                VStack(spacing: 10) {
-                    LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: 10) {
-                        customerStatCard(icon: "person.2.fill", title: "客户", value: "\(customers.count)", detail: "\(customers.count)/1000 位客户", tint: .teal)
-                        customerStatCard(icon: "chart.line.uptrend.xyaxis", title: "客户贡献", value: "—", detail: "行程金额尚未关联客户", tint: .green, highlightValue: true)
-                    }
-
-                    HStack(spacing: 10) {
-                        ForEach(CustomerListFilter.allCases) { filter in
-                            Button {
-                                selectedFilter = filter
-                            } label: {
-                                HStack(spacing: 7) {
-                                    Image(systemName: filter.icon)
-                                        .font(.system(size: 15, weight: .semibold))
-                                        .foregroundStyle(selectedFilter == filter ? Color.accentColor : Color.secondary)
-                                    Text(LocalizedStringKey(filter.title))
-                                        .font(.system(size: 11, weight: .semibold))
-                                        .foregroundStyle(.primary)
-                                        .lineLimit(1)
-                                        .minimumScaleFactor(0.75)
-                                }
-                                .frame(maxWidth: .infinity, minHeight: 42, alignment: .leading)
-                                .padding(.horizontal, 10)
-                                .background(selectedFilter == filter ? Color.accentColor.opacity(0.12) : Color(.secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 13))
-                                .overlay(RoundedRectangle(cornerRadius: 13).stroke(selectedFilter == filter ? Color.accentColor.opacity(0.65) : Color.secondary.opacity(0.15), lineWidth: 1))
-                            }
-                            .buttonStyle(.plain)
-                        }
-                    }
-
-                    HStack(spacing: 12) {
-                        Image(systemName: "magnifyingglass")
-                            .foregroundStyle(.secondary)
-                        TextField("搜索姓名、电话、来源、地址或备注", text: $searchText)
-                            .textInputAutocapitalization(.never)
-                            .autocorrectionDisabled()
-                        if !searchText.isEmpty {
-                            Button { searchText = "" } label: {
-                                Image(systemName: "xmark.circle.fill").foregroundStyle(.secondary)
-                            }
-                            .accessibilityLabel("清除搜索")
-                        }
-                    }
-                    .padding(.horizontal, 14)
-                    .frame(minHeight: 44)
-                    .background(Color(.secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 13))
-                    .overlay(RoundedRectangle(cornerRadius: 13).stroke(Color.secondary.opacity(0.15), lineWidth: 1))
-
-                    LazyVStack(spacing: 8) {
-                        ForEach(filteredCustomers, id: \.uuid) { customer in
-                            NavigationLink {
-                                CustomerBrowseView(customer: customer)
-                            } label: {
-                                CustomerCardView(customer: customer)
-                            }
-                            .buttonStyle(.plain)
-                        }
-                        if filteredCustomers.isEmpty {
-                            ContentUnavailableView(searchText.isEmpty ? "暂无客户" : "没有找到客户", systemImage: searchText.isEmpty ? "person.crop.rectangle" : "magnifyingglass")
-                                .padding(.top, 24)
-                        }
-                    }
-                }
-            }
-            .background(Color(.systemGroupedBackground))
-            .safeAreaInset(edge: .top, spacing: 0) {
+            VStack(spacing: 0) {
                 HStack {
                     HStack(spacing: 10) {
                         Image(systemName: "person.2.fill")
@@ -168,9 +148,98 @@ struct CustomerListView: View {
                     .accessibilityLabel("新增客户")
                 }
                 .padding(.horizontal, 20)
-                .padding(.vertical, 4)
-                .background(Color(.systemGroupedBackground))
+                .padding(.vertical, 8)
+
+                VStack(spacing: 10) {
+                    LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: 10) {
+                        customerStatCard(icon: "person.2.fill", title: "客户", value: "\(customers.count)", detail: "\(customers.count)/1000 位客户", tint: .teal)
+                        customerContributionCard
+                    }
+
+                    HStack(spacing: 10) {
+                        ForEach(CustomerListFilter.allCases) { filter in
+                            Button {
+                                selectedFilter = filter
+                            } label: {
+                                HStack(spacing: 7) {
+                                    Image(systemName: filter.icon)
+                                        .font(.system(size: 15, weight: .semibold))
+                                        .foregroundStyle(selectedFilter == filter ? Color.accentColor : Color.secondary)
+                                        Text(LocalizedStringKey(filter.title))
+                                        .font(.system(size: 11, weight: .semibold))
+                                        .foregroundStyle(.primary)
+                                        .lineLimit(1)
+                                        .minimumScaleFactor(0.75)
+                                }
+                                .frame(maxWidth: .infinity, minHeight: 42, alignment: .leading)
+                                .padding(.horizontal, 10)
+                                .background(selectedFilter == filter ? Color.accentColor.opacity(0.12) : Color(.secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 13))
+                                .overlay(RoundedRectangle(cornerRadius: 13).stroke(selectedFilter == filter ? Color.accentColor.opacity(0.65) : Color.secondary.opacity(0.15), lineWidth: 1))
+                            }
+                            .buttonStyle(.plain)
+                        }
+                    }
+
+                    HStack(spacing: 9) {
+                        Image(systemName: "magnifyingglass")
+                            .font(.system(size: 14, weight: .semibold))
+                            .foregroundStyle(Color.accentColor)
+                            .frame(width: 29, height: 29)
+                            .background(Color.accentColor.opacity(0.10), in: RoundedRectangle(cornerRadius: 9, style: .continuous))
+                            .accessibilityHidden(true)
+                        SystemIMETextField(
+                            text: $searchText,
+                            placeholder: String(localized: "搜索姓名、电话、邮箱、地址或备注", locale: locale),
+                            capitalization: .none
+                        )
+                        .frame(maxWidth: .infinity)
+                        .frame(height: 36)
+                        .fixedSize(horizontal: false, vertical: true)
+                        if !searchText.isEmpty {
+                            Button {
+                                withAnimation(.easeOut(duration: 0.15)) { searchText = "" }
+                            } label: {
+                                Image(systemName: "xmark")
+                                    .font(.system(size: 11, weight: .bold))
+                                    .foregroundStyle(.secondary)
+                                    .frame(width: 30, height: 30)
+                                    .background(Color(.tertiarySystemGroupedBackground), in: Circle())
+                            }
+                            .accessibilityLabel("清除搜索")
+                            .transition(.scale.combined(with: .opacity))
+                        }
+                    }
+                    .padding(.horizontal, 10)
+                    .frame(height: 44)
+                    .background(Color(.secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+                    .overlay(RoundedRectangle(cornerRadius: 14, style: .continuous).stroke(searchText.isEmpty ? Color.secondary.opacity(0.13) : Color.accentColor.opacity(0.42), lineWidth: 1))
+
+                }
+                .padding(.horizontal, 16)
+                .padding(.vertical, 8)
+
+                ScrollView {
+                    LazyVStack(spacing: 8) {
+                        ForEach(filteredCustomers, id: \.uuid) { customer in
+                            NavigationLink {
+                                CustomerBrowseView(customer: customer)
+                            } label: {
+                                CustomerCardView(customer: customer, tripCount: tripCountsByCustomerID[customer.uuid] ?? 0)
+                            }
+                            .buttonStyle(.plain)
+                        }
+                        if filteredCustomers.isEmpty {
+                            ContentUnavailableView(searchText.isEmpty ? "暂无客户" : "没有找到客户", systemImage: searchText.isEmpty ? "person.crop.rectangle" : "magnifyingglass")
+                                .padding(.top, 24)
+                        }
+                    }
+                    .padding(.horizontal, 16)
+                    .padding(.top, 2)
+                    .padding(.bottom, 16)
+                }
+                .scrollDismissesKeyboard(.interactively)
             }
+            .background(Color(.systemGroupedBackground))
             .toolbar(.hidden, for: .navigationBar)
             .sheet(isPresented: $isAddingCustomer) {
                 NavigationStack {
@@ -210,6 +279,52 @@ struct CustomerListView: View {
         .background(Color(.secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 15))
         .overlay(RoundedRectangle(cornerRadius: 15).stroke(Color.secondary.opacity(0.15), lineWidth: 1))
     }
+
+    private var customerContributionCard: some View {
+        VStack(alignment: .leading, spacing: 5) {
+            HStack(spacing: 7) {
+                Image(systemName: "chart.line.uptrend.xyaxis")
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundStyle(Color.green)
+                    .frame(width: 27, height: 27)
+                    .background(Color.green.opacity(0.13), in: RoundedRectangle(cornerRadius: 9))
+                Text("客户贡献")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.62)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
+            HStack(spacing: 4) {
+                Text("总收入")
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.65)
+                Spacer(minLength: 4)
+                Text(BaseCurrencyCatalog.format(customerContributionTotalIncome, countryCode: baseCurrencyCountry))
+                    .foregroundStyle(.green)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.65)
+            }
+            .font(.system(size: 13, weight: .bold, design: .rounded))
+            HStack(spacing: 4) {
+                Text("未收款")
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.65)
+                Spacer(minLength: 4)
+                Text(BaseCurrencyCatalog.format(customerContributionUnpaid, countryCode: baseCurrencyCountry))
+                    .foregroundStyle(.orange)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.65)
+            }
+            .font(.system(size: 13, weight: .bold, design: .rounded))
+        }
+        .frame(maxWidth: .infinity, minHeight: 92, alignment: .leading)
+        .padding(10)
+        .background(Color(.secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 15))
+        .overlay(RoundedRectangle(cornerRadius: 15).stroke(Color.secondary.opacity(0.15), lineWidth: 1))
+    }
 }
 
 private enum CustomerListFilter: String, CaseIterable, Identifiable {
@@ -219,7 +334,7 @@ private enum CustomerListFilter: String, CaseIterable, Identifiable {
     var title: String {
         switch self {
         case .all: "全部"
-        case .regular: "普通客户"
+        case .regular: "个人客户筛选"
         case .agency: "旅行社"
         }
     }
@@ -234,6 +349,7 @@ private enum CustomerListFilter: String, CaseIterable, Identifiable {
 
 private struct CustomerCardView: View {
     let customer: Custumer
+    let tripCount: Int
 
     var body: some View {
         HStack(spacing: 14) {
@@ -265,7 +381,17 @@ private struct CustomerCardView: View {
                         .lineLimit(1)
                 }
             }
-            Spacer(minLength: 0)
+            Spacer(minLength: 4)
+            VStack(spacing: 4) {
+                Image(systemName: "car.fill")
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundStyle(Color.accentColor)
+                Text("\(tripCount) 次出行")
+                    .font(.system(size: 10, weight: .medium))
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+                    .fixedSize()
+            }
         }
         .padding(14)
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -279,9 +405,33 @@ private struct CustomerBrowseView: View {
     @Environment(\.dismiss) private var dismiss
     @Environment(\.openURL) private var openURL
     @AppStorage(NavigationProvider.defaultsKey) private var defaultNavigationProvider = NavigationProvider.appleMaps.rawValue
+    @AppStorage(BaseCurrencyCatalog.countryCodeKey) private var baseCurrencyCountry = BaseCurrencyCatalog.defaultCountryCode
+    @Query private var tripBookings: [TripBookingRecord]
+    @Query private var allCustomers: [Custumer]
     let customer: Custumer
     @State private var isConfirmingDelete = false
     @State private var errorMessage: String?
+
+    init(customer: Custumer) {
+        self.customer = customer
+        let scope = DataOwnership.activeScope
+        _tripBookings = Query(filter: #Predicate { $0.ownerScope == scope })
+        _allCustomers = Query(filter: #Predicate { $0.ownerScope == scope })
+    }
+
+    private var customerTrips: [TripBookingRecord] {
+        customerTripRecords(for: customer, customers: allCustomers, bookings: tripBookings)
+    }
+
+    private var hasAnyTripHistory: Bool {
+        let isUniqueCustomerName = allCustomers.filter { $0.name == customer.name }.count == 1
+        return tripBookings.contains { booking in
+            if booking.customerUUID == customer.uuid { return true }
+            return booking.customerUUID == nil
+                && isUniqueCustomerName
+                && booking.customerName == customer.name
+        }
+    }
 
     var body: some View {
         List {
@@ -296,27 +446,51 @@ private struct CustomerBrowseView: View {
                     }
                 }
                 LabeledContent("语言喜好", value: AppLanguage(rawValue: customer.languagePreference)?.nativeName ?? customer.languagePreference)
+                if customer.customerCategory == 2 {
+                    HStack(spacing: 12) {
+                        compactCustomerValue("旅行社代码", customer.travelAgencyCode.isEmpty ? "未选择" : customer.travelAgencyCode)
+                        compactCustomerValue("旅行社名称", customer.travelAgencyName.isEmpty ? "未选择" : customer.travelAgencyName)
+                    }
+                }
             }
 
             Section("联系方式") {
                 ForEach(customer.connecttype) { contact in
-                    VStack(alignment: .leading, spacing: 8) {
-                        HStack {
-                            Text(LocalizedStringKey(contact.connectlable)).font(.footnote.weight(.medium))
-                            if contact.isDefault { Text("默认").font(.system(size: 11)).foregroundStyle(Color.accentColor) }
+                    HStack(spacing: 8) {
+                        Text(LocalizedStringKey(contact.connectlable))
+                            .font(.caption.weight(.medium))
+                            .foregroundStyle(.secondary)
+                        if contact.isDefault {
+                            Text("默认")
+                                .font(.system(size: 10, weight: .medium))
+                                .foregroundStyle(Color.accentColor)
+                                .padding(.horizontal, 6)
+                                .padding(.vertical, 3)
+                                .background(Color.accentColor.opacity(0.10), in: Capsule())
                         }
                         Text(contact.connecttype)
-                        HStack(spacing: 16) {
-                            if contact.connectlable == "电话" {
-                                Button { openContactURL("tel://\(contact.connecttype)") } label: { Label("拨打电话", systemImage: "phone.fill") }
-                                Button { openContactURL("sms:\(contact.connecttype)") } label: { Label("发送信息", systemImage: "message.fill") }
-                            } else if contact.connectlable == "邮箱" {
-                                Button { openContactURL("mailto:\(contact.connecttype)") } label: { Label("发送邮件", systemImage: "envelope.fill") }
+                            .font(.subheadline)
+                            .lineLimit(1)
+                            .minimumScaleFactor(0.75)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                        if contact.connectlable == "电话" {
+                            Button { openContactURL("tel://\(contact.connecttype)") } label: {
+                                Image(systemName: "phone.fill")
                             }
+                            .accessibilityLabel("拨打电话")
+                            Button { openContactURL("sms:\(contact.connecttype)") } label: {
+                                Image(systemName: "message.fill")
+                            }
+                            .accessibilityLabel("发送信息")
+                        } else if contact.connectlable == "邮箱" {
+                            Button { openContactURL("mailto:\(contact.connecttype)") } label: {
+                                Image(systemName: "envelope.fill")
+                            }
+                            .accessibilityLabel("发送邮件")
                         }
-                        .font(.system(size: 12))
                     }
-                    .padding(.vertical, 4)
+                    .font(.system(size: 12))
+                    .padding(.vertical, 3)
                 }
                 if customer.connecttype.isEmpty && customer.email.isEmpty {
                     Text("暂无联系方式").foregroundStyle(.secondary)
@@ -358,6 +532,21 @@ private struct CustomerBrowseView: View {
                 Text(customer.remark.isEmpty ? "暂无备注" : customer.remark)
                     .foregroundStyle(customer.remark.isEmpty ? .secondary : .primary)
             }
+
+            Section {
+                if customerTrips.isEmpty {
+                    Text("暂无出行记录")
+                        .font(.system(size: 11))
+                        .foregroundStyle(.secondary)
+                } else {
+                    ForEach(customerTrips, id: \.id) { booking in
+                        CustomerTripRecordRow(booking: booking, currencyCountry: baseCurrencyCountry)
+                    }
+                }
+            } header: {
+                Text("出行记录")
+                    .font(.system(size: 11, weight: .semibold))
+            }
         }
         .navigationTitle("客户资料")
         .navigationBarTitleDisplayMode(.inline)
@@ -371,7 +560,13 @@ private struct CustomerBrowseView: View {
                 }
             }
             ToolbarItem(placement: .topBarTrailing) {
-                Button(role: .destructive) { isConfirmingDelete = true } label: {
+                Button(role: .destructive) {
+                    if hasAnyTripHistory {
+                        errorMessage = "该客户已有出行记录，不能删除。"
+                    } else {
+                        isConfirmingDelete = true
+                    }
+                } label: {
                     Image(systemName: "trash")
                 }
                 .accessibilityLabel("删除客户")
@@ -387,6 +582,15 @@ private struct CustomerBrowseView: View {
         .font(.system(size: 15))
     }
 
+    private func compactCustomerValue(_ title: String, _ value: String) -> some View {
+        VStack(alignment: .leading, spacing: 3) {
+            Text(LocalizedStringKey(title)).font(.caption).foregroundStyle(.secondary)
+            Text(value).font(.subheadline).lineLimit(1).minimumScaleFactor(0.8)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.vertical, 3)
+    }
+
     private func openContactURL(_ value: String) {
         let encoded = value.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? value
         if let url = URL(string: encoded) { openURL(url) }
@@ -399,12 +603,61 @@ private struct CustomerBrowseView: View {
     }
 
     private func deleteCustomer() {
+        SupabaseDataSync.recordDeletion(table: "customers", id: customer.uuid, context: modelContext)
         modelContext.delete(customer)
         do {
             try modelContext.save()
             dismiss()
         } catch {
             errorMessage = error.localizedDescription
+        }
+    }
+}
+
+private func customerTripRecords(
+    for customer: Custumer,
+    customers: [Custumer],
+    bookings: [TripBookingRecord]
+) -> [TripBookingRecord] {
+    let isUniqueCustomerName = customers.filter { $0.name == customer.name }.count == 1
+    return bookings
+        .filter { booking in
+            guard !booking.isCancelled else { return false }
+            if booking.customerUUID == customer.uuid { return true }
+            return booking.customerUUID == nil
+                && isUniqueCustomerName
+                && booking.customerName == customer.name
+        }
+        .sorted { $0.appointmentDate > $1.appointmentDate }
+}
+
+private struct CustomerTripRecordRow: View {
+    let booking: TripBookingRecord
+    let currencyCountry: String
+
+    var body: some View {
+        HStack(alignment: .top, spacing: 10) {
+            valueColumn("出行日期", value: booking.appointmentDate.formatted(date: .numeric, time: .omitted))
+                .frame(maxWidth: .infinity, alignment: .leading)
+            valueColumn("目的地", value: booking.locationEnd.isEmpty ? "未填写" : booking.locationEnd)
+                .frame(maxWidth: .infinity, alignment: .leading)
+            valueColumn("车费", value: BaseCurrencyCatalog.format(booking.price, countryCode: currencyCountry))
+                .frame(maxWidth: .infinity, alignment: .trailing)
+        }
+        .padding(.vertical, 3)
+        .font(.system(size: 11))
+    }
+
+    private func valueColumn(_ title: String, value: String) -> some View {
+        VStack(alignment: title == "车费" ? .trailing : .leading, spacing: 4) {
+            Text(title)
+                .font(.system(size: 11, weight: .medium))
+                .foregroundStyle(.secondary)
+            Text(value)
+                .font(.system(size: 11, weight: .medium))
+                .foregroundStyle(.primary)
+                .lineLimit(2)
+                .fixedSize(horizontal: false, vertical: true)
         }
     }
 }
@@ -448,6 +701,9 @@ private struct CustomerDetailView: View {
     @State private var avatarData: Data?
     @State private var selectedPhoto: PhotosPickerItem?
     @State private var customerCategory: Int
+    @State private var travelAgencyCode: String
+    @State private var travelAgencyName: String
+    @State private var isShowingAgencyPicker = false
     @State private var languagePreference: String
     @State private var contacts: [ContactDraft]
     @State private var addresses: [AddressDraft]
@@ -461,6 +717,8 @@ private struct CustomerDetailView: View {
         _name = State(initialValue: customer?.name ?? "")
         _avatarData = State(initialValue: Self.loadAvatar(customer?.avatarUrl ?? ""))
         _customerCategory = State(initialValue: customer?.customerCategory ?? 1)
+        _travelAgencyCode = State(initialValue: customer?.travelAgencyCode ?? "")
+        _travelAgencyName = State(initialValue: customer?.travelAgencyName ?? "")
         _languagePreference = State(initialValue: customer?.languagePreference ?? "zh-Hans")
         var savedContacts = customer?.connecttype.map {
             ContactDraft(type: $0.connectlable, value: $0.connecttype, isDefault: $0.isDefault)
@@ -522,7 +780,7 @@ private struct CustomerDetailView: View {
             }
 
             Section("基本信息") {
-                TextField("客户名称", text: $name).nativeIMEInput()
+                SystemIMETextField(text: $name, placeholder: "客户名称")
                 VStack(alignment: .leading, spacing: 10) {
                     Text("客户类型")
                         .foregroundStyle(.secondary)
@@ -545,6 +803,32 @@ private struct CustomerDetailView: View {
                     ForEach(AppLanguage.options) { language in
                         Text(language.nativeName).tag(language.rawValue)
                     }
+                }
+            }
+
+            if customerCategory == 2 {
+                Section("旅行社信息") {
+                    Button { isShowingAgencyPicker = true } label: {
+                        VStack(alignment: .leading, spacing: 9) {
+                            HStack {
+                                Text("旅行社代码")
+                                Spacer()
+                                Text(travelAgencyCode.isEmpty ? "点击选择" : travelAgencyCode)
+                                    .foregroundStyle(travelAgencyCode.isEmpty ? Color.accentColor : Color.secondary)
+                                Image(systemName: "chevron.right").font(.caption2).foregroundStyle(.tertiary)
+                            }
+                            HStack {
+                                Text("旅行社名称")
+                                Spacer()
+                                Text(travelAgencyName.isEmpty ? "点击选择" : travelAgencyName)
+                                    .foregroundStyle(travelAgencyName.isEmpty ? Color.accentColor : Color.secondary)
+                                    .lineLimit(1)
+                                Image(systemName: "chevron.right").font(.caption2).foregroundStyle(.tertiary)
+                            }
+                        }
+                        .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
                 }
             }
 
@@ -574,10 +858,13 @@ private struct CustomerDetailView: View {
                                 .fixedSize()
                             }
 
-                            TextField("输入联系方式", text: $contact.value)
-                                .textInputAutocapitalization(contact.type == "邮箱" ? .never : .sentences)
-                                .keyboardType(contact.type == "电话" ? .phonePad : (contact.type == "邮箱" ? .emailAddress : .default))
-                                .nativeIMEInput()
+                            SystemIMETextField(
+                                text: $contact.value,
+                                placeholder: "输入联系方式",
+                                keyboardType: contact.type == "电话" ? .phonePad : (contact.type == "邮箱" ? .emailAddress : .default),
+                                capitalization: contact.type == "邮箱" ? .none : .sentences,
+                                autocorrection: contact.type == "邮箱" ? .no : .default
+                            )
 
                         }
 
@@ -684,26 +971,37 @@ private struct CustomerDetailView: View {
             } header: { Text("常用地址") }
 
             Section("备注（最多 256 字）") {
-                TextEditor(text: $remark)
+                LimitedIMETextEditor(text: $remark, maxLength: 256)
                     .frame(minHeight: 100)
-                    .nativeIMEInput()
-                    .onChange(of: remark) { _, value in
-                        if value.count > 256 { remark = String(value.prefix(256)) }
-                    }
                 Text("\(remark.count)/256")
                     .font(.system(size: 12))
                     .foregroundStyle(.secondary)
                     .frame(maxWidth: .infinity, alignment: .trailing)
             }
         }
+        .scrollDismissesKeyboard(.interactively)
         .font(.system(size: 15))
         .navigationTitle(isNewCustomer ? "新增客户" : "编辑客户")
         .navigationBarTitleDisplayMode(.inline)
         .toolbar(.visible, for: .navigationBar)
-        .safeAreaInset(edge: .bottom) { actionButtons }
+        .toolbar {
+            ToolbarItem(placement: .cancellationAction) {
+                Button("取消") { dismiss() }
+            }
+            ToolbarItem(placement: .confirmationAction) {
+                Button("保存") { saveCustomer() }
+                    .fontWeight(.semibold)
+            }
+        }
         .alert("提示", isPresented: Binding(get: { message != nil }, set: { if !$0 { message = nil } })) {
             Button("确定", role: .cancel) { message = nil }
         } message: { Text(message ?? "") }
+        .sheet(isPresented: $isShowingAgencyPicker) {
+            TravelAgencySelectionView { agency in
+                travelAgencyCode = agency.agencyCode
+                travelAgencyName = agency.name
+            }
+        }
         .onChange(of: selectedPhoto) { _, item in
             guard let item else { return }
             Task {
@@ -716,21 +1014,13 @@ private struct CustomerDetailView: View {
         }
     }
 
-    private var actionButtons: some View {
-        HStack(spacing: 12) {
-            Spacer(minLength: 0)
-            Button("保存") { saveCustomer() }.buttonStyle(.borderedProminent)
-        }
-        .frame(maxWidth: .infinity)
-        .padding(.horizontal, 12)
-        .padding(.vertical, 10)
-        .background(.bar)
-    }
-
     private func customerTypeOption(_ title: String, subtitle: String, icon: String, value: Int) -> some View {
         let isSelected = customerCategory == value
         return Button {
+            guard customerCategory != value else { return }
             customerCategory = value
+            travelAgencyCode = ""
+            travelAgencyName = ""
         } label: {
             HStack(spacing: 9) {
                 Image(systemName: icon)
@@ -814,6 +1104,8 @@ private struct CustomerDetailView: View {
         }
         record.name = trimmedName
         record.customerCategory = customerCategory
+        record.travelAgencyCode = customerCategory == 2 ? travelAgencyCode : ""
+        record.travelAgencyName = customerCategory == 2 ? travelAgencyName : ""
         record.languagePreference = languagePreference
         record.remark = String(remark.prefix(256))
         record.updateAt = Date()
@@ -891,9 +1183,7 @@ private struct AddressSuggestionField: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
-            TextField("输入地址，可搜索地点", text: $text)
-                .textInputAutocapitalization(.words)
-                .nativeIMEInput()
+            SystemIMETextField(text: $text, placeholder: "输入地址，可搜索地点")
                 .onChange(of: text) { _, value in
                     searcher.searchQuery = value
                     onFocus()
@@ -925,13 +1215,5 @@ private struct AddressSuggestionField: View {
     ContentView()
         .environment(dataSource)
         .environment(auth)
-        .modelContainer(for: [
-            Custumer.self,
-            Address.self,
-            Connect.self,
-            LoginInfo.self,
-            ProfileInfo.self,
-            LocalAccount.self,
-            TripBookingRecord.self
-        ], inMemory: true)
+        .modelContainer(for: AppDataSchema.modelTypes, inMemory: true)
 }

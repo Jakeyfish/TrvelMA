@@ -22,22 +22,16 @@ struct WishlistApp: App {
     @State private var dataSource = DataSource()
     @State private var auth = AuthViewModel()
     @State private var languageSettings = AppLanguageSettings()
+    @State private var dataStore = AppDataContainerManager()
 
     var body: some Scene {
         WindowGroup {
             RootView()
                 .environment(auth)
+                .environment(dataStore)
                 .environment(languageSettings)
                 .environment(\.locale, languageSettings.locale)
-                .modelContainer(for: [
-                    Custumer.self,
-                    Address.self,
-                    Connect.self,
-                    LoginInfo.self,
-                    ProfileInfo.self,
-                    LocalAccount.self,
-                    TripBookingRecord.self
-                ])
+                .modelContainer(dataStore.activeContainer)
                .environment(dataSource)
                .onChange(of: scenePhase) { _, newPhase in
                    if newPhase == .active {

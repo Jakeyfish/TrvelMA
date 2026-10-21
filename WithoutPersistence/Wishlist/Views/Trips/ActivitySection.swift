@@ -225,6 +225,7 @@ private struct ActivityTextField: View {
             "请输入活动名称",
             text: $activity.name
         )
+            .keyboardDoneToolbar()
         .nativeIMEInput()
         .textFieldStyle(.plain)
         .onSubmit {

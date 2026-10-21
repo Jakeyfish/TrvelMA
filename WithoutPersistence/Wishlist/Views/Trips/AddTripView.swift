@@ -177,6 +177,7 @@ private struct TripTitleField: View {
 
     var body: some View {
         TextField("行程标题", text: $model.name)
+            .keyboardDoneToolbar()
             .nativeIMEInput()
     }
 }

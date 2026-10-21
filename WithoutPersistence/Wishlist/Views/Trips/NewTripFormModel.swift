@@ -19,6 +19,8 @@ struct NewTripFormModel {
     var serviceType: String = "接机"
     var quickInputText: String = ""
     var orderSource: String = "普通客户"
+    var travelAgencyCode: String = ""
+    var travelAgencyName: String = ""
     var customerSelection: String = "客户选择"
     var selectedCustomerUUID: String?
     var customerName: String = ""
@@ -28,6 +30,7 @@ struct NewTripFormModel {
     var appointmentDate: Date = Date()
     var appointmentTime: Date = Date()
     var locationStart: String = ""
+    var locationStops: [String] = []
     var locationEnd: String = ""
     var flightInfo: String = ""
     var flightdate: Date = Date()
@@ -44,6 +47,42 @@ struct NewTripFormModel {
     var secondReminderDateTime = Date.now
     var reminderDateWasCustomized = false
     var secondReminderDateWasCustomized = false
+    var copiedReminderDefaultsToTwoHours = false
+
+    init(booking: TripBookingRecord? = nil, copying: Bool = false) {
+        guard let booking else { return }
+        id = copying ? UUID() : booking.id
+        serviceType = booking.serviceType
+        orderSource = booking.orderSource
+        travelAgencyCode = booking.travelAgencyCode
+        travelAgencyName = booking.travelAgencyName
+        customerName = booking.customerName
+        selectedCustomerUUID = booking.customerUUID
+        custemerConnect = booking.customerContact
+        customerCount = booking.customerCount
+        customerStuff = booking.customerStuff
+        appointmentDate = copying ? .now : booking.appointmentDate
+        appointmentTime = booking.appointmentTime
+        locationStart = booking.locationStart
+        locationStops = booking.locationStops
+        locationEnd = booking.locationEnd
+        flightInfo = booking.flightInfo
+        flightdate = copying ? .now : booking.flightDate
+        flightDepartureTime = booking.flightDepartureTime ?? ""
+        flightEstimatedArrivalTime = booking.flightEstimatedArrivalTime ?? ""
+        flightArrivalTerminal = booking.flightArrivalTerminal ?? ""
+        flightBaggageCarousel = booking.flightBaggageCarousel ?? ""
+        TripMemo = booking.memo
+        TripPrice = booking.price
+        isPaid = copying ? false : booking.isPaid
+        reminderEnabled = copying ? true : booking.reminderEnabled
+        reminderDateTime = booking.reminderDateTime ?? .now
+        hasSecondReminder = copying ? false : booking.hasSecondReminder
+        secondReminderDateTime = booking.secondReminderDateTime ?? .now
+        reminderDateWasCustomized = copying ? false : booking.reminderDateTime != nil
+        secondReminderDateWasCustomized = copying ? false : booking.secondReminderDateTime != nil
+        copiedReminderDefaultsToTwoHours = copying
+    }
 
     mutating func updateDefaultReminderDateTimes() {
         var appointmentComponents = Calendar.current.dateComponents([.year, .month, .day], from: appointmentDate)
@@ -53,26 +92,48 @@ struct NewTripFormModel {
         let appointment = Calendar.current.date(from: appointmentComponents) ?? appointmentDate
 
         if !reminderDateWasCustomized {
-            reminderDateTime = Calendar.current.date(byAdding: .day, value: -1, to: appointment) ?? appointment
+            reminderDateTime = copiedReminderDefaultsToTwoHours
+                ? (Calendar.current.date(byAdding: .hour, value: -2, to: appointment) ?? appointment)
+                : (Calendar.current.date(byAdding: .day, value: -1, to: appointment) ?? appointment)
         }
         if !secondReminderDateWasCustomized {
             secondReminderDateTime = Calendar.current.date(byAdding: .hour, value: -2, to: appointment) ?? appointment
         }
+    }
+
+    mutating func adjustRemindersForAppointmentChange() {
+        var appointmentComponents = Calendar.current.dateComponents([.year, .month, .day], from: appointmentDate)
+        let timeComponents = Calendar.current.dateComponents([.hour, .minute], from: appointmentTime)
+        appointmentComponents.hour = timeComponents.hour
+        appointmentComponents.minute = timeComponents.minute
+        let appointment = Calendar.current.date(from: appointmentComponents) ?? appointmentDate
+
+        reminderDateTime = Calendar.current.date(byAdding: .day, value: -1, to: appointment) ?? appointment
+        secondReminderDateTime = Calendar.current.date(byAdding: .hour, value: -2, to: appointment) ?? appointment
+        reminderDateWasCustomized = false
+        secondReminderDateWasCustomized = false
+        copiedReminderDefaultsToTwoHours = false
     }
 }
 
 @Model
 final class TripBookingRecord {
     @Attribute(.unique) var id: UUID
+    var ownerScope: String = "local"
     var serviceType: String
     var orderSource: String
+    var travelAgencyCode: String = ""
+    var travelAgencyName: String = ""
     var customerName: String
+    var customerUUID: String? = nil
     var customerContact: String
     var customerCount: String
     var customerStuff: String
     var appointmentDate: Date
     var appointmentTime: Date
     var locationStart: String
+    var locationStop: String = ""
+    var additionalStopsJSON: String = "[]"
     var locationEnd: String
     var flightInfo: String
     var flightDate: Date
@@ -82,25 +143,77 @@ final class TripBookingRecord {
     var flightBaggageCarousel: String?
     var memo: String
     var price: Double
+    var tip: Double = 0
+    var expenseAdjustmentsJSON: String = "[]"
     var isPaid: Bool
     var isCompleted: Bool
+    var isCancelled: Bool = false
     var reminderEnabled: Bool = false
     var reminderDateTime: Date?
     var hasSecondReminder: Bool = false
     var secondReminderDateTime: Date?
     var createdAt: Date
+    // Optional so existing SwiftData stores can migrate without requiring a
+    // synthetic timestamp. Sync comparisons fall back to createdAt for legacy rows.
+    var updatedAt: Date? = nil
+    /// Cloud timestamp last confirmed by a successful download or upload.
+    var syncBaseUpdatedAt: Date? = nil
+
+    var locationStops: [String] {
+        get {
+            let extraStops = (try? JSONDecoder().decode([String].self, from: Data(additionalStopsJSON.utf8))) ?? []
+            let stops = [locationStop] + extraStops
+            return stops.allSatisfy { $0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty } ? [] : stops
+        }
+        set {
+            let stops = newValue.map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }.filter { !$0.isEmpty }
+            locationStop = stops.first ?? ""
+            let extraStops = Array(stops.dropFirst())
+            if let data = try? JSONEncoder().encode(extraStops), let json = String(data: data, encoding: .utf8) {
+                additionalStopsJSON = json
+            } else {
+                additionalStopsJSON = "[]"
+            }
+        }
+    }
+
+    var expenseAdjustments: [TripExpenseAdjustment] {
+        get {
+            guard let data = expenseAdjustmentsJSON.data(using: .utf8),
+                  let items = try? JSONDecoder().decode([TripExpenseAdjustment].self, from: data) else { return [] }
+            return items
+        }
+        set {
+            guard let data = try? JSONEncoder().encode(newValue),
+                  let json = String(data: data, encoding: .utf8) else {
+                expenseAdjustmentsJSON = "[]"
+                return
+            }
+            expenseAdjustmentsJSON = json
+        }
+    }
 
     init(form: NewTripFormModel) {
         id = form.id
+        ownerScope = DataOwnership.activeScope
         serviceType = form.serviceType
         orderSource = form.orderSource
+        travelAgencyCode = form.orderSource == "旅行社订单" ? form.travelAgencyCode : ""
+        travelAgencyName = form.orderSource == "旅行社订单" ? form.travelAgencyName : ""
         customerName = form.customerName
+        customerUUID = form.selectedCustomerUUID
         customerContact = form.custemerConnect
         customerCount = form.customerCount
         customerStuff = form.customerStuff
         appointmentDate = form.appointmentDate
         appointmentTime = form.appointmentTime
         locationStart = form.locationStart
+        let stops = form.locationStops.map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }.filter { !$0.isEmpty }
+        locationStop = stops.first ?? ""
+        let extraStops = Array(stops.dropFirst())
+        if let data = try? JSONEncoder().encode(extraStops), let json = String(data: data, encoding: .utf8) {
+            additionalStopsJSON = json
+        }
         locationEnd = form.locationEnd
         flightInfo = form.flightInfo
         flightDate = form.flightdate
@@ -112,13 +225,94 @@ final class TripBookingRecord {
         price = form.TripPrice
         isPaid = form.isPaid
         isCompleted = false
+        isCancelled = false
+        reminderEnabled = form.reminderEnabled
+        reminderDateTime = form.reminderEnabled ? form.reminderDateTime : nil
+        hasSecondReminder = form.reminderEnabled && form.hasSecondReminder
+        secondReminderDateTime = form.reminderEnabled && form.hasSecondReminder ? form.secondReminderDateTime : nil
+        createdAt = .now
+        updatedAt = .now
+        syncBaseUpdatedAt = nil
+    }
+
+    init(copying source: TripBookingRecord) {
+        id = source.id
+        ownerScope = source.ownerScope
+        serviceType = source.serviceType
+        orderSource = source.orderSource
+        travelAgencyCode = source.travelAgencyCode
+        travelAgencyName = source.travelAgencyName
+        customerName = source.customerName
+        customerUUID = source.customerUUID
+        customerContact = source.customerContact
+        customerCount = source.customerCount
+        customerStuff = source.customerStuff
+        appointmentDate = source.appointmentDate
+        appointmentTime = source.appointmentTime
+        locationStart = source.locationStart
+        locationStop = source.locationStop
+        additionalStopsJSON = source.additionalStopsJSON
+        locationEnd = source.locationEnd
+        flightInfo = source.flightInfo
+        flightDate = source.flightDate
+        flightDepartureTime = source.flightDepartureTime
+        flightEstimatedArrivalTime = source.flightEstimatedArrivalTime
+        flightArrivalTerminal = source.flightArrivalTerminal
+        flightBaggageCarousel = source.flightBaggageCarousel
+        memo = source.memo
+        price = source.price
+        tip = source.tip
+        expenseAdjustmentsJSON = source.expenseAdjustmentsJSON
+        isPaid = source.isPaid
+        isCompleted = source.isCompleted
+        isCancelled = source.isCancelled
+        reminderEnabled = source.reminderEnabled
+        reminderDateTime = source.reminderDateTime
+        hasSecondReminder = source.hasSecondReminder
+        secondReminderDateTime = source.secondReminderDateTime
+        createdAt = source.createdAt
+        updatedAt = source.updatedAt
+        syncBaseUpdatedAt = source.syncBaseUpdatedAt
+    }
+
+    func update(from form: NewTripFormModel) {
+        updatedAt = .now
+        serviceType = form.serviceType
+        orderSource = form.orderSource
+        travelAgencyCode = form.orderSource == "旅行社订单" ? form.travelAgencyCode : ""
+        travelAgencyName = form.orderSource == "旅行社订单" ? form.travelAgencyName : ""
+        customerName = form.customerName
+        customerUUID = form.selectedCustomerUUID
+        customerContact = form.custemerConnect
+        customerCount = form.customerCount
+        customerStuff = form.customerStuff
+        appointmentDate = form.appointmentDate
+        appointmentTime = form.appointmentTime
+        locationStart = form.locationStart
+        locationStops = form.locationStops
+        locationEnd = form.locationEnd
+        flightInfo = form.flightInfo
+        flightDate = form.flightdate
+        flightDepartureTime = form.flightDepartureTime.isEmpty ? nil : form.flightDepartureTime
+        flightEstimatedArrivalTime = form.flightEstimatedArrivalTime.isEmpty ? nil : form.flightEstimatedArrivalTime
+        flightArrivalTerminal = form.flightArrivalTerminal.isEmpty ? nil : form.flightArrivalTerminal
+        flightBaggageCarousel = form.flightBaggageCarousel.isEmpty ? nil : form.flightBaggageCarousel
+        memo = form.TripMemo
+        price = form.TripPrice
+        isPaid = form.isPaid
         reminderEnabled = form.reminderEnabled
         reminderDateTime = form.reminderEnabled ? form.reminderDateTime : nil
         let shouldScheduleSecondReminder = form.reminderEnabled && form.hasSecondReminder
         hasSecondReminder = shouldScheduleSecondReminder
         secondReminderDateTime = shouldScheduleSecondReminder ? form.secondReminderDateTime : nil
-        createdAt = .now
     }
+}
+
+struct TripExpenseAdjustment: Identifiable, Codable, Hashable {
+    var id: UUID = UUID()
+    var isAddition = false
+    var title = ""
+    var amount: Double = 0
 }
 
 // MARK: - 2. 主页面视图（支持 Canvas 完美双向独立预览）
@@ -126,11 +320,21 @@ struct AddTripFormView: View {
     @Environment(\.dismiss) private var dismiss // 用于关闭页面
     @Environment(\.modelContext) private var modelContext
     @Environment(\.locale) private var appLocale
-    @State private var formData = NewTripFormModel()
+    @State private var formData: NewTripFormModel
     @Binding var isPresented: Bool
     @State private var errorMessage: String?
     // 实例化地址联想核心状态机
     @StateObject private var searcher = AddressAutocompleteSearcher()
+
+    private let booking: TripBookingRecord?
+    private let isCopying: Bool
+
+    init(isPresented: Binding<Bool>, booking: TripBookingRecord? = nil, copying: Bool = false) {
+        self._isPresented = isPresented
+        self.booking = booking
+        self.isCopying = copying
+        self._formData = State(initialValue: NewTripFormModel(booking: booking, copying: copying))
+    }
 
 
     var body: some View {
@@ -146,6 +350,10 @@ struct AddTripFormView: View {
                         
                         // ===== 模块 3：订单来源选择 =====
                         OrderSourceSection(formData: $formData)
+
+                        if formData.orderSource == "旅行社订单" {
+                            TravelAgencyTripSection(formData: $formData)
+                        }
                         
                         // ===== 模块 4：客户选择输入 =====
                         CustomerSelectionSection(formData: $formData)
@@ -170,9 +378,9 @@ struct AddTripFormView: View {
                 .scrollDismissesKeyboard(.interactively)
                 .background(Color.primary.opacity(0.015))
                 .onAppear { formData.updateDefaultReminderDateTimes() }
-                .onChange(of: formData.appointmentDate) { _, _ in formData.updateDefaultReminderDateTimes() }
-                .onChange(of: formData.appointmentTime) { _, _ in formData.updateDefaultReminderDateTimes() }
-                .navigationTitle("新增行程")
+                .onChange(of: formData.appointmentDate) { _, _ in formData.adjustRemindersForAppointmentChange() }
+                .onChange(of: formData.appointmentTime) { _, _ in formData.adjustRemindersForAppointmentChange() }
+                .navigationTitle(isCopying || booking == nil ? "新增行程" : "编辑行程")
                 .navigationBarTitleDisplayMode(.inline)
                 .toolbar {
                     ToolbarItem(placement: .cancellationAction) {
@@ -219,28 +427,32 @@ struct AddTripFormView: View {
             }
         }
         formData.customerName = name
-        let record = TripBookingRecord(form: formData)
-        modelContext.insert(record)
+        let record: TripBookingRecord
+        if let booking, !isCopying {
+            record = booking
+            record.update(from: formData)
+        } else {
+            record = TripBookingRecord(form: formData)
+            modelContext.insert(record)
+        }
         do {
             try modelContext.save()
             UserDefaults.standard.set(formData.appointmentDate.timeIntervalSince1970, forKey: "tripList.selectedDateTimestamp")
-            if record.reminderEnabled {
-                let tripID = record.id
-                let firstDate = record.reminderDateTime
-                let secondDate = record.secondReminderDateTime
-                Task {
-                    await TripReminderScheduler.schedule(
-                        tripID: tripID,
-                        firstDate: firstDate,
-                        secondDate: secondDate,
-                        locale: appLocale
-                    )
-                }
+            let tripID = record.id
+            let firstDate = record.reminderDateTime
+            let secondDate = record.secondReminderDateTime
+            Task {
+                await TripReminderScheduler.schedule(
+                    tripID: tripID,
+                    firstDate: firstDate,
+                    secondDate: secondDate,
+                    locale: appLocale
+                )
             }
             dismiss()
             isPresented = false
         } catch {
-            modelContext.delete(record)
+            if booking == nil { modelContext.delete(record) }
             errorMessage = error.localizedDescription
         }
     }
@@ -305,10 +517,7 @@ struct QuickInputSection: View {
             }
             VStack(spacing: 0) {
                 ZStack(alignment: .topLeading) {
-                    TextEditor(text: $formData.quickInputText)
-                        .font(.system(size: 14))
-                        .nativeIMEInput()
-                        .scrollContentBackground(.hidden)
+                    LimitedIMETextEditor(text: $formData.quickInputText, maxLength: 5000, fontSize: 14)
                         .frame(height: 90).padding(10)
                         .cornerRadius(10)
                     if formData.quickInputText.isEmpty {
@@ -345,7 +554,7 @@ struct OrderSourceSection: View {
                 .padding(12).frame(maxWidth: .infinity, minHeight: 96, alignment: .leading)
                 .background(isNormal ? Color.accentColor.opacity(0.08) : Color.primary.opacity(0.02), in: RoundedRectangle(cornerRadius: 12))
                 .overlay(RoundedRectangle(cornerRadius: 12).stroke(isNormal ? Color.accentColor.opacity(0.75) : Color.primary.opacity(0.12), lineWidth: isNormal ? 1.5 : 1))
-                .contentShape(RoundedRectangle(cornerRadius: 12)).onTapGesture { withAnimation(.easeInOut(duration: 0.18)) { formData.orderSource = "普通客户" } }
+                .contentShape(RoundedRectangle(cornerRadius: 12)).onTapGesture { withAnimation(.easeInOut(duration: 0.18)) { selectOrderSource("普通客户") } }
                 
                 let isPro = formData.orderSource == "旅行社订单"
                 VStack(alignment: .leading, spacing: 8) {
@@ -360,12 +569,65 @@ struct OrderSourceSection: View {
                 .padding(12).frame(maxWidth: .infinity, minHeight: 96, alignment: .leading)
                 .background(isPro ? Color.accentColor.opacity(0.08) : Color.primary.opacity(0.02), in: RoundedRectangle(cornerRadius: 12))
                 .overlay(RoundedRectangle(cornerRadius: 12).stroke(isPro ? Color.accentColor.opacity(0.75) : Color.primary.opacity(0.12), lineWidth: isPro ? 1.5 : 1))
-                .contentShape(RoundedRectangle(cornerRadius: 12)).onTapGesture { withAnimation(.easeInOut(duration: 0.18)) { formData.orderSource = "旅行社订单" } }
+                .contentShape(RoundedRectangle(cornerRadius: 12)).onTapGesture { withAnimation(.easeInOut(duration: 0.18)) { selectOrderSource("旅行社订单") } }
             }
         }
         .padding()
         .background(Color.primary.opacity(0.025), in: RoundedRectangle(cornerRadius: 14))
         .overlay(RoundedRectangle(cornerRadius: 14).stroke(Color.primary.opacity(0.10), lineWidth: 1))
+    }
+
+    private func selectOrderSource(_ source: String) {
+        guard formData.orderSource != source else { return }
+        formData.orderSource = source
+        formData.travelAgencyCode = ""
+        formData.travelAgencyName = ""
+    }
+}
+
+struct TravelAgencyTripSection: View {
+    @Binding var formData: NewTripFormModel
+    @State private var isShowingAgencyPicker = false
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Label("旅行社信息", systemImage: "building.2.fill")
+                .font(.subheadline.weight(.semibold))
+            Button { isShowingAgencyPicker = true } label: {
+                VStack(alignment: .leading, spacing: 10) {
+                    agencyValueRow(title: "旅行社代码", value: formData.travelAgencyCode)
+                    Divider()
+                    agencyValueRow(title: "旅行社名称", value: formData.travelAgencyName)
+                }
+                .padding(12)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(Color(.secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 12))
+                .overlay(RoundedRectangle(cornerRadius: 12).stroke(Color.primary.opacity(0.12), lineWidth: 1))
+                .contentShape(RoundedRectangle(cornerRadius: 12))
+            }
+            .buttonStyle(.plain)
+            .sheet(isPresented: $isShowingAgencyPicker) {
+                TravelAgencySelectionView { agency in
+                    formData.travelAgencyCode = agency.agencyCode
+                    formData.travelAgencyName = agency.name
+                }
+            }
+        }
+        .padding()
+        .background(Color.primary.opacity(0.025), in: RoundedRectangle(cornerRadius: 14))
+        .overlay(RoundedRectangle(cornerRadius: 14).stroke(Color.primary.opacity(0.10), lineWidth: 1))
+    }
+
+    private func agencyValueRow(title: String, value: String) -> some View {
+        HStack {
+            Text(LocalizedStringKey(title)).foregroundStyle(.secondary)
+            Spacer()
+            Text(value.isEmpty ? "点击选择" : value)
+                .foregroundStyle(value.isEmpty ? Color.accentColor : Color.primary)
+                .lineLimit(1)
+            Image(systemName: "chevron.right").font(.caption2).foregroundStyle(.tertiary)
+        }
+        .font(.system(size: 13, weight: .medium))
     }
 }
 
@@ -376,6 +638,12 @@ struct CustomerSelectionSection: View {
     @State private var isShowingCustomerPicker = false
     @State private var selectedCustomerID: String?
     @State private var customerSearchText = ""
+
+    init(formData: Binding<NewTripFormModel>) {
+        self._formData = formData
+        let scope = DataOwnership.activeScope
+        _customers = Query(filter: #Predicate { $0.ownerScope == scope })
+    }
 
     private var filteredCustomers: [Custumer] {
         let query = customerSearchText.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -393,9 +661,13 @@ struct CustomerSelectionSection: View {
                 .font(.caption.weight(.medium))
                 .foregroundStyle(.secondary)
             HStack {
-                TextField("", text: $formData.customerName, prompt: Text("请输入客户姓名").foregroundStyle(.secondary))
-                    .font(.system(size: 14))
-                    .nativeIMEInput()
+                SystemIMETextField(text: $formData.customerName, placeholder: "请输入客户姓名", fontSize: 14)
+                    .onChange(of: formData.customerName) { _, newName in
+                        guard let selectedID = formData.selectedCustomerUUID,
+                              let selectedCustomer = customers.first(where: { $0.uuid == selectedID }),
+                              newName.trimmingCharacters(in: .whitespacesAndNewlines) != selectedCustomer.name else { return }
+                        formData.selectedCustomerUUID = nil
+                    }
                     .padding(12)
                     .cornerRadius(10)
                     .overlay(RoundedRectangle(cornerRadius: 10).stroke(Color.primary.opacity(0.12), lineWidth: 1))
@@ -415,31 +687,25 @@ struct CustomerSelectionSection: View {
             Text("客户联系方式")
                 .font(.caption.weight(.medium))
                 .foregroundStyle(.secondary)
-            TextField("", text: $formData.custemerConnect, prompt: Text("请输入客户联系方式").foregroundStyle(.secondary))
-                               .font(.system(size: 14))
-                               .nativeIMEInput()
-                               .padding(12)
-                               .cornerRadius(10)
-                               .overlay(RoundedRectangle(cornerRadius: 10).stroke(Color.primary.opacity(0.12), lineWidth: 1))
+            SystemIMETextField(text: $formData.custemerConnect, placeholder: "请输入客户联系方式", keyboardType: .default, fontSize: 14)
+                .padding(12)
+                .cornerRadius(10)
+                .overlay(RoundedRectangle(cornerRadius: 10).stroke(Color.primary.opacity(0.12), lineWidth: 1))
             HStack(spacing: 10){
                 Label("人数", systemImage: "person")
                     .font(.caption.weight(.medium))
-                TextField("1", text: $formData.customerCount, prompt: Text("请输入客户联系方式").foregroundStyle(.secondary))
-                                   .font(.system(size: 14))
-                                   .padding(.horizontal, 10)
-                                   .frame(height: 44)
-                                   .cornerRadius(10)
-                                   .keyboardType(.numberPad)
-                                   .overlay(RoundedRectangle(cornerRadius: 10).stroke(Color.primary.opacity(0.12), lineWidth: 1))
+                SystemIMETextField(text: $formData.customerCount, placeholder: "1", keyboardType: .numberPad, fontSize: 14)
+                    .padding(.horizontal, 10)
+                    .frame(height: 44)
+                    .cornerRadius(10)
+                    .overlay(RoundedRectangle(cornerRadius: 10).stroke(Color.primary.opacity(0.12), lineWidth: 1))
                 Label("行李", systemImage: "suitcase")
                     .font(.caption.weight(.medium))
-                TextField("0", text: $formData.customerStuff, prompt: Text("请输入客户联系方式").foregroundStyle(.secondary))
-                                   .font(.system(size: 14))
-                                   .padding(.horizontal, 10)
-                                   .frame(height: 44)
-                                   .cornerRadius(10)
-                                   .keyboardType(.numberPad)
-                                   .overlay(RoundedRectangle(cornerRadius: 10).stroke(Color.primary.opacity(0.12), lineWidth: 1))
+                SystemIMETextField(text: $formData.customerStuff, placeholder: "0", keyboardType: .numberPad, fontSize: 14)
+                    .padding(.horizontal, 10)
+                    .frame(height: 44)
+                    .cornerRadius(10)
+                    .overlay(RoundedRectangle(cornerRadius: 10).stroke(Color.primary.opacity(0.12), lineWidth: 1))
             }
 
                            
@@ -543,6 +809,16 @@ struct TripDeteilSection: View {
     @State private var selectedAddressIndex: Int?
     @State private var isLookingUpFlight = false
     @State private var flightLookupError: String?
+    @State private var flightLookupResult: VariFlightLookupResult?
+    @State private var departureTimeZoneLabel = ""
+    @State private var arrivalTimeZoneLabel = ""
+
+    init(formData: Binding<NewTripFormModel>, searcher: AddressAutocompleteSearcher) {
+        self._formData = formData
+        self.searcher = searcher
+        let scope = DataOwnership.activeScope
+        _customers = Query(filter: #Predicate { $0.ownerScope == scope })
+    }
 
     private var selectedCustomerAddresses: [Address] {
         guard let customerID = formData.selectedCustomerUUID,
@@ -584,42 +860,55 @@ struct TripDeteilSection: View {
             }
 
             VStack(alignment: .leading, spacing: 8) {
-                Label("起始点", systemImage: "mappin.and.ellipse")
-                    .font(.caption.weight(.medium)).foregroundStyle(.secondary)
+                HStack {
+                    Label("起始点", systemImage: "mappin.and.ellipse")
+                        .font(.caption.weight(.medium)).foregroundStyle(.secondary)
+                    Spacer()
+                    Button {
+                        withAnimation(.easeInOut(duration: 0.2)) {
+                            let previousStart = formData.locationStart
+                            formData.locationStart = formData.locationEnd
+                            formData.locationEnd = previousStart
+                            focusedAddressField = nil
+                        }
+                    } label: {
+                        Label("互换", systemImage: "arrow.up.arrow.down")
+                            .font(.caption.weight(.semibold))
+                            .foregroundStyle(Color.accentColor)
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel("互换起始点和目的地")
+                }
                 HStack(spacing: 8) {
-                TextField("", text: $formData.locationStart, prompt: Text("请输入客户的接载地点").foregroundStyle(.secondary),axis: .vertical)
-                    .font(.system(size: 14))
-                    .nativeIMEInput()
-                    .focused($focusedAddressField, equals: .start)
+                LimitedIMETextEditor(text: $formData.locationStart, maxLength: 1000, fontSize: 14, placeholder: String(localized: "请输入客户的接载地点"), isFocused: addressFocusBinding(for: .start))
                     .padding(10)
-                    .lineLimit(3)
+                    .frame(minHeight: 44, maxHeight: 90)
                     .background(Color.primary.opacity(0.025), in: RoundedRectangle(cornerRadius: 10))
                     .overlay(RoundedRectangle(cornerRadius: 10).stroke(Color.primary.opacity(0.12), lineWidth: 1))
                     .onChange(of: formData.locationStart) { _, value in
                         addressInputDidChange(value, target: .start)
                     }
 
-                    Menu {
                     Button {
                         selectedAddressIndex = nil
                         addressPickerTarget = .start
                     } label: {
-                        Label("选择客户常用地址", systemImage: "book.closed")
+                        Image(systemName: "book.closed")
                     }
                     .disabled(formData.selectedCustomerUUID == nil)
+                    .buttonStyle(.bordered)
+                    .tint(.accentColor)
+                    .accessibilityLabel("选择起始地址")
 
                     Button {
                         currentLocationTarget = .start
                         locationManager.requestCurrentLocation()
                     } label: {
-                        Label("使用当前位置", systemImage: "location.fill")
-                    }
-                    } label: {
-                        Image(systemName: "book.closed")
+                        Image(systemName: "location.north.fill")
                     }
                     .buttonStyle(.bordered)
                     .tint(.accentColor)
-                    .accessibilityLabel("选择起始地址")
+                    .accessibilityLabel("获取起始点当前位置")
 
                     Button {
                     openNavigation(to: formData.locationStart)
@@ -636,16 +925,29 @@ struct TripDeteilSection: View {
             if shouldShowSuggestions(for: .start) {
                 addressSuggestions(for: .start)
             }
+
+            ForEach(formData.locationStops.indices, id: \.self) { index in
+                stopLocationField(at: index)
+            }
+
+            Button {
+                withAnimation(.easeOut(duration: 0.2)) {
+                    formData.locationStops.append("")
+                }
+                focusedAddressField = .stop(formData.locationStops.count - 1)
+            } label: {
+                Label("增加停靠点", systemImage: "plus.circle")
+                    .font(.subheadline.weight(.medium))
+            }
+            .buttonStyle(.plain)
+            .foregroundStyle(Color.accentColor)
             
             VStack(alignment: .leading, spacing: 8) {
                 Label("目的地", systemImage: "flag.checkered")
                     .font(.caption.weight(.medium)).foregroundStyle(.secondary)
                 HStack(spacing: 8) {
-                TextField("", text: $formData.locationEnd, prompt: Text("请输入目的地").foregroundStyle(.secondary),axis: .vertical)
-                    .lineLimit(3)
-                    .font(.system(size: 14))
-                    .nativeIMEInput()
-                    .focused($focusedAddressField, equals: .destination)
+                LimitedIMETextEditor(text: $formData.locationEnd, maxLength: 1000, fontSize: 14, placeholder: String(localized: "请输入目的地"), isFocused: addressFocusBinding(for: .destination))
+                    .frame(minHeight: 44, maxHeight: 90)
                     .padding(10)
                     .background(Color.primary.opacity(0.025), in: RoundedRectangle(cornerRadius: 10))
                     .overlay(RoundedRectangle(cornerRadius: 10).stroke(Color.primary.opacity(0.12), lineWidth: 1))
@@ -653,27 +955,26 @@ struct TripDeteilSection: View {
                         addressInputDidChange(value, target: .destination)
                     }
                 
-                Menu {
-                    Button {
+                Button {
                         selectedAddressIndex = nil
                         addressPickerTarget = .destination
-                    } label: {
-                        Label("选择客户常用地址", systemImage: "book.closed")
-                    }
-                    .disabled(formData.selectedCustomerUUID == nil)
-
-                    Button {
-                        currentLocationTarget = .destination
-                        locationManager.requestCurrentLocation()
-                    } label: {
-                        Label("使用当前位置", systemImage: "location.fill")
-                    }
                 } label: {
                     Image(systemName: "book.closed")
                 }
+                .disabled(formData.selectedCustomerUUID == nil)
                 .buttonStyle(.bordered)
                 .tint(.accentColor)
                 .accessibilityLabel("选择目的地地址")
+
+                Button {
+                    currentLocationTarget = .destination
+                    locationManager.requestCurrentLocation()
+                } label: {
+                    Image(systemName: "location.north.fill")
+                }
+                .buttonStyle(.bordered)
+                .tint(.accentColor)
+                .accessibilityLabel("获取目的地当前位置")
 
                 Button {
                     openNavigation(to: formData.locationEnd)
@@ -690,30 +991,32 @@ struct TripDeteilSection: View {
             if shouldShowSuggestions(for: .destination) {
                 addressSuggestions(for: .destination)
             }
-            VStack(alignment: .leading, spacing: 8) {
-                Label("航班信息", systemImage: "airplane")
-                    .font(.caption.weight(.medium)).foregroundStyle(.secondary)
-                HStack(spacing: 12) {
-                TextField("", text: $formData.flightInfo, prompt: Text("请输入航班号（如UA123）").foregroundStyle(.secondary))
-                    .font(.system(size: 14))
-                    .nativeIMEInput()
-                    .padding(10)
-                    .background(Color.primary.opacity(0.025), in: RoundedRectangle(cornerRadius: 10))
-                    .overlay(RoundedRectangle(cornerRadius: 10).stroke(Color.primary.opacity(0.12), lineWidth: 1))
+            HStack(alignment: .top, spacing: 12) {
+                VStack(alignment: .leading, spacing: 8) {
+                    Label("航班信息", systemImage: "airplane")
+                        .font(.caption.weight(.medium)).foregroundStyle(.secondary)
+                    FlightNumberTextField(text: $formData.flightInfo, placeholder: String(localized: "请输入航班号"), fontSize: 14)
+                        .padding(10)
+                        .frame(minHeight: 44)
+                        .background(Color.primary.opacity(0.025), in: RoundedRectangle(cornerRadius: 10))
+                        .overlay(RoundedRectangle(cornerRadius: 10).stroke(Color.primary.opacity(0.12), lineWidth: 1))
                 }
-            }
-            HStack(spacing: 12) {
-                Label("航班日期", systemImage: "calendar")
-                    .font(.caption.weight(.medium)).foregroundStyle(.secondary)
-                DatePicker("", selection: $formData.flightdate, displayedComponents: .date)
-                    .labelsHidden()
-                    .datePickerStyle(.compact)
-                    .tint(.accentColor)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding(.horizontal, 10)
-                    .frame(minHeight: 44)
-                    .background(Color.primary.opacity(0.025), in: RoundedRectangle(cornerRadius: 10))
-                    .overlay(RoundedRectangle(cornerRadius: 10).stroke(Color.primary.opacity(0.12), lineWidth: 1))
+                .frame(maxWidth: .infinity)
+
+                VStack(alignment: .leading, spacing: 8) {
+                    Label("航班日期", systemImage: "calendar")
+                        .font(.caption.weight(.medium)).foregroundStyle(.secondary)
+                    DatePicker("", selection: $formData.flightdate, displayedComponents: .date)
+                        .labelsHidden()
+                        .datePickerStyle(.compact)
+                        .tint(.accentColor)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(.horizontal, 10)
+                        .frame(minHeight: 44)
+                        .background(Color.primary.opacity(0.025), in: RoundedRectangle(cornerRadius: 10))
+                        .overlay(RoundedRectangle(cornerRadius: 10).stroke(Color.primary.opacity(0.12), lineWidth: 1))
+                }
+                .frame(maxWidth: .infinity)
             }
             Button(action: lookupFlight) {
                 HStack(spacing: 8) {
@@ -726,22 +1029,21 @@ struct TripDeteilSection: View {
             .buttonStyle(.bordered)
             .disabled(isLookingUpFlight || formData.flightInfo.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
 
-            if let flightLookupError {
-                Text(LocalizedStringKey(flightLookupError))
-                    .font(.caption)
-                    .foregroundStyle(.red)
-            }
-            if !formData.flightDepartureTime.isEmpty {
-                LabeledContent("起飞时间", value: formData.flightDepartureTime).font(.caption)
-            }
-            if !formData.flightEstimatedArrivalTime.isEmpty {
-                LabeledContent("预计到达时间", value: formData.flightEstimatedArrivalTime).font(.caption)
-            }
-            if !formData.flightArrivalTerminal.isEmpty {
-                LabeledContent("到达航站楼", value: formData.flightArrivalTerminal).font(.caption)
-            }
-            if !formData.flightBaggageCarousel.isEmpty {
-                LabeledContent("行李转盘", value: formData.flightBaggageCarousel).font(.caption)
+            if isLookingUpFlight || flightLookupError != nil || flightLookupResult != nil {
+                FlightInformationPanel(
+                    flightNumber: formData.flightInfo,
+                    flightDate: formData.flightdate,
+                    result: flightLookupResult,
+                    isLoading: isLookingUpFlight,
+                    error: flightLookupError,
+                    departureFallback: formData.flightDepartureTime,
+                    arrivalFallback: formData.flightEstimatedArrivalTime,
+                    departureTimeZone: departureTimeZoneLabel,
+                    arrivalTimeZone: arrivalTimeZoneLabel
+                )
+                .padding(12)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(Color(.secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 13, style: .continuous))
             }
         }
         .padding()
@@ -755,7 +1057,12 @@ struct TripDeteilSection: View {
                 isShowingSuggestions = false
                 return
             }
-            let value = target == .start ? formData.locationStart : formData.locationEnd
+            let value: String
+            switch target {
+            case .start: value = formData.locationStart
+            case .stop(let index): value = formData.locationStops.indices.contains(index) ? formData.locationStops[index] : ""
+            case .destination: value = formData.locationEnd
+            }
             suggestionTarget = target
             searcher.completions = []
             searcher.searchQuery = value
@@ -778,6 +1085,101 @@ struct TripDeteilSection: View {
         } message: {
             Text(locationManager.errorMessage ?? "")
         }
+    }
+
+    private func stopLocationField(at index: Int) -> some View {
+        let target = AddressPickerTarget.stop(index)
+        let address = Binding<String>(
+            get: { formData.locationStops.indices.contains(index) ? formData.locationStops[index] : "" },
+            set: { if formData.locationStops.indices.contains(index) { formData.locationStops[index] = $0 } }
+        )
+
+        return VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 6) {
+                Label("停靠点", systemImage: "mappin")
+                Text("\(index + 1)")
+                    .font(.caption2.weight(.semibold))
+                    .foregroundStyle(.secondary)
+            }
+            .font(.caption.weight(.medium))
+            .foregroundStyle(.secondary)
+            HStack(spacing: 8) {
+                    LimitedIMETextEditor(text: address, maxLength: 1000, fontSize: 14, placeholder: String(localized: "请输入停靠点地址"), isFocused: addressFocusBinding(for: target))
+                    .frame(minHeight: 44, maxHeight: 90)
+                    .padding(10)
+                    .background(Color.primary.opacity(0.025), in: RoundedRectangle(cornerRadius: 10))
+                    .overlay(RoundedRectangle(cornerRadius: 10).stroke(Color.primary.opacity(0.12), lineWidth: 1))
+                    .onChange(of: address.wrappedValue) { _, value in
+                        addressInputDidChange(value, target: target)
+                    }
+
+                Button {
+                        selectedAddressIndex = nil
+                        addressPickerTarget = target
+                } label: {
+                    Image(systemName: "book.closed")
+                }
+                .disabled(formData.selectedCustomerUUID == nil)
+                .buttonStyle(.bordered)
+                .tint(.accentColor)
+                .accessibilityLabel("选择停靠点地址")
+
+                Button {
+                    currentLocationTarget = target
+                    locationManager.requestCurrentLocation()
+                } label: {
+                    Image(systemName: "location.north.fill")
+                }
+                .buttonStyle(.bordered)
+                .tint(.accentColor)
+                .accessibilityLabel("获取停靠点当前位置")
+
+                Button { openNavigation(to: address.wrappedValue) } label: {
+                    Image(systemName: "arrow.triangle.turn.up.right.diamond.fill")
+                }
+                .buttonStyle(.bordered)
+                .tint(.accentColor)
+                .accessibilityLabel("导航至停靠点")
+                .disabled(address.wrappedValue.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+            }
+
+            HStack {
+                Spacer()
+                Button(role: .destructive) { removeStop(at: index) } label: {
+                    Label("删除停靠点", systemImage: "minus.circle.fill")
+                        .font(.system(size: 12, weight: .medium))
+                        .foregroundStyle(.red)
+                }
+                .buttonStyle(.plain)
+            }
+
+            if shouldShowSuggestions(for: target) {
+                addressSuggestions(for: target)
+            }
+        }
+    }
+
+    private func addressFocusBinding(for target: AddressPickerTarget) -> Binding<Bool> {
+        Binding(
+            get: { focusedAddressField == target },
+            set: { isFocused in
+                if isFocused {
+                    focusedAddressField = target
+                } else if focusedAddressField == target {
+                    focusedAddressField = nil
+                }
+            }
+        )
+    }
+
+    private func removeStop(at index: Int) {
+        guard formData.locationStops.indices.contains(index) else { return }
+        withAnimation(.easeOut(duration: 0.2)) {
+            formData.locationStops.remove(at: index)
+        }
+        focusedAddressField = nil
+        suggestionTarget = nil
+        isShowingSuggestions = false
     }
 
     private func addressPicker(for target: AddressPickerTarget) -> some View {
@@ -914,6 +1316,11 @@ struct TripDeteilSection: View {
                 suppressAutocompleteOnce = true
                 formData.locationStart = address
             }
+        case .stop(let index):
+            if formData.locationStops.indices.contains(index), formData.locationStops[index] != address {
+                suppressAutocompleteOnce = true
+                formData.locationStops[index] = address
+            }
         case .destination:
             if formData.locationEnd != address {
                 suppressAutocompleteOnce = true
@@ -929,21 +1336,22 @@ struct TripDeteilSection: View {
 
     private func lookupFlight() {
         flightLookupError = nil
+        flightLookupResult = nil
         isLookingUpFlight = true
         Task {
             defer { isLookingUpFlight = false }
             do {
-                let result = try await FlightAwareClient().lookup(
+                let result = try await VariFlightClient().lookup(
                     flightNumber: formData.flightInfo,
                     flightDate: formData.flightdate
                 )
+                flightLookupResult = result
                 formData.flightDepartureTime = result.departureTime ?? ""
                 formData.flightEstimatedArrivalTime = result.estimatedArrivalTime ?? ""
                 formData.flightArrivalTerminal = result.arrivalTerminal ?? ""
                 formData.flightBaggageCarousel = result.baggageCarousel ?? ""
-                if result.arrivalTerminal == nil && result.baggageCarousel == nil {
-                    flightLookupError = "已查到航班，但接口暂未提供到达航站楼或行李转盘信息。"
-                }
+                departureTimeZoneLabel = await FlightTimeZoneResolver.label(for: result.departureAirport, date: formData.flightdate) ?? ""
+                arrivalTimeZoneLabel = await FlightTimeZoneResolver.label(for: result.arrivalAirport, date: formData.flightdate) ?? ""
             } catch {
                 flightLookupError = error.localizedDescription
             }
@@ -951,18 +1359,36 @@ struct TripDeteilSection: View {
     }
 }
 
-private enum AddressPickerTarget: String, Identifiable {
+private enum AddressPickerTarget: Hashable, Identifiable {
     case start
+    case stop(Int)
     case destination
 
-    var id: String { rawValue }
-    var title: String { self == .start ? "选择起始点" : "选择目的地" }
+    var id: String {
+        switch self {
+        case .start: "start"
+        case .stop(let index): "stop-\(index)"
+        case .destination: "destination"
+        }
+    }
+    var title: String {
+        switch self {
+        case .start: "选择起始点"
+        case .stop: "选择停靠点"
+        case .destination: "选择目的地"
+        }
+    }
 }
 
 
 //// 模块 6 布局 行程费用信息
 struct TripDeteilSectionMoney: View {
     @Binding var formData: NewTripFormModel
+    @AppStorage(BaseCurrencyCatalog.countryCodeKey) private var baseCurrencyCountry = BaseCurrencyCatalog.defaultCountryCode
+
+    private var currencySymbol: String {
+        BaseCurrencyCatalog.option(for: baseCurrencyCountry).symbol
+    }
     // 1. 数据模型中声明一个真实的 Double 变量（例如：订单金额）
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
@@ -973,21 +1399,22 @@ struct TripDeteilSectionMoney: View {
                 Text("行程费用")
                     .font(.caption.weight(.medium))
                     .foregroundStyle(.secondary)
-                TextField("", value: $formData.TripPrice, format: .number, prompt: Text("请输入订单金额（元）").foregroundStyle(.secondary))
-                    .font(.system(size: 14))
+                HStack(spacing: 8) {
+                    Text(currencySymbol)
+                        .font(.subheadline.weight(.medium))
+                        .foregroundStyle(.secondary)
+                    AmountTextField(placeholder: "0", value: $formData.TripPrice, fontSize: 14)
+                }
                     .padding(10)
                     .background(Color.primary.opacity(0.025), in: RoundedRectangle(cornerRadius: 10))
                     .overlay(RoundedRectangle(cornerRadius: 10).stroke(Color.primary.opacity(0.12), lineWidth: 1))
-                    .keyboardType(.decimalPad)
             }
             VStack(alignment: .leading, spacing: 8) {
                 Text("备注")
                     .font(.caption.weight(.medium))
                     .foregroundStyle(.secondary)
-                TextEditor(text: $formData.TripMemo)
-                    .scrollContentBackground(.hidden)
+                LimitedIMETextEditor(text: $formData.TripMemo, maxLength: 10000, fontSize: 14)
                     .frame(minHeight: 96)
-                    .nativeIMEInput()
                     .padding(8)
                     .background(Color.primary.opacity(0.025), in: RoundedRectangle(cornerRadius: 10))
                     .clipShape(RoundedRectangle(cornerRadius: 10))
@@ -1008,18 +1435,10 @@ private struct TripStatusSection: View {
             Label("状态信息", systemImage: "checkmark.circle")
                 .font(.subheadline.weight(.semibold))
 
-            VStack(spacing: 0) {
-                HStack(spacing: 12) {
-                    Image(systemName: "clock")
-                        .font(.system(size: 16, weight: .medium))
-                        .foregroundStyle(.secondary)
-                        .frame(width: 24)
-
-                    Text("行程状态")
-                        .font(.subheadline)
-
-                    Spacer()
-
+            HStack(alignment: .center, spacing: 14) {
+                VStack(alignment: .leading, spacing: 8) {
+                    Label("行程状态", systemImage: "clock")
+                        .font(.caption.weight(.medium)).foregroundStyle(.secondary)
                     Text("待执行")
                         .font(.caption.weight(.semibold))
                         .foregroundStyle(.orange)
@@ -1027,15 +1446,11 @@ private struct TripStatusSection: View {
                         .padding(.vertical, 6)
                         .background(.orange.opacity(0.12), in: Capsule())
                 }
-                .padding(.vertical, 4)
+                .frame(maxWidth: .infinity, alignment: .leading)
 
-                Divider()
-                    .padding(.vertical, 12)
-
-                VStack(alignment: .leading, spacing: 10) {
+                VStack(alignment: .leading, spacing: 8) {
                     Label("结算状态", systemImage: "banknote")
-                        .font(.subheadline)
-
+                        .font(.caption.weight(.medium)).foregroundStyle(.secondary)
                     Picker("结算状态", selection: $formData.isPaid) {
                         Text("未结款").tag(false)
                         Text("已结清").tag(true)
@@ -1043,6 +1458,7 @@ private struct TripStatusSection: View {
                     .pickerStyle(.segmented)
                     .accessibilityLabel("结算状态")
                 }
+                .frame(maxWidth: .infinity)
             }
         }
         .padding()
@@ -1079,7 +1495,9 @@ private struct TripReminderSection: View {
                         dateTime: $formData.reminderDateTime,
                         onChange: { formData.reminderDateWasCustomized = true }
                     )
-                    Text("默认：接载日期前一天的同一时间")
+                    Text(LocalizedStringKey(formData.copiedReminderDefaultsToTwoHours
+                        ? "默认：接载时间前 2 小时"
+                        : "默认：接载日期前一天的同一时间"))
                         .font(.caption2)
                         .foregroundStyle(.tertiary)
                 }

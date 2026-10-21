@@ -7,12 +7,14 @@ struct LoginView: View {
     @Environment(\.colorScheme) private var colorScheme
     @AppStorage("auth.rememberEmail") private var rememberEmail = false
     @AppStorage("auth.rememberedEmail") private var rememberedEmail = ""
+    @AppStorage("auth.accountMode.cloud") private var useCloudAccount = false
     @State private var email = ""
     @State private var password = ""
     @State private var isPasswordVisible = false
     @State private var showRegister = false
     @State private var showForgotPassword = false
     @State private var errorMessage: String?
+    @State private var isSigningIn = false
 
     private var isDarkMode: Bool { colorScheme == .dark }
     private var pageGradient: [Color] {
@@ -71,7 +73,14 @@ struct LoginView: View {
                     }
 
                     VStack(spacing: 16) {
+                        Picker("账号类型", selection: $useCloudAccount) {
+                            Text("本地账号").tag(false)
+                            Text("云端账号").tag(true)
+                        }
+                        .pickerStyle(.segmented)
+
                         TextField("邮箱", text: $email)
+                            .keyboardDoneToolbar()
                             .textContentType(.emailAddress)
                             .keyboardType(.emailAddress)
                             .textInputAutocapitalization(.never)
@@ -86,8 +95,10 @@ struct LoginView: View {
                             Group {
                                 if isPasswordVisible {
                                     TextField("密码", text: $password)
+                                        .keyboardDoneToolbar()
                                 } else {
                                     SecureField("密码", text: $password)
+                                        .keyboardDoneToolbar()
                                 }
                             }
                             .textContentType(.password)
@@ -129,14 +140,22 @@ struct LoginView: View {
                     }
 
                     Button {
-                        errorMessage = auth.login(email: email, password: password, context: modelContext)
-                        if errorMessage == nil {
-                            rememberedEmail = rememberEmail
-                                ? email.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-                                : ""
+                        if useCloudAccount {
+                            isSigningIn = true
+                            Task {
+                                errorMessage = await auth.loginToCloud(email: email, password: password)
+                                finishLoginIfNeeded()
+                                isSigningIn = false
+                            }
+                        } else {
+                            errorMessage = auth.login(email: email, password: password, context: modelContext)
+                            finishLoginIfNeeded()
                         }
                     } label: {
-                        Text("登录")
+                        HStack(spacing: 8) {
+                            if isSigningIn { ProgressView().tint(Color(red: 0.035, green: 0.17, blue: 0.32)) }
+                            Text("登录")
+                        }
                             .font(.headline)
                             .foregroundStyle(Color(red: 0.035, green: 0.17, blue: 0.32))
                             .frame(maxWidth: .infinity)
@@ -145,6 +164,7 @@ struct LoginView: View {
                     }
                     .buttonStyle(.plain)
                     .shadow(color: .black.opacity(0.16), radius: 14, y: 7)
+                    .disabled(isSigningIn)
 
                     HStack {
                         Button("忘记密码？") { showForgotPassword = true }
@@ -155,7 +175,7 @@ struct LoginView: View {
                     .tint(isDarkMode ? .white : Color.accentColor)
 
                     Spacer(minLength: 24)
-                    Text("本地注册账号保存在此设备")
+                    Text(useCloudAccount ? "云端资料会同步到当前账号；首次同步前会询问是否上传本机资料" : "本机资料只保存在此设备，不会自动上传")
                         .font(.caption)
                         .foregroundStyle(secondaryText.opacity(0.75))
                 }
@@ -176,6 +196,14 @@ struct LoginView: View {
                 ForgotPasswordView()
                     .environment(auth)
             }
+        }
+    }
+
+    private func finishLoginIfNeeded() {
+        if errorMessage == nil {
+            rememberedEmail = rememberEmail
+                ? email.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+                : ""
         }
     }
 }

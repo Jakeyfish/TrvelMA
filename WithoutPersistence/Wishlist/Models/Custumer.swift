@@ -11,8 +11,47 @@ import SwiftData
 import Foundation
 
 @Model
+final class TravelAgency {
+    @Attribute(.unique) var uuid: String
+    var ownerScope: String = "local"
+    var agencyCode: String
+    var name: String
+    var contactPerson: String
+    var phone: String
+    var officeAddress: String
+    var createdAt: Date
+    var updateAt: Date
+    /// Cloud timestamp last confirmed by a successful download or upload.
+    var syncBaseUpdatedAt: Date? = nil
+
+    init(
+        uuid: String = UUID().uuidString.lowercased(),
+        agencyCode: String,
+        name: String,
+        contactPerson: String = "",
+        phone: String = "",
+        officeAddress: String = "",
+        createdAt: Date = .now,
+        updateAt: Date = .now,
+        syncBaseUpdatedAt: Date? = nil
+    ) {
+        self.uuid = uuid
+        self.ownerScope = DataOwnership.activeScope
+        self.agencyCode = agencyCode
+        self.name = name
+        self.contactPerson = contactPerson
+        self.phone = phone
+        self.officeAddress = officeAddress
+        self.createdAt = createdAt
+        self.updateAt = updateAt
+        self.syncBaseUpdatedAt = syncBaseUpdatedAt
+    }
+}
+
+@Model
 class Custumer {
     @Attribute(.unique) var uuid: String
+    var ownerScope: String = "local"
     var version: Int = 1
     var syncState: Int = 0
     
@@ -24,10 +63,14 @@ class Custumer {
     var csource: String             //客户来源 例如 1-普通 2-中价 3-旅行社
     var type: Int                   //客户类型 例如 1-普通 2-VIP
     var customerCategory: Int = 1    //客户类别：1-普通客户 2-旅行社
+    var travelAgencyCode: String = ""
+    var travelAgencyName: String = ""
     var languagePreference: String = "zh-Hans"
     var remark: String = ""
     var createdAt: Date             //客户建立日期
     var updateAt: Date
+    /// Cloud timestamp last confirmed by a successful download or upload.
+    var syncBaseUpdatedAt: Date? = nil
     
     
     @Relationship(deleteRule: .cascade, inverse: \Address.customer)
@@ -47,12 +90,16 @@ class Custumer {
         csource: String,
         type: Int,
         customerCategory: Int = 1,
+        travelAgencyCode: String = "",
+        travelAgencyName: String = "",
         languagePreference: String = "zh-Hans",
         remark: String = "",
         createdAt: Date = Date(),
-        updateAt: Date = Date()
+        updateAt: Date = Date(),
+        syncBaseUpdatedAt: Date? = nil
     ){
         self.uuid = uuid
+        self.ownerScope = DataOwnership.activeScope
         self.version = version
         self.syncState = syncState
         self.name = name
@@ -61,16 +108,20 @@ class Custumer {
         self.csource = csource
         self.type = type
         self.customerCategory = customerCategory
+        self.travelAgencyCode = travelAgencyCode
+        self.travelAgencyName = travelAgencyName
         self.languagePreference = languagePreference
         self.remark = remark
         self.createdAt = createdAt
         self.updateAt = updateAt
+        self.syncBaseUpdatedAt = syncBaseUpdatedAt
     }
 }
 
 
 @Model
 class Address{
+    var ownerScope: String = "local"
     var addlable: String
     var addresses :String
     var isDefault: Bool = false
@@ -79,6 +130,7 @@ class Address{
     
     init(addlable: String, addresses: String, isDefault: Bool = false, customer: Custumer) {
         self.addlable = addlable
+        self.ownerScope = customer.ownerScope
         self.addresses = addresses
         self.isDefault = isDefault
         self.customer = customer
@@ -88,6 +140,7 @@ class Address{
 
 @Model
 class Connect{
+    var ownerScope: String = "local"
     var connectlable: String
     var connecttype: String
     var isDefault: Bool = false
@@ -97,6 +150,7 @@ class Connect{
     
     init(connectlable: String, connecttype: String, isDefault: Bool = false, customer: Custumer) {
         self.connectlable = connectlable
+        self.ownerScope = customer.ownerScope
         self.connecttype = connecttype
         self.isDefault = isDefault
         self.customer = customer
