@@ -1,7 +1,17 @@
 const SUPABASE_URL = "https://lbdfqzeiweqbsklklcqr.supabase.co";
 const SUPABASE_PUBLISHABLE_KEY = "sb_publishable_d4tmuPirsf8-wUDO0Frd7w_PcXME6rs";
 const SESSION_KEY = "yunsheng.web.session.v1";
+const OFFLINE_CACHE_PREFIX = "yunsheng.web.offline-cache.v1.";
+const OFFLINE_QUEUE_PREFIX = "yunsheng.web.offline-queue.v1.";
+const ACCOUNT_PREFERENCE_PREFIX = "yunsheng.web.account-preference.v1.";
+// These legacy keys were shared by every browser account and have no reliable
+// owner. Discard them instead of exposing one account's settings to another.
+["yunsheng.web.navigation", "yunsheng.web.variflight-key", "yunsheng.web.expense-catalog"]
+  .forEach(key => localStorage.removeItem(key));
 let sessionRefreshTask = null;
+let offlineReplayTask = null;
+let offlineRetryTimer = null;
+let offlineRetryCount = 0;
 const webReminderTimers = new Map();
 
 const state = {
@@ -28,6 +38,7 @@ const state = {
   businessCard: { nickname: "", style: 0, portraitData: null, qrCodes: [] },
   busy: false,
   error: "",
+  offline: !navigator.onLine,
 };
 
 const pageNames = {
@@ -54,6 +65,44 @@ function clearSession() {
   state.session = null;
   state.user = null;
   localStorage.removeItem(SESSION_KEY);
+  clearTimeout(offlineRetryTimer);
+  offlineRetryTimer = null;
+  resetAccountWorkspace();
+}
+
+function resetAccountWorkspace() {
+  for (const timer of webReminderTimers.values()) clearTimeout(timer);
+  webReminderTimers.clear();
+  state.page = "home";
+  state.customers = [];
+  state.contacts = [];
+  state.addresses = [];
+  state.trips = [];
+  state.agencies = [];
+  state.stops = [];
+  state.expenses = [];
+  state.settings = null;
+  state.paymentMethods = [];
+  state.businessCard = { nickname: "", style: 0, portraitData: null, qrCodes: [] };
+}
+
+function accountPreferenceKey(name, userID = state.user?.id) {
+  return userID ? `${ACCOUNT_PREFERENCE_PREFIX}${userID}.${name}` : null;
+}
+
+function getAccountPreference(name, fallback = "") {
+  const key = accountPreferenceKey(name);
+  return key ? localStorage.getItem(key) ?? fallback : fallback;
+}
+
+function setAccountPreference(name, value) {
+  const key = accountPreferenceKey(name);
+  if (key) localStorage.setItem(key, value);
+}
+
+function removeAccountPreference(name) {
+  const key = accountPreferenceKey(name);
+  if (key) localStorage.removeItem(key);
 }
 
 function escapeHTML(value = "") {
@@ -99,7 +148,8 @@ async function currentSession() {
         const fresh = await authRequest("token?grant_type=refresh_token", { refresh_token: state.session.refresh_token });
         writeSession({ ...fresh, expires_at: Date.now() + (fresh.expires_in || 3600) * 1000 });
         return state.session;
-      } catch {
+      } catch (error) {
+        if (error instanceof TypeError && state.session?.user) return state.session;
         clearSession();
         return null;
       } finally {
@@ -110,10 +160,215 @@ async function currentSession() {
   return sessionRefreshTask;
 }
 
-async function request(tableOrPath, { method = "GET", query = {}, body, prefer } = {}) {
+function offlineQueueKey(userID = state.user?.id) { return `${OFFLINE_QUEUE_PREFIX}${userID || ""}`; }
+function offlineCacheKey(userID = state.user?.id) { return `${OFFLINE_CACHE_PREFIX}${userID || ""}`; }
+function readOfflineQueue(userID = state.user?.id) {
+  if (!userID) return { operations: [], retryCount: 0 };
+  try {
+    const value = JSON.parse(localStorage.getItem(offlineQueueKey(userID)) || "null");
+    if (Array.isArray(value)) return { operations: value, retryCount: 0 };
+    return value && Array.isArray(value.operations) ? value : { operations: [], retryCount: 0 };
+  } catch { return { operations: [], retryCount: 0 }; }
+}
+
+function queuedOperationCount() { return readOfflineQueue().operations.length; }
+
+function renderConnectionStatus() {
+  const badge = document.querySelector(".connection");
+  if (!badge) return;
+  const count = queuedOperationCount();
+  const offline = state.offline || !navigator.onLine;
+  badge.classList.toggle("offline", offline);
+  badge.classList.toggle("pending", !offline && count > 0);
+  badge.textContent = offline ? `离线${count ? ` · ${count} 项待同步` : ""}`
+    : count ? `${count} 项待同步` : "云端已连接";
+}
+
+function writeOfflineCache(snapshot, userID = state.user?.id) {
+  if (!userID) return;
+  const compact = structuredClone(snapshot);
+  const settings = compact.settings?.[0];
+  for (const key of ["business_card_data", "wallet_payment_methods"]) {
+    const value = settings?.[key];
+    if (!value || typeof value !== "object") continue;
+    delete value.portraitData;
+    for (const item of value.qrCodes || []) delete item.imageData;
+    for (const item of value.methods || []) delete item.qrImageData;
+  }
+  try { localStorage.setItem(offlineCacheKey(userID), JSON.stringify(compact)); }
+  catch { /* Keep the in-memory workspace usable if browser storage is full. */ }
+}
+
+function readOfflineCache(userID = state.user?.id) {
+  if (!userID) return null;
+  try { return JSON.parse(localStorage.getItem(offlineCacheKey(userID)) || "null"); }
+  catch { return null; }
+}
+
+function matchesQueuedFilters(row, query) {
+  return Object.entries(query).every(([key, filter]) => {
+    if (["select", "order", "limit", "on_conflict"].includes(key)) return true;
+    if (typeof filter !== "string") return String(row[key] ?? "") === String(filter ?? "");
+    if (filter.startsWith("eq.")) return String(row[key] ?? "") === filter.slice(3);
+    if (filter === "is.null") return row[key] == null;
+    return true;
+  });
+}
+
+function applyQueuedOperation(snapshot, operation) {
+  const rows = snapshot[operation.table];
+  if (!Array.isArray(rows)) return;
+  if (operation.method === "POST") {
+    const conflictField = operation.query?.on_conflict || "id";
+    for (const incoming of (Array.isArray(operation.body) ? operation.body : [operation.body])) {
+      if (!incoming || typeof incoming !== "object") continue;
+      const index = rows.findIndex(row => row[conflictField] === incoming[conflictField]);
+      if (index >= 0) rows[index] = { ...rows[index], ...incoming };
+      else rows.push(incoming);
+    }
+  } else if (operation.method === "PATCH") {
+    for (const row of rows) if (matchesQueuedFilters(row, operation.query || {})) Object.assign(row, operation.body || {});
+  } else if (operation.method === "DELETE") {
+    snapshot[operation.table] = rows.filter(row => !matchesQueuedFilters(row, operation.query || {}));
+  }
+}
+
+function restoreQueuedStorageImages(snapshot, operations, userID) {
+  const settings = snapshot.settings?.[0];
+  if (!settings) return;
+  const card = settings.business_card_data;
+  const payments = settings.wallet_payment_methods;
+  for (const operation of operations) {
+    if (operation.kind !== "storage-upload" || operation.owner_id !== userID) continue;
+    const path = operation.path.split("/account-assets/")[1] || "";
+    if (!path.startsWith(`${userID}/`)) continue;
+    const relative = path.slice(userID.length + 1);
+    if (relative === "business-card/portrait.jpg" && card) card.portraitData = operation.base64;
+    else {
+      const cardQR = relative.match(/^business-card\/qr\/([^/]+)\.jpg$/);
+      if (cardQR && card) {
+        const qr = card.qrCodes?.find(item => item.id === cardQR[1]);
+        if (qr) qr.imageData = operation.base64;
+      }
+      const paymentQR = relative.match(/^payment-methods\/([^/]+)\.jpg$/);
+      if (paymentQR && payments) {
+        const method = payments.methods?.find(item => item.id === paymentQR[1]);
+        if (method) method.qrImageData = operation.base64;
+      }
+    }
+  }
+}
+
+function persistOfflineOperation(operation, userID = state.user?.id) {
+  if (!userID) throw new Error("离线保存需要先登录云端账号。");
+  const envelope = readOfflineQueue(userID);
+  envelope.operations.push({ ...operation, id: crypto.randomUUID(), owner_id: userID, created_at: new Date().toISOString() });
+  const encoded = JSON.stringify(envelope);
+  if (encoded.length > 3_500_000) throw new Error("离线修改队列空间不足，请联网同步后再继续保存。");
+  localStorage.setItem(offlineQueueKey(userID), encoded);
+  const cache = readOfflineCache(userID);
+  if (cache) {
+    applyQueuedOperation(cache, operation);
+    writeOfflineCache(cache, userID);
+  }
+  renderConnectionStatus();
+  if (state.user?.id === userID && navigator.onLine && !offlineReplayTask && !offlineRetryTimer) scheduleOfflineQueueRetry();
+}
+
+function scheduleOfflineQueueRetry() {
+  const envelope = readOfflineQueue();
+  envelope.retryCount = Math.min((envelope.retryCount || 0) + 1, 6);
+  const delays = [5_000, 15_000, 30_000, 60_000, 180_000, 300_000];
+  const delay = delays[envelope.retryCount - 1];
+  envelope.nextRetryAt = Date.now() + delay;
+  try { localStorage.setItem(offlineQueueKey(), JSON.stringify(envelope)); } catch { /* Queue remains available in its previous saved form. */ }
+  clearTimeout(offlineRetryTimer);
+  offlineRetryTimer = setTimeout(() => { void replayOfflineQueue(); }, delay);
+}
+
+async function replayOfflineQueue() {
+  if (!navigator.onLine || !state.user?.id || offlineReplayTask || queuedOperationCount() === 0) return;
+  const replayUserID = state.user.id;
+  clearTimeout(offlineRetryTimer);
+  offlineRetryTimer = null;
+  offlineReplayTask = (async () => {
+    let blockedByServer = false;
+    try {
+      while (state.user?.id === replayUserID && readOfflineQueue(replayUserID).operations.length > 0 && navigator.onLine) {
+        const envelope = readOfflineQueue(replayUserID);
+        const operation = envelope.operations[0];
+        if (!operation) break;
+        if (operation.owner_id !== replayUserID) break;
+        if (operation.kind === "storage-upload") {
+          const binary = atob(operation.base64);
+          const bytes = Uint8Array.from(binary, character => character.charCodeAt(0));
+          await storageRequest(operation.path, {
+            method: "POST", body: new Blob([bytes], { type: operation.contentType || "image/jpeg" }),
+            contentType: operation.contentType || "image/jpeg", queueOffline: false,
+          });
+        } else {
+          await request(operation.table, {
+            method: operation.method, query: operation.query, body: operation.body,
+            prefer: operation.prefer, queueOffline: false,
+          });
+        }
+        if (state.user?.id !== replayUserID) break;
+        const latest = readOfflineQueue(replayUserID);
+        latest.operations = latest.operations.filter(item => item.id !== operation.id);
+        latest.retryCount = 0;
+        latest.nextRetryAt = null;
+        if (latest.operations.length) localStorage.setItem(offlineQueueKey(replayUserID), JSON.stringify(latest));
+        else localStorage.removeItem(offlineQueueKey(replayUserID));
+        renderConnectionStatus();
+      }
+      if (state.user?.id !== replayUserID) return;
+      offlineRetryCount = 0;
+      if (readOfflineQueue(replayUserID).operations.length === 0) {
+        localStorage.removeItem(offlineQueueKey(replayUserID));
+        clearTimeout(offlineRetryTimer);
+        try {
+          await loadData();
+          renderApp();
+          showToast("离线修改已全部同步到云端。");
+        } catch (error) {
+          if (!isNetworkFailure(error)) throw error;
+          state.offline = true;
+          renderConnectionStatus();
+          showToast("修改已同步，但暂时无法刷新最新云端资料。", true);
+        }
+      }
+    } catch (error) {
+      if (state.user?.id !== replayUserID) return;
+      if (isNetworkFailure(error) && queuedOperationCount() > 0) {
+        scheduleOfflineQueueRetry();
+      } else if (isNetworkFailure(error)) {
+        state.offline = true;
+        showToast("修改已同步，但暂时无法刷新最新云端资料。", true);
+      } else {
+        blockedByServer = true;
+        showToast(`有一项离线修改未能同步，队列已保留：${error.message || "请检查数据后重试。"}`, true);
+      }
+    } finally {
+      offlineReplayTask = null;
+      renderConnectionStatus();
+      if (state.user?.id === replayUserID && !blockedByServer && navigator.onLine && queuedOperationCount() > 0 && !offlineRetryTimer) scheduleOfflineQueueRetry();
+    }
+  })();
+  return offlineReplayTask;
+}
+
+function isNetworkFailure(error) {
+  return !navigator.onLine || error instanceof TypeError;
+}
+
+async function request(tableOrPath, { method = "GET", query = {}, body, prefer, queueOffline = true } = {}) {
+  const requestUserID = state.user?.id;
+  const isAuthPath = tableOrPath.startsWith("/auth/");
   const session = await currentSession();
   if (!session) throw new Error("云端登录状态已失效，请重新登录。");
-  const isAuthPath = tableOrPath.startsWith("/auth/");
+  if (!isAuthPath && (!requestUserID || state.user?.id !== requestUserID || session.user?.id !== requestUserID)) {
+    throw new Error("账号已切换，请重新加载当前账号资料。");
+  }
   const url = apiURL(isAuthPath ? tableOrPath : `/rest/v1/${tableOrPath}`, query);
   const headers = {
     apikey: SUPABASE_PUBLISHABLE_KEY,
@@ -121,7 +376,23 @@ async function request(tableOrPath, { method = "GET", query = {}, body, prefer }
     "Content-Type": "application/json",
   };
   if (prefer) headers.Prefer = prefer;
-  const response = await fetch(url, { method, headers, body: body === undefined ? undefined : JSON.stringify(body) });
+  if (queueOffline && method !== "GET" && !isAuthPath && queuedOperationCount() > 0) {
+    persistOfflineOperation({ table: tableOrPath.replace(/^\/rest\/v1\//, ""), method, query, body, prefer }, requestUserID);
+    return method === "POST" && prefer?.includes("return=representation")
+      ? (Array.isArray(body) ? body : [body]) : null;
+  }
+  let response;
+  try {
+    response = await fetch(url, { method, headers, body: body === undefined ? undefined : JSON.stringify(body) });
+  } catch (error) {
+    if (!queueOffline || method === "GET" || isAuthPath || !requestUserID || !isNetworkFailure(error)) throw error;
+    const table = tableOrPath.replace(/^\/rest\/v1\//, "");
+    const operation = { table, method, query, body, prefer };
+    persistOfflineOperation(operation, requestUserID);
+    return method === "POST" && prefer?.includes("return=representation")
+      ? (Array.isArray(body) ? body : [body]) : null;
+  }
+  if (!isAuthPath && state.user?.id !== requestUserID) throw new Error("账号已切换，请重新加载当前账号资料。");
   const text = await response.text();
   const payload = text ? (() => { try { return JSON.parse(text); } catch { return text; } })() : null;
   if (!response.ok) throw new Error(friendlyError(typeof payload === "object" && payload ? payload : { message: text }));
@@ -151,37 +422,76 @@ async function patch(table, filters, body) {
 }
 
 async function loadData() {
-  const [customers, contacts, addresses, trips, agencies, settings, stops, expenses] = await Promise.all([
-    getRows("customers", { order: "updated_at.desc" }),
-    getRows("customer_contacts", { order: "created_at.asc" }),
-    getRows("customer_addresses", { order: "created_at.asc" }),
-    getRows("trips", { order: "appointment_date.asc" }),
-    getRows("travel_agencies", { order: "updated_at.desc" }),
-    getRows("user_settings", { owner_id: `eq.${state.user.id}`, limit: "1" }),
-    getRows("trip_stops", { order: "position.asc" }),
-    getRows("trip_expenses", { order: "position.asc" }),
-  ]);
-  state.customers = customers;
-  state.contacts = contacts;
-  state.addresses = addresses;
-  state.agencies = agencies;
+  const userID = state.user?.id;
+  if (!userID) return;
+  let snapshot;
+  try {
+    const [customers, contacts, addresses, trips, agencies, settings, stops, expenses] = await Promise.all([
+      getRows("customers", { order: "updated_at.desc" }),
+      getRows("customer_contacts", { order: "created_at.asc" }),
+      getRows("customer_addresses", { order: "created_at.asc" }),
+      getRows("trips", { order: "appointment_date.asc" }),
+      getRows("travel_agencies", { order: "updated_at.desc" }),
+      getRows("user_settings", { owner_id: `eq.${userID}`, limit: "1" }),
+      getRows("trip_stops", { order: "position.asc" }),
+      getRows("trip_expenses", { order: "position.asc" }),
+    ]);
+    if (state.user?.id !== userID) return;
+    snapshot = { customers, contacts, addresses, trips, agencies, settings, stops, expenses };
+    const queued = readOfflineQueue().operations;
+    for (const operation of queued) applyQueuedOperation(snapshot, operation);
+    writeOfflineCache(snapshot);
+    restoreQueuedStorageImages(snapshot, queued, state.user.id);
+    state.offline = false;
+  } catch (error) {
+    if (state.user?.id !== userID) return;
+    const cached = isNetworkFailure(error) ? readOfflineCache() : null;
+    if (!cached) throw error;
+    snapshot = cached;
+    const queued = readOfflineQueue().operations;
+    for (const operation of queued) applyQueuedOperation(snapshot, operation);
+    writeOfflineCache(snapshot);
+    restoreQueuedStorageImages(snapshot, queued, state.user.id);
+    state.offline = true;
+  }
+  state.customers = (snapshot.customers || []).filter(row => !row.deleted_at);
+  state.contacts = (snapshot.contacts || []).filter(row => !row.deleted_at);
+  state.addresses = (snapshot.addresses || []).filter(row => !row.deleted_at);
+  state.agencies = (snapshot.agencies || []).filter(row => !row.deleted_at);
+  const settings = snapshot.settings || [];
   state.settings = settings[0] || defaultSettings();
   state.paymentMethods = Array.isArray(state.settings.wallet_payment_methods?.methods)
     ? state.settings.wallet_payment_methods.methods : [];
   state.businessCard = { nickname: "", style: 0, portraitData: null, qrCodes: [], ...(state.settings.business_card_data || {}) };
   if (!Array.isArray(state.businessCard.qrCodes)) state.businessCard.qrCodes = [];
-  const migrateCardImages = Boolean(state.businessCard.portraitData && !state.businessCard.portraitPath)
-    || state.businessCard.qrCodes.some(item => item.imageData && !item.imagePath);
-  const migratePaymentImages = state.paymentMethods.some(item => item.qrImageData && !item.qrImagePath);
-  await hydrateAccountAssets();
-  if (migrateCardImages) await saveBusinessCard(true);
-  if (migratePaymentImages) await savePaymentMethods(true);
-  state.stops = stops;
-  state.expenses = expenses;
-  state.trips = trips.map(trip => ({
+  const migrateCardImages = !state.offline && (Boolean(state.businessCard.portraitData && !state.businessCard.portraitPath)
+    || state.businessCard.qrCodes.some(item => item.imageData && !item.imagePath));
+  const migratePaymentImages = !state.offline && state.paymentMethods.some(item => item.qrImageData && !item.qrImagePath);
+  if (!state.offline && queuedOperationCount() === 0) {
+    try {
+      await hydrateAccountAssets();
+      if (state.user?.id !== userID) return;
+    }
+    catch (error) {
+      if (state.user?.id !== userID) return;
+      if (!isNetworkFailure(error)) throw error;
+      state.offline = true;
+    }
+  }
+  if (migrateCardImages) {
+    await saveBusinessCard(true);
+    if (state.user?.id !== userID) return;
+  }
+  if (migratePaymentImages) {
+    await savePaymentMethods(true);
+    if (state.user?.id !== userID) return;
+  }
+  state.stops = snapshot.stops || [];
+  state.expenses = snapshot.expenses || [];
+  state.trips = (snapshot.trips || []).filter(row => !row.deleted_at).map(trip => ({
     ...trip,
-    stops: stops.filter(stop => stop.trip_id === trip.id).sort((a, b) => a.position - b.position),
-    expenses: expenses.filter(expense => expense.trip_id === trip.id).sort((a, b) => a.position - b.position),
+    stops: state.stops.filter(stop => stop.trip_id === trip.id && !stop.deleted_at).sort((a, b) => a.position - b.position),
+    expenses: state.expenses.filter(expense => expense.trip_id === trip.id && !expense.deleted_at).sort((a, b) => a.position - b.position),
   }));
   scheduleWebReminders();
 }
@@ -197,7 +507,7 @@ function defaultSettings() {
 function expenseCatalog() {
   if (Array.isArray(state.settings?.expense_catalog)) return state.settings.expense_catalog;
   try {
-    const saved = JSON.parse(localStorage.getItem("yunsheng.web.expense-catalog") || "null");
+    const saved = JSON.parse(getAccountPreference("expense-catalog") || "null");
     return Array.isArray(saved) ? saved : ["居间费", "高速通行费"];
   } catch { return ["居间费", "高速通行费"]; }
 }
@@ -307,6 +617,7 @@ function renderApp() {
         <section id="pageContent">${renderPage()}</section>
       </main>
     </div>`;
+  renderConnectionStatus();
 }
 
 function renderPage() {
@@ -566,19 +877,41 @@ function renderWallet() {
 }
 
 function imageDataURL(base64) { return base64 ? `data:image/jpeg;base64,${base64}` : ""; }
-async function storageRequest(path, { method = "GET", body, contentType } = {}) {
+async function storageRequest(path, { method = "GET", body, contentType, queueOffline = true } = {}) {
+  const requestUserID = state.user?.id;
   const session = await currentSession();
   if (!session) throw new Error("云端登录状态已失效，请重新登录。");
-  const response = await fetch(`${SUPABASE_URL}/storage/v1/${path}`, {
-    method,
-    headers: {
-      apikey: SUPABASE_PUBLISHABLE_KEY,
-      Authorization: `Bearer ${session.access_token}`,
-      ...(contentType ? { "Content-Type": contentType } : {}),
-      ...(method === "POST" ? { "x-upsert": "true" } : {}),
-    },
-    body,
-  });
+  if (!requestUserID || state.user?.id !== requestUserID || session.user?.id !== requestUserID) {
+    throw new Error("账号已切换，请重新加载当前账号资料。");
+  }
+  const queueUpload = async () => {
+    const bytes = new Uint8Array(await body.arrayBuffer());
+    let binary = "";
+    for (let offset = 0; offset < bytes.length; offset += 0x8000) binary += String.fromCharCode(...bytes.subarray(offset, offset + 0x8000));
+    persistOfflineOperation({ kind: "storage-upload", path, base64: btoa(binary), contentType: contentType || "image/jpeg" }, requestUserID);
+  };
+  if (queueOffline && method === "POST" && queuedOperationCount() > 0) {
+    await queueUpload();
+    return { ok: true, queued: true };
+  }
+  let response;
+  try {
+    response = await fetch(`${SUPABASE_URL}/storage/v1/${path}`, {
+      method,
+      headers: {
+        apikey: SUPABASE_PUBLISHABLE_KEY,
+        Authorization: `Bearer ${session.access_token}`,
+        ...(contentType ? { "Content-Type": contentType } : {}),
+        ...(method === "POST" ? { "x-upsert": "true" } : {}),
+      },
+      body,
+    });
+  } catch (error) {
+    if (!queueOffline || method !== "POST" || !isNetworkFailure(error)) throw error;
+    await queueUpload();
+    return { ok: true, queued: true };
+  }
+  if (state.user?.id !== requestUserID) throw new Error("账号已切换，请重新加载当前账号资料。");
   if (!response.ok) {
     const payload = await response.json().catch(() => ({}));
     throw new Error(payload.message || payload.error || "云端图片存储失败，请确认已应用 Storage 配置。");
@@ -631,9 +964,8 @@ function renderBusinessCard() {
   return `<section class="business-card-editor"><div class="panel business-card-settings"><div class="business-card-photo"><label class="business-avatar-picker">${portrait}<span>更换头像<input type="file" accept="image/*" data-card-photo></span></label></div><div class="readonly-profile"><label>姓名<input readonly value="${escapeHTML(name)}"></label><label>电话<input readonly value="${escapeHTML(phone)}"></label><label>电子邮箱<input readonly value="${escapeHTML(email)}"></label></div><label class="field">昵称<input data-card-field="nickname" value="${escapeHTML(card.nickname || "")}" placeholder="输入名片上显示的昵称"></label><div class="field"><label>名片样式</label><div class="business-style-options"><button class="business-style-option ${Number(card.style) === 0 ? "selected" : ""}" data-action="card-style" data-style="0"><strong>样式一</strong><small>简洁平版</small></button><button class="business-style-option ${Number(card.style) === 1 ? "selected" : ""}" data-action="card-style" data-style="1"><strong>样式二</strong><small>金属质感</small></button></div></div><button class="button primary" data-action="save-business-card">保存名片</button></div><div class="business-card-preview ${Number(card.style) === 1 ? "metallic" : "flat"}"><div class="preview-heading">${card.portraitData ? `<img src="${imageDataURL(card.portraitData)}" alt="">` : `<span>${escapeHTML(String(name).slice(0, 1))}</span>`}<div><strong>${escapeHTML(card.nickname || name)}</strong><small>${escapeHTML(name)}</small></div></div><div class="preview-contact"><span>${escapeHTML(phone)}</span><span>${escapeHTML(email)}</span></div><small>${styleName}</small></div></section><section class="panel account-asset-panel"><div class="section-heading"><h2>二维码</h2><button class="button small" data-action="add-card-qr">＋ 添加</button></div>${card.qrCodes.length ? `<div class="asset-list">${card.qrCodes.map(qr => `<article class="asset-row"><button class="asset-image-button" data-action="preview-card-qr" data-id="${escapeHTML(qr.id)}" ${qr.imageData ? "" : "disabled"}>${qr.imageData ? `<img src="${imageDataURL(qr.imageData)}" alt="${escapeHTML(qr.name || "二维码")}">` : `<span>添加二维码</span>`}</button><div class="asset-row-content"><label>二维码名称<input data-card-qr-name="${escapeHTML(qr.id)}" value="${escapeHTML(qr.name || "")}" placeholder="例如：微信"></label><label class="button small asset-upload">${qr.imageData ? "更换二维码" : "选择二维码图片"}<input type="file" accept="image/*" data-card-qr-image="${escapeHTML(qr.id)}"></label></div><button class="button small danger" data-action="remove-card-qr" data-id="${escapeHTML(qr.id)}">删除</button></article>`).join("")}</div>` : `<p class="empty-hint">添加微信、LINE 或其他联系二维码。</p>`}</section>`;
 }
 
-async function cloudAssetValue(column, value) {
+async function cloudAssetValue(column, value, ownerID) {
   const cloudValue = structuredClone(value);
-  const ownerID = state.user.id;
   const saveImage = async (item, dataKey, pathKey, path) => {
     if (!item[dataKey]) return;
     const objectName = item[pathKey] || `${ownerID}/${path}`;
@@ -656,8 +988,11 @@ async function cloudAssetValue(column, value) {
   return cloudValue;
 }
 async function persistAccountAsset(column, value) {
+  const ownerID = state.user?.id;
+  if (!ownerID) throw new Error("请先登录云端账号。");
   const updatedAt = new Date().toISOString();
-  const cloudValue = await cloudAssetValue(column, value);
+  const cloudValue = await cloudAssetValue(column, value, ownerID);
+  if (state.user?.id !== ownerID) throw new Error("账号已切换，请重新加载当前账号资料。");
   if (column === "business_card_data") {
     if (cloudValue.portraitPath) value.portraitPath = cloudValue.portraitPath;
     for (const item of value.qrCodes || []) {
@@ -670,8 +1005,9 @@ async function persistAccountAsset(column, value) {
       if (saved?.qrImagePath) item.qrImagePath = saved.qrImagePath;
     }
   }
-  const row = { ...(state.settings || defaultSettings()), owner_id: state.user.id, [column]: cloudValue, [`${column}_updated_at`]: updatedAt, updated_at: updatedAt };
+  const row = { ...(state.settings || defaultSettings()), owner_id: ownerID, [column]: cloudValue, [`${column}_updated_at`]: updatedAt, updated_at: updatedAt };
   await upsert("user_settings", row, "owner_id");
+  if (state.user?.id !== ownerID) throw new Error("账号已切换，请重新加载当前账号资料。");
   state.settings = row;
 }
 
@@ -747,8 +1083,8 @@ function renderSettings() {
   const settings = state.settings || defaultSettings();
   const countries = [["US", "美国", "美元", "US Dollar", "USD", "$"], ["CA", "加拿大", "加拿大元", "Canadian Dollar", "CAD", "CA$"], ["CN", "中国", "人民币", "Chinese Yuan", "CNY", "¥"], ["GB", "英国", "英镑", "British Pound", "GBP", "£"], ["JP", "日本", "日元", "Japanese Yen", "JPY", "¥"], ["KR", "韩国", "韩元", "South Korean Won", "KRW", "₩"], ["ES", "西班牙", "欧元", "Euro", "EUR", "€"], ["FR", "法国", "欧元", "Euro", "EUR", "€"], ["DE", "德国", "欧元", "Euro", "EUR", "€"], ["AU", "澳大利亚", "澳元", "Australian Dollar", "AUD", "A$"], ["HK", "中国香港", "港元", "Hong Kong Dollar", "HKD", "HK$"], ["TW", "中国台湾", "新台币", "New Taiwan Dollar", "TWD", "NT$"], ["SG", "新加坡", "新加坡元", "Singapore Dollar", "SGD", "S$"], ["MX", "墨西哥", "墨西哥比索", "Mexican Peso", "MXN", "MX$"], ["IN", "印度", "印度卢比", "Indian Rupee", "INR", "₹"], ["CH", "瑞士", "瑞士法郎", "Swiss Franc", "CHF", "CHF"]];
   const configuredNavigation = state.settings?.navigation_provider;
-  const navigation = localStorage.getItem("yunsheng.web.navigation") || (configuredNavigation === "apple_maps" ? "appleMaps" : configuredNavigation || "appleMaps");
-  const flightKey = localStorage.getItem("yunsheng.web.variflight-key") || "";
+  const navigation = getAccountPreference("navigation") || (configuredNavigation === "apple_maps" ? "appleMaps" : configuredNavigation || "appleMaps");
+  const flightKey = getAccountPreference("variflight-key");
   const selectedCurrency = countries.find(([code]) => code === settings.currency_country_code) || countries[0];
   const languageCode = normalizedLanguageCode(settings.language_code);
   return `<section class="panel" style="max-width:760px"><div class="section-heading" style="margin-top:0"><h2>账户偏好</h2></div><form id="settingsForm"><div class="form-grid"><div class="field"><label for="language">语言偏好</label><select id="language" name="language_code"><option value="zh-Hans" ${languageCode === "zh-Hans" ? "selected" : ""}>简体中文</option><option value="zh-Hant" ${languageCode === "zh-Hant" ? "selected" : ""}>繁體中文</option><option value="en" ${languageCode === "en" ? "selected" : ""}>English</option><option value="ja" ${languageCode === "ja" ? "selected" : ""}>日本語</option><option value="ko" ${languageCode === "ko" ? "selected" : ""}>한국어</option><option value="es" ${languageCode === "es" ? "selected" : ""}>Español</option></select><small>偏好保存至云端；Web 界面目前使用简体中文。</small></div><div class="field"><label for="currency">国家和地区 · 本位币</label><select id="currency" name="currency_country_code">${countries.map(([code, country, currencyName, currencyEnglish, currencyCode, symbol]) => `<option value="${code}" ${settings.currency_country_code === code ? "selected" : ""}>${country} · ${symbol} ${currencyName} (${currencyCode})</option>`).join("")}</select><small>${escapeHTML(selectedCurrency[3])} · ${escapeHTML(selectedCurrency[4])}</small></div><div class="field"><label for="navigation_provider">默认导航</label><select id="navigation_provider" name="navigation_provider"><option value="appleMaps" ${navigation === "appleMaps" ? "selected" : ""}>Apple 地图</option><option value="googleMaps" ${navigation === "googleMaps" ? "selected" : ""}>Google Maps</option></select></div><div class="field"><label for="variflight_key">飞友 API 密钥</label><input id="variflight_key" name="variflight_key" type="password" autocomplete="off" value="${escapeHTML(flightKey)}" placeholder="粘贴你的飞友 API 密钥"><small>仅保存在此浏览器，不会同步到云端。</small></div></div><button class="button primary" type="submit">保存设置</button></form></section>
@@ -923,7 +1259,7 @@ function flattenFlightFields(value, output = {}) {
 }
 
 async function lookupFlight(form) {
-  const apiKey = localStorage.getItem("yunsheng.web.variflight-key");
+  const apiKey = getAccountPreference("variflight-key");
   const number = form?.elements.flight_info.value.trim().toUpperCase().replace(/[^A-Z0-9]/g, "");
   const date = form?.elements.flight_date.value;
   if (!apiKey) throw new Error("请先在设置中保存飞友 API 密钥。");
@@ -1095,6 +1431,10 @@ function openTripForm(trip = null, copying = false) {
 }
 
 function showToast(message, error = false) {
+  if (!error && queuedOperationCount() > 0) {
+    message = message.replace("并同步到云端", "，联网后同步").replace("同步到云端", "待联网同步");
+    if (!message.includes("待同步") && !message.includes("待联网")) message += "（有修改待联网同步）";
+  }
   document.querySelector(".toast")?.remove();
   document.body.insertAdjacentHTML("beforeend", `<div class="toast" style="${error ? "border-color:#723541;background:#3a2029;color:#ffb0b6" : ""}">${escapeHTML(message)}</div>`);
   setTimeout(() => document.querySelector(".toast")?.remove(), 3500);
@@ -1107,15 +1447,20 @@ function setBusy(value) {
 
 async function doLogin(form) {
   const fields = new FormData(form);
+  let attemptedUserID = null;
   state.error = ""; setBusy(true);
   try {
     const data = await authRequest("token?grant_type=password", { email: fields.get("email"), password: fields.get("password") });
+    attemptedUserID = data.user.id;
+    if (state.user && state.user.id !== data.user.id) resetAccountWorkspace();
     writeSession({ ...data, expires_at: Date.now() + (data.expires_in || 3600) * 1000 });
     state.user = data.user;
     await loadData();
+    if (state.user?.id !== attemptedUserID) return;
     state.page = "home";
     renderApp();
   } catch (error) {
+    if (attemptedUserID && state.user?.id !== attemptedUserID) return;
     state.error = error.message || "登录失败。";
     clearSession();
   } finally {
@@ -1129,10 +1474,37 @@ async function initialize() {
   document.getElementById("app").innerHTML = `<div class="loading"><div><div class="spinner"></div>正在连接云端…</div></div>`;
   const session = await currentSession();
   if (!session) { renderLogin(); return; }
+  const initializedUserID = session.user.id;
   state.user = session.user;
-  try { await loadData(); renderApp(); }
-  catch (error) { clearSession(); state.error = error.message; renderLogin(); }
+  try {
+    await loadData();
+    if (state.user?.id !== initializedUserID) return;
+    renderApp();
+    if (navigator.onLine) void replayOfflineQueue();
+  } catch (error) {
+    if (state.user?.id !== initializedUserID) return;
+    if (isNetworkFailure(error) && state.user) {
+      state.offline = true;
+      document.getElementById("app").innerHTML = `<main class="offline-start"><section class="panel"><h1>暂时无法连接云端</h1><p>此浏览器还没有可用的离线资料缓存。请恢复网络后重试；登录状态和待同步修改会保留。</p><button class="button primary" data-action="retry-offline-load">重试连接</button></section></main>`;
+      return;
+    }
+    clearSession(); state.error = error.message; renderLogin();
+  }
 }
+
+window.addEventListener("offline", () => {
+  state.offline = true;
+  renderConnectionStatus();
+});
+
+window.addEventListener("online", () => {
+  state.offline = false;
+  renderConnectionStatus();
+  if (state.user) {
+    if (queuedOperationCount() > 0) void replayOfflineQueue();
+    else void loadData().then(() => renderApp()).catch(() => {});
+  }
+});
 
 function updatePageContent() {
   const content = document.getElementById("pageContent");
@@ -1281,14 +1653,17 @@ async function submitTrip(form) {
 }
 
 async function submitSettings(form) {
+  const ownerID = state.user?.id;
+  if (!ownerID) throw new Error("请先登录云端账号。");
   const data = Object.fromEntries(new FormData(form));
   const currencies = { US: ["美元", "US Dollar", "USD", "$"], CN: ["人民币", "Chinese Yuan", "CNY", "¥"], CA: ["加拿大元", "Canadian Dollar", "CAD", "CA$"], JP: ["日元", "Japanese Yen", "JPY", "¥"], GB: ["英镑", "British Pound", "GBP", "£"], AU: ["澳元", "Australian Dollar", "AUD", "A$"], KR: ["韩元", "South Korean Won", "KRW", "₩"], ES: ["欧元", "Euro", "EUR", "€"], FR: ["欧元", "Euro", "EUR", "€"], DE: ["欧元", "Euro", "EUR", "€"], HK: ["港元", "Hong Kong Dollar", "HKD", "HK$"], TW: ["新台币", "New Taiwan Dollar", "TWD", "NT$"], SG: ["新加坡元", "Singapore Dollar", "SGD", "S$"], MX: ["墨西哥比索", "Mexican Peso", "MXN", "MX$"], IN: ["印度卢比", "Indian Rupee", "INR", "₹"], CH: ["瑞士法郎", "Swiss Franc", "CHF", "CHF"] };
   const [name, , code, symbol] = currencies[data.currency_country_code] || currencies.US;
-  const settings = { ...(state.settings || {}), owner_id: state.user.id, language_code: data.language_code, currency_country_code: data.currency_country_code, currency_name: name, currency_code: code, currency_symbol: symbol, navigation_provider: data.navigation_provider || "appleMaps", updated_at: new Date().toISOString() };
+  const settings = { ...(state.settings || {}), owner_id: ownerID, language_code: data.language_code, currency_country_code: data.currency_country_code, currency_name: name, currency_code: code, currency_symbol: symbol, navigation_provider: data.navigation_provider || "appleMaps", updated_at: new Date().toISOString() };
   await upsert("user_settings", settings, "owner_id");
-  localStorage.setItem("yunsheng.web.navigation", data.navigation_provider || "appleMaps");
-  if (data.variflight_key?.trim()) localStorage.setItem("yunsheng.web.variflight-key", data.variflight_key.trim());
-  else localStorage.removeItem("yunsheng.web.variflight-key");
+  if (state.user?.id !== ownerID) return;
+  setAccountPreference("navigation", data.navigation_provider || "appleMaps");
+  if (data.variflight_key?.trim()) setAccountPreference("variflight-key", data.variflight_key.trim());
+  else removeAccountPreference("variflight-key");
   state.settings = settings; renderApp(); showToast("设置已保存。");
 }
 
@@ -1465,7 +1840,12 @@ document.addEventListener("click", async event => {
   try {
     if (action === "navigate") { state.page = button.dataset.page; state.search = ""; renderApp(); }
     else if (action === "signout") await logout();
-    else if (action === "refresh-data") { await loadData(); renderApp(); showToast("已从云端更新数据。"); }
+    else if (action === "refresh-data") {
+      if (queuedOperationCount() > 0 && navigator.onLine) await replayOfflineQueue();
+      await loadData(); renderApp(); showToast(state.offline ? "当前显示本机缓存，联网后会继续同步。" : "已从云端更新数据。");
+    }
+    else if (action === "retry-offline-load") await initialize();
+    else if (action === "retry-offline-load") await initialize();
     else if (action === "new-trip") openTripForm();
     else if (action === "new-customer") openCustomerForm();
     else if (action === "new-agency") openAgencyForm();
@@ -1522,7 +1902,7 @@ document.addEventListener("click", async event => {
     else if (action === "edit-agency") openAgencyForm(state.agencies.find(item => item.id === button.dataset.id));
     else if (action === "navigate-saved-address") {
       const encoded = encodeURIComponent(button.dataset.address || "");
-      const url = (localStorage.getItem("yunsheng.web.navigation") || "appleMaps") === "googleMaps" ? `https://www.google.com/maps/dir/?api=1&destination=${encoded}&travelmode=driving` : `https://maps.apple.com/?daddr=${encoded}&dirflg=d`;
+      const url = (getAccountPreference("navigation") || "appleMaps") === "googleMaps" ? `https://www.google.com/maps/dir/?api=1&destination=${encoded}&travelmode=driving` : `https://maps.apple.com/?daddr=${encoded}&dirflg=d`;
       window.open(url, "_blank", "noopener");
     }
     else if (action === "close-modal") document.getElementById("modal-root")?.remove();
@@ -1601,7 +1981,7 @@ document.addEventListener("click", async event => {
       const address = input?.value.trim();
       if (!address) throw new Error("请先输入或选择地址。");
       const encoded = encodeURIComponent(address);
-      const url = (localStorage.getItem("yunsheng.web.navigation") || "appleMaps") === "googleMaps" ? `https://www.google.com/maps/dir/?api=1&destination=${encoded}&travelmode=driving` : `https://maps.apple.com/?daddr=${encoded}&dirflg=d`;
+      const url = (getAccountPreference("navigation") || "appleMaps") === "googleMaps" ? `https://www.google.com/maps/dir/?api=1&destination=${encoded}&travelmode=driving` : `https://maps.apple.com/?daddr=${encoded}&dirflg=d`;
       window.open(url, "_blank", "noopener");
     }
     else if (action === "lookup-flight") await lookupFlight(button.closest("form"));
@@ -1648,11 +2028,14 @@ document.addEventListener("click", async event => {
     }
     else if (action === "remove-expense-name") button.closest(".expense-name-row")?.remove();
     else if (action === "save-expense-catalog") {
+      const ownerID = state.user?.id;
+      if (!ownerID) throw new Error("请先登录云端账号。");
       const names = [...document.querySelectorAll("[data-expense-name]")].map(input => input.value.trim()).filter(Boolean);
       const unique = [...new Set(names)];
-      localStorage.setItem("yunsheng.web.expense-catalog", JSON.stringify(unique));
-      const settings = { ...(state.settings || defaultSettings()), owner_id: state.user.id, expense_catalog: unique, updated_at: new Date().toISOString() };
+      const settings = { ...(state.settings || defaultSettings()), owner_id: ownerID, expense_catalog: unique, updated_at: new Date().toISOString() };
       await upsert("user_settings", settings, "owner_id");
+      if (state.user?.id !== ownerID) return;
+      localStorage.setItem(accountPreferenceKey("expense-catalog", ownerID), JSON.stringify(unique));
       state.settings = settings;
       updatePageContent(); showToast("费用项目已保存。");
     }

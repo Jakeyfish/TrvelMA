@@ -2,6 +2,7 @@ import Foundation
 import Observation
 import Security
 import SwiftData
+import UserNotifications
 
 /// Supports on-device accounts and Supabase email/password authentication.
 @Observable
@@ -11,6 +12,11 @@ final class AuthViewModel {
     private(set) var currentSalutation = ""
     private(set) var currentPhone = ""
     private(set) var isCloudAccount = false
+    private(set) var isCloudSyncInProgress = false
+
+    func setCloudSyncInProgress(_ inProgress: Bool) {
+        isCloudSyncInProgress = inProgress
+    }
     var cloudAccessToken: String? {
         guard isCloudAccount else { return nil }
         return SecureCloudSession.load(key: "auth.cloud.accessToken")
@@ -201,10 +207,65 @@ final class AuthViewModel {
         currentSalutation = ""
         currentPhone = ""
         isCloudAccount = false
+        isCloudSyncInProgress = false
         DataOwnership.activateLocal(email: currentEmail)
         SecureCloudSession.delete(key: "auth.cloud.accessToken")
         SecureCloudSession.delete(key: "auth.cloud.refreshToken")
         clearSavedSession()
+    }
+
+    /// Clears only the active cloud account's on-device cache. Remote records,
+    /// the signed-in session, and other account scopes remain untouched.
+    func clearCurrentCloudAccountLocalData(context: ModelContext) throws {
+        guard isLoggedIn, isCloudAccount else {
+            throw SupabaseAuthClient.AuthError.message("此操作仅适用于已登录的云端账号。")
+        }
+        guard !isCloudSyncInProgress else {
+            throw SupabaseAuthClient.AuthError.message("同步正在进行，请同步完成后再清除本机资料。")
+        }
+
+        let email = Self.normalize(currentEmail)
+        guard !email.isEmpty else {
+            throw SupabaseAuthClient.AuthError.message("无法确认当前账号，请重新登录后重试。")
+        }
+        let scope = DataOwnership.cloudScope(for: email)
+        guard DataOwnership.activeScope == scope else {
+            throw SupabaseAuthClient.AuthError.message("当前账号资料范围已变化，请重新打开后重试。")
+        }
+
+        let customers = try context.fetch(FetchDescriptor<Custumer>(predicate: #Predicate { $0.ownerScope == scope }))
+        let addresses = try context.fetch(FetchDescriptor<Address>(predicate: #Predicate { $0.ownerScope == scope }))
+        let contacts = try context.fetch(FetchDescriptor<Connect>(predicate: #Predicate { $0.ownerScope == scope }))
+        let agencies = try context.fetch(FetchDescriptor<TravelAgency>(predicate: #Predicate { $0.ownerScope == scope }))
+        let trips = try context.fetch(FetchDescriptor<TripBookingRecord>(predicate: #Predicate { $0.ownerScope == scope }))
+        let deletions = try context.fetch(FetchDescriptor<CloudSyncDeletion>(predicate: #Predicate { $0.ownerScope == scope }))
+        let conflicts = try context.fetch(FetchDescriptor<CloudSyncConflict>(predicate: #Predicate { $0.ownerScope == scope }))
+
+        for item in addresses { context.delete(item) }
+        for item in contacts { context.delete(item) }
+        for item in customers { context.delete(item) }
+        for item in agencies { context.delete(item) }
+        for item in trips { context.delete(item) }
+        for item in deletions { context.delete(item) }
+        for item in conflicts { context.delete(item) }
+        try context.save()
+
+        let reminderIDs = trips.flatMap { trip in
+            ["trip-reminder-\(trip.id.uuidString)-1", "trip-reminder-\(trip.id.uuidString)-2"]
+        }
+        UNUserNotificationCenter.current().removePendingNotificationRequests(withIdentifiers: reminderIDs)
+        UNUserNotificationCenter.current().removeDeliveredNotifications(withIdentifiers: reminderIDs)
+
+        AccountAssetStore.removeCloudAssets(email: email)
+        let defaults = UserDefaults.standard
+        defaults.removeObject(forKey: NavigationProvider.defaultsKey)
+        defaults.removeObject(forKey: "baseCurrency.countryCode.\(scope)")
+        CloudLocalDataPreference.cloudDataOnly.save(for: email)
+        defaults.set(true, forKey: "auth.cloud.initialLocalImportConsent.v1.\(email)")
+        defaults.removeObject(forKey: "cloud.sync.retry.v1.\(email).failureCount")
+        defaults.removeObject(forKey: "cloud.sync.retry.v1.\(email).nextAttemptAt")
+
+        NotificationCenter.default.post(name: .accountScopedLocalDataDidClear, object: scope)
     }
 
     /// Deletes device data only for local accounts. Cloud account deletion requires a

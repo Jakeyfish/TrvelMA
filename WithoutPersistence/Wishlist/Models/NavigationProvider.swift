@@ -4,7 +4,7 @@ enum NavigationProvider: String, CaseIterable, Identifiable {
     case appleMaps
     case googleMaps
 
-    static let defaultsKey = "defaultNavigationProvider"
+    static var defaultsKey: String { "defaultNavigationProvider.\(DataOwnership.activeScope)" }
 
     var id: String { rawValue }
 

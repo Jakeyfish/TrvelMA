@@ -38,6 +38,7 @@ struct RootView: View {
     @State private var isSyncing = false
     @State private var syncErrorMessage: String?
     @State private var pendingAssetSyncTask: Task<Void, Never>?
+    @State private var syncRetryTask: Task<Void, Never>?
     @State private var assetSyncInProgress = false
     @State private var assetSyncNeedsAnotherPass = false
     @State private var cloudImportCounts: CloudImportCounts?
@@ -95,7 +96,7 @@ struct RootView: View {
                         .font(.caption)
                         .frame(maxWidth: .infinity, alignment: .leading)
                         if !isSyncing {
-                            Button("重新同步") { Task { await syncLocalData() } }
+                            Button("重新同步") { Task { await syncLocalData(force: true) } }
                                 .font(.caption.weight(.semibold))
                         }
                         if !pendingSyncConflicts.isEmpty {
@@ -108,7 +109,12 @@ struct RootView: View {
                     .padding(.vertical, 9)
                     .background(Color.cyan.opacity(0.12))
                 }
+                // SwiftData @Query predicates capture the active account scope
+                // when ContentView is initialized. Recreate the view tree when
+                // the signed-in account or storage mode changes so queries do
+                // not keep showing the previous account's rows.
                 ContentView()
+                    .id(storeTaskIdentity)
             }
 
         } else {
@@ -116,6 +122,7 @@ struct RootView: View {
         }
         }
         .task(id: storeTaskIdentity) {
+            syncRetryTask?.cancel()
             guard dataStore.startupError == nil else { return }
             guard (dataStore.activeMode == .cloud) == auth.isCloudAccount else {
                 dataStore.activate(forCloudAccount: auth.isCloudAccount)
@@ -151,12 +158,24 @@ struct RootView: View {
                 }
 
                 assetSyncInProgress = true
+                auth.setCloudSyncInProgress(true)
                 repeat {
                     assetSyncNeedsAnotherPass = false
                     await syncAccountAssets()
                 } while assetSyncNeedsAnotherPass && auth.isCloudAccount
                 assetSyncInProgress = false
+                auth.setCloudSyncInProgress(isSyncing)
             }
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .accountScopedLocalDataDidClear)) { notification in
+            guard let clearedScope = notification.object as? String,
+                  clearedScope == DataOwnership.activeScope else { return }
+            pendingAssetSyncTask?.cancel()
+            pendingAssetSyncTask = nil
+            assetSyncNeedsAnotherPass = false
+            pendingSyncConflicts = []
+            cloudSyncStatus = .completed(customers: 0, agencies: 0, trips: 0)
+            clearScheduledSyncRetry()
         }
         .alert("同步失败", isPresented: Binding(
             get: { syncErrorMessage != nil },
@@ -170,7 +189,7 @@ struct RootView: View {
             SyncConflictResolutionView(conflicts: pendingSyncConflicts) {
                 Task {
                     await refreshPendingSyncConflicts()
-                    await syncLocalData()
+                    await syncLocalData(force: true)
                 }
             }
         }
@@ -185,7 +204,7 @@ struct RootView: View {
                     CloudLocalDataPreference.syncLocalData.save(for: auth.currentEmail)
                     UserDefaults.standard.set(true, forKey: cloudImportConsentKey)
                     cloudImportCounts = nil
-                    Task { await syncLocalData() }
+                    Task { await syncLocalData(force: true) }
                 } catch {
                     syncErrorMessage = error.localizedDescription
                 }
@@ -194,7 +213,7 @@ struct RootView: View {
                 CloudLocalDataPreference.cloudDataOnly.save(for: auth.currentEmail)
                 UserDefaults.standard.set(true, forKey: cloudImportConsentKey)
                 cloudImportCounts = nil
-                Task { await syncLocalData() }
+                Task { await syncLocalData(force: true) }
             }
         } message: {
             if let counts = cloudImportCounts {
@@ -209,11 +228,31 @@ struct RootView: View {
         guard !auth.currentEmail.isEmpty else { return }
         pendingSyncConflicts = []
 
+        let email = auth.currentEmail.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        let lastCloudAccountKey = "auth.cloud.lastAccountOnDevice.v1"
+        let previousCloudEmail = UserDefaults.standard.string(forKey: lastCloudAccountKey)?
+            .trimmingCharacters(in: .whitespacesAndNewlines).lowercased() ?? ""
+        let switchedCloudAccounts = !previousCloudEmail.isEmpty && previousCloudEmail != email
+        let localEmail = UserDefaults.standard.string(forKey: "auth.lastLocalEmail")?
+            .trimmingCharacters(in: .whitespacesAndNewlines).lowercased() ?? ""
+        let localAccountDoesNotMatchCloudAccount = !localEmail.isEmpty && localEmail != email
+        let anotherCloudAccountHasDeviceData = hasCachedCloudDataForAnotherAccount(excluding: email)
+        UserDefaults.standard.set(email, forKey: lastCloudAccountKey)
+
+        // A cloud account switch starts from that account's own cloud data. The
+        // device's local workspace may belong to the previous account, so never
+        // import it automatically into a different cloud account.
+        if switchedCloudAccounts || localAccountDoesNotMatchCloudAccount || anotherCloudAccountHasDeviceData {
+            CloudLocalDataPreference.cloudDataOnly.save(for: email)
+            UserDefaults.standard.set(true, forKey: cloudImportConsentKey)
+            await syncLocalData()
+            return
+        }
+
         let customers: Int
         let agencies: Int
         let trips: Int
         let deletions: Int
-        let localEmail = UserDefaults.standard.string(forKey: "auth.lastLocalEmail")?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() ?? ""
         AccountAssetStore.migrateLegacyAssetsToLocal(email: localEmail)
         let sourceScope = localEmail.isEmpty ? DataOwnership.legacyLocalScope : DataOwnership.localScope(email: localEmail)
         do {
@@ -230,7 +269,6 @@ struct RootView: View {
             syncErrorMessage = error.localizedDescription
             return
         }
-        let email = auth.currentEmail.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
         let hasUnimportedAssets = DataOwnership.hasUnimportedLocalAssets(from: localEmail, to: email)
 
         if let preference = CloudLocalDataPreference.load(for: email) {
@@ -257,6 +295,36 @@ struct RootView: View {
         cloudImportCounts = CloudImportCounts(customers: customers, agencies: agencies, trips: trips)
     }
 
+    private func hasCachedCloudDataForAnotherAccount(excluding email: String) -> Bool {
+        let currentScope = DataOwnership.cloudScope(for: email)
+        if let cloudContainer = dataStore.cloudContainer {
+            do {
+                let context = ModelContext(cloudContainer)
+                let customerScopes = try context.fetch(FetchDescriptor<Custumer>()).map(\.ownerScope)
+                let agencyScopes = try context.fetch(FetchDescriptor<TravelAgency>()).map(\.ownerScope)
+                let tripScopes = try context.fetch(FetchDescriptor<TripBookingRecord>()).map(\.ownerScope)
+                let deletionScopes = try context.fetch(FetchDescriptor<CloudSyncDeletion>()).map(\.ownerScope)
+                let conflictScopes = try context.fetch(FetchDescriptor<CloudSyncConflict>()).map(\.ownerScope)
+                if (customerScopes + agencyScopes + tripScopes + deletionScopes + conflictScopes)
+                    .contains(where: { $0.hasPrefix("cloud:") && $0 != currentScope }) {
+                    return true
+                }
+            } catch {
+                // If ownership cannot be checked, preserve account separation
+                // by choosing cloud-only instead of importing local records.
+                return true
+            }
+        }
+
+        let assetPrefix = "accountAssets.cloud.v2."
+        return UserDefaults.standard.dictionaryRepresentation().contains { key, value in
+            key.hasPrefix(assetPrefix)
+                && !key.hasSuffix(".updatedAt")
+                && !key.hasPrefix("\(assetPrefix)\(email).")
+                && value is Data
+        }
+    }
+
     @MainActor
     private func prepareLocalDataScope() async {
         let scope = DataOwnership.localScope(email: auth.currentEmail)
@@ -270,22 +338,88 @@ struct RootView: View {
     }
 
     @MainActor
-    private func syncLocalData() async {
+    private func syncLocalData(force: Bool = false, showsError: Bool = true) async {
         guard auth.isCloudAccount, hasCloudImportConsent, cloudImportCounts == nil, !isSyncing else { return }
+        if !force, let retryDate = scheduledSyncRetryDate(), retryDate > .now {
+            cloudSyncStatus = .failed
+            scheduleSyncRetry(at: retryDate)
+            return
+        }
+        syncRetryTask?.cancel()
         isSyncing = true
+        auth.setCloudSyncInProgress(true)
         cloudSyncStatus = .uploading
-        defer { isSyncing = false }
+        defer {
+            isSyncing = false
+            auth.setCloudSyncInProgress(assetSyncInProgress)
+        }
         do {
+            let syncEmail = auth.currentEmail.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
             guard let token = (await auth.refreshCloudAccessToken()) ?? auth.cloudAccessToken else {
                 throw SupabaseDataSync.SyncError.noSession
             }
-            let result = try await SupabaseDataSync.uploadLocalData(context: modelContext, accessToken: token)
+            guard auth.isCloudAccount,
+                  auth.currentEmail.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() == syncEmail else {
+                return
+            }
+            let result = try await SupabaseDataSync.uploadLocalData(
+                context: modelContext,
+                accessToken: token,
+                accountEmail: syncEmail
+            )
+            clearScheduledSyncRetry()
             cloudSyncStatus = .completed(customers: result.customers, agencies: result.agencies, trips: result.trips)
             await refreshPendingSyncConflicts()
         } catch {
             cloudSyncStatus = .failed
-            syncErrorMessage = error.localizedDescription
+            persistFailedSyncAndScheduleRetry()
+            if showsError { syncErrorMessage = error.localizedDescription }
             await refreshPendingSyncConflicts()
+        }
+    }
+
+    private var syncRetryStorageKey: String {
+        "cloud.sync.retry.v1.\(auth.currentEmail.trimmingCharacters(in: .whitespacesAndNewlines).lowercased())"
+    }
+
+    private func scheduledSyncRetryDate() -> Date? {
+        UserDefaults.standard.object(forKey: "\(syncRetryStorageKey).nextAttemptAt") as? Date
+    }
+
+    @MainActor
+    private func persistFailedSyncAndScheduleRetry() {
+        let defaults = UserDefaults.standard
+        let attemptsKey = "\(syncRetryStorageKey).failureCount"
+        let attempts = min(defaults.integer(forKey: attemptsKey) + 1, 6)
+        let delays: [TimeInterval] = [30, 60, 120, 300, 600, 900]
+        let retryDate = Date().addingTimeInterval(delays[attempts - 1])
+        defaults.set(attempts, forKey: attemptsKey)
+        defaults.set(retryDate, forKey: "\(syncRetryStorageKey).nextAttemptAt")
+        scheduleSyncRetry(at: retryDate)
+    }
+
+    @MainActor
+    private func clearScheduledSyncRetry() {
+        UserDefaults.standard.removeObject(forKey: "\(syncRetryStorageKey).failureCount")
+        UserDefaults.standard.removeObject(forKey: "\(syncRetryStorageKey).nextAttemptAt")
+        syncRetryTask?.cancel()
+        syncRetryTask = nil
+    }
+
+    @MainActor
+    private func scheduleSyncRetry(at date: Date) {
+        syncRetryTask?.cancel()
+        guard auth.isCloudAccount, hasCloudImportConsent else { return }
+        syncRetryTask = Task {
+            let delay = max(0, date.timeIntervalSinceNow)
+            let nanoseconds = UInt64(min(delay, 900) * 1_000_000_000)
+            do {
+                try await Task.sleep(nanoseconds: nanoseconds)
+            } catch {
+                return
+            }
+            guard !Task.isCancelled, scenePhase == .active else { return }
+            await syncLocalData(showsError: false)
         }
     }
 
@@ -299,10 +433,15 @@ struct RootView: View {
     private func syncAccountAssets() async {
         guard auth.isCloudAccount, hasCloudImportConsent, cloudImportCounts == nil else { return }
         do {
+            let syncEmail = auth.currentEmail.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
             guard let token = (await auth.refreshCloudAccessToken()) ?? auth.cloudAccessToken else {
                 throw SupabaseDataSync.SyncError.noSession
             }
-            try await SupabaseDataSync.syncAccountAssets(email: auth.currentEmail, accessToken: token)
+            guard auth.isCloudAccount,
+                  auth.currentEmail.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() == syncEmail else {
+                return
+            }
+            try await SupabaseDataSync.syncAccountAssets(email: syncEmail, accessToken: token)
         } catch {
             cloudSyncStatus = .failed
             syncErrorMessage = error.localizedDescription

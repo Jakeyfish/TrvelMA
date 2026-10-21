@@ -138,6 +138,15 @@ struct WishlistView: View {
                                 Label("隐私政策", systemImage: "hand.raised.fill")
                             }
 
+                            if auth.isCloudAccount {
+                                Button(role: .destructive) {
+                                    accountDeletionAlert = .cloudLocalDataConfirmation
+                                } label: {
+                                    Label("清除此账号的本机资料", systemImage: "externaldrive.badge.xmark")
+                                }
+                                .disabled(auth.isCloudSyncInProgress)
+                            }
+
                             Button(role: .destructive) {
                                 accountDeletionAlert = .confirmation
                             } label: {
@@ -208,10 +217,29 @@ struct WishlistView: View {
                         primaryButton: .destructive(Text("删除"), action: deleteAccount),
                         secondaryButton: .cancel(Text("取消"))
                     )
+                case .cloudLocalDataConfirmation:
+                    Alert(
+                        title: Text("清除本机资料？"),
+                        message: Text("只会删除当前登录账号保存在此设备上的行程管家资料和缓存。云端数据与其他账号不受影响。清除后无法从本机恢复；云端仍有资料时，可以再次同步下载。"),
+                        primaryButton: .destructive(Text("清除本机资料"), action: clearCloudAccountLocalData),
+                        secondaryButton: .cancel(Text("取消"))
+                    )
                 case .failure(let message):
                     Alert(
                         title: Text("删除失败"),
                         message: Text(message),
+                        dismissButton: .default(Text("关闭"))
+                    )
+                case .cloudLocalDataFailure(let message):
+                    Alert(
+                        title: Text("清除失败"),
+                        message: Text(message),
+                        dismissButton: .default(Text("关闭"))
+                    )
+                case .cloudLocalDataSuccess:
+                    Alert(
+                        title: Text("本机资料已清除"),
+                        message: Text("当前账号保存在此设备上的资料和缓存已清除。云端数据与其他账号没有更改。"),
                         dismissButton: .default(Text("关闭"))
                     )
                 }
@@ -235,16 +263,31 @@ struct WishlistView: View {
             accountDeletionAlert = .failure(error.localizedDescription)
         }
     }
+
+    private func clearCloudAccountLocalData() {
+        do {
+            try auth.clearCurrentCloudAccountLocalData(context: modelContext)
+            accountDeletionAlert = .cloudLocalDataSuccess
+        } catch {
+            accountDeletionAlert = .cloudLocalDataFailure(error.localizedDescription)
+        }
+    }
 }
 
 private enum AccountDeletionAlert: Identifiable {
     case confirmation
     case failure(String)
+    case cloudLocalDataConfirmation
+    case cloudLocalDataFailure(String)
+    case cloudLocalDataSuccess
 
     var id: String {
         switch self {
         case .confirmation: "confirmation"
         case .failure: "failure"
+        case .cloudLocalDataConfirmation: "cloud-local-data-confirmation"
+        case .cloudLocalDataFailure: "cloud-local-data-failure"
+        case .cloudLocalDataSuccess: "cloud-local-data-success"
         }
     }
 }

@@ -81,6 +81,10 @@ struct BusinessCardView: View {
             .onReceive(NotificationCenter.default.publisher(for: .accountAssetsDidSync)) { _ in
                 loadDraft()
             }
+            .onReceive(NotificationCenter.default.publisher(for: .accountScopedLocalDataDidClear)) { notification in
+                guard (notification.object as? String) == DataOwnership.activeScope else { return }
+                loadDraft()
+            }
         }
     }
 

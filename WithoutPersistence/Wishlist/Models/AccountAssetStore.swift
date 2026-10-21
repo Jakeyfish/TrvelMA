@@ -1,5 +1,9 @@
 import Foundation
 
+extension Notification.Name {
+    static let accountScopedLocalDataDidClear = Notification.Name("accountScopedLocalDataDidClear")
+}
+
 /// Keeps profile assets in separate namespaces for device-only and cloud accounts.
 /// Legacy email-scoped values are copied into the device namespace and retained
 /// so an interrupted upgrade can be rolled back without losing user data.
@@ -116,6 +120,13 @@ enum AccountAssetStore {
             set(nil, for: asset, email: normalizedEmail, namespace: .local)
             defaults.removeObject(forKey: asset.legacyKeyPrefix + normalizedEmail)
             defaults.removeObject(forKey: asset.legacyDatePrefix + normalizedEmail)
+        }
+    }
+
+    static func removeCloudAssets(email: String) {
+        let normalizedEmail = normalize(email)
+        for asset in Asset.allCases {
+            set(nil, for: asset, email: normalizedEmail, namespace: .cloud)
         }
     }
 

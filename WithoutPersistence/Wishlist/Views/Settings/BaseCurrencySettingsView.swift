@@ -14,7 +14,7 @@ struct BaseCurrencyOption: Identifiable, Hashable {
 }
 
 enum BaseCurrencyCatalog {
-    static let countryCodeKey = "baseCurrency.countryCode"
+    static var countryCodeKey: String { "baseCurrency.countryCode.\(DataOwnership.activeScope)" }
     static let defaultCountryCode = "US"
 
     static let options: [BaseCurrencyOption] = [

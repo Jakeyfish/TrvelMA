@@ -100,11 +100,14 @@ enum SupabaseDataSync {
 
     enum SyncError: LocalizedError {
         case noSession
+        case accountChanged
         case response(String)
         var errorDescription: String? {
             switch self {
             case .noSession:
                 Self.localized("云端登录状态已失效，请重新登录后同步。")
+            case .accountChanged:
+                Self.localized("同步期间账号已切换，请重新同步当前账号。")
             case .response(let message):
                 Self.localizedKnownMessage(message)
             }
@@ -118,6 +121,8 @@ enum SupabaseDataSync {
             switch key {
             case "云端登录状态已失效，请重新登录后同步。":
                 return String(localized: "云端登录状态已失效，请重新登录后同步。", locale: locale)
+            case "同步期间账号已切换，请重新同步当前账号。":
+                return String(localized: "同步期间账号已切换，请重新同步当前账号。", locale: locale)
             default:
                 return key
             }
@@ -139,10 +144,15 @@ enum SupabaseDataSync {
     }
 
     @MainActor
-    static func uploadLocalData(context: ModelContext, accessToken: String) async throws -> Summary {
+    static func uploadLocalData(context: ModelContext, accessToken: String, accountEmail: String) async throws -> Summary {
+        let normalizedEmail = accountEmail.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        guard !normalizedEmail.isEmpty else { throw SyncError.noSession }
+        // Freeze the owner scope before any network await. The active account may
+        // change while a request is in flight, but this sync must stay isolated.
+        let scope = DataOwnership.cloudScope(for: normalizedEmail)
         let ownerID = try await currentUserID(accessToken: accessToken)
+        guard DataOwnership.activeScope == scope else { throw SyncError.accountChanged }
         var summary = Summary()
-        let scope = DataOwnership.activeScope
         let tombstones = try context.fetch(FetchDescriptor<CloudSyncDeletion>(predicate: #Predicate { $0.ownerScope == scope }))
         var cloudDeletionRows: [String: [[String: Any]]] = [:]
         for table in Set(tombstones.map(\.tableName)) {
@@ -169,9 +179,8 @@ enum SupabaseDataSync {
             summary.deleted += 1
         }
         if !tombstones.isEmpty { try context.save() }
-        summary.downloaded = try await pullAndMerge(context: context, token: accessToken)
-        repairKnownCustomerRecord(context: context)
-        try deduplicateCustomerChildren(context: context)
+        summary.downloaded = try await pullAndMerge(context: context, token: accessToken, scope: scope)
+        try deduplicateCustomerChildren(context: context, scope: scope)
         try context.save()
         let pendingConflicts = try context.fetch(FetchDescriptor<CloudSyncConflict>(predicate: #Predicate { $0.ownerScope == scope }))
         let blockedAgencies = Set(pendingConflicts.filter { $0.tableName == "travel_agencies" }.map { $0.recordID.lowercased() })
@@ -261,7 +270,7 @@ enum SupabaseDataSync {
         try await markChildrenDeleted(table: "trip_expenses", parentColumn: "trip_id", parentIDs: trips.map { $0.id.uuidString.lowercased() }, token: accessToken)
         try await upsert("trip_stops", rows: stops, token: accessToken)
         try await upsert("trip_expenses", rows: expenses, token: accessToken)
-        try await syncAccountAssets(email: UserDefaults.standard.string(forKey: "auth.session.email") ?? "", accessToken: accessToken)
+        try await syncAccountAssets(email: normalizedEmail, accessToken: accessToken)
         // Record the exact versions acknowledged by the cloud only after every
         // entity and child-row upload succeeded. A failed partial sync must not
         // advance the baseline and hide a later two-sided edit.
@@ -276,6 +285,9 @@ enum SupabaseDataSync {
 
     @MainActor
     static func resolveConflict(_ conflict: CloudSyncConflict, keepRemote: Bool, context: ModelContext) throws {
+        guard conflict.ownerScope == DataOwnership.activeScope else {
+            throw SyncError.response("当前账号无权处理此同步冲突。")
+        }
         guard let data = conflict.remotePayloadJSON.data(using: .utf8),
               let row = try JSONSerialization.jsonObject(with: data) as? [String: Any] else {
             throw SyncError.response("冲突版本无法读取，记录仍保留，请重新同步后再试。")
@@ -303,11 +315,13 @@ enum SupabaseDataSync {
                 model.syncBaseUpdatedAt = conflict.remoteUpdatedAt
             } else if conflict.isLocalDeletion && keepRemote,
                       let id = string(row, "id") {
-                context.insert(TravelAgency(uuid: id, agencyCode: string(row, "agency_code") ?? "",
-                                            name: string(row, "name") ?? "", contactPerson: string(row, "contact_person") ?? "",
-                                            phone: string(row, "phone") ?? "", officeAddress: string(row, "office_address") ?? "",
-                                            createdAt: date(row, "created_at") ?? conflict.remoteUpdatedAt,
-                                            updateAt: conflict.remoteUpdatedAt, syncBaseUpdatedAt: conflict.remoteUpdatedAt))
+                let model = TravelAgency(uuid: id, agencyCode: string(row, "agency_code") ?? "",
+                                         name: string(row, "name") ?? "", contactPerson: string(row, "contact_person") ?? "",
+                                         phone: string(row, "phone") ?? "", officeAddress: string(row, "office_address") ?? "",
+                                         createdAt: date(row, "created_at") ?? conflict.remoteUpdatedAt,
+                                         updateAt: conflict.remoteUpdatedAt, syncBaseUpdatedAt: conflict.remoteUpdatedAt)
+                model.ownerScope = ownerScope
+                context.insert(model)
             }
         case "customers":
             let descriptor = FetchDescriptor<Custumer>(predicate: #Predicate { $0.uuid == recordID && $0.ownerScope == ownerScope })
@@ -608,43 +622,10 @@ enum SupabaseDataSync {
         }
     }
 
-    /// Repairs the customer whose child records were cross-linked by the earlier
-    /// multi-customer refresh bug. The user confirmed the only valid phone and address.
-    @MainActor
-    private static func repairKnownCustomerRecord(context: ModelContext) {
-        let scope = DataOwnership.activeScope
-        guard let customers = try? context.fetch(FetchDescriptor<Custumer>(predicate: #Predicate { $0.ownerScope == scope })) else { return }
-        for customer in customers where customer.name.trimmingCharacters(in: .whitespacesAndNewlines) == "朱少沧" {
-            guard !conflictExists(table: "customers", id: customer.uuid, scope: scope, context: context) else { continue }
-            let confirmedPhone = "6268628566"
-            let correctAddress = customer.addresses.first {
-                $0.addresses.localizedCaseInsensitiveContains("1441 Paso Real Ave SPC130")
-            }?.addresses ?? "1441 Paso Real Ave SPC130, 罗兰高地, CA, 美国"
-            let currentPhones = customer.connecttype
-                .filter { $0.connectlable == "电话" }
-                .map { $0.connecttype.trimmingCharacters(in: .whitespacesAndNewlines) }
-            let currentAddresses = customer.addresses.map {
-                ($0.addlable, $0.addresses.trimmingCharacters(in: .whitespacesAndNewlines))
-            }
-            let isAlreadyCorrect = currentPhones == [confirmedPhone]
-                && customer.connecttype.count == 1
-                && currentAddresses.count == 1
-                && currentAddresses[0].0 == "家"
-                && currentAddresses[0].1.localizedCaseInsensitiveContains("1441 Paso Real Ave SPC130")
-            guard !isAlreadyCorrect else { continue }
-
-            customer.connecttype.forEach { context.delete($0) }
-            customer.addresses.forEach { context.delete($0) }
-            customer.connecttype = [Connect(connectlable: "电话", connecttype: confirmedPhone, isDefault: true, customer: customer)]
-            customer.addresses = [Address(addlable: "家", addresses: correctAddress, isDefault: true, customer: customer)]
-            customer.updateAt = .now
-        }
-    }
-
     @MainActor
     private static func conflictExists(table: String, id: String, scope: String, context: ModelContext) -> Bool {
         let key = "\(scope)|\(table)|\(id.lowercased())"
-        let descriptor = FetchDescriptor<CloudSyncConflict>(predicate: #Predicate { $0.key == key })
+        let descriptor = FetchDescriptor<CloudSyncConflict>(predicate: #Predicate { $0.key == key && $0.ownerScope == scope })
         return (try? context.fetchCount(descriptor)) ?? 0 > 0
     }
 
@@ -666,9 +647,8 @@ enum SupabaseDataSync {
     }
 
     @MainActor
-    private static func pullAndMerge(context: ModelContext, token: String) async throws -> Int {
+    private static func pullAndMerge(context: ModelContext, token: String, scope: String) async throws -> Int {
         var changed = 0
-        let scope = DataOwnership.activeScope
         let agencies = try context.fetch(FetchDescriptor<TravelAgency>(predicate: #Predicate { $0.ownerScope == scope }))
         let customers = try context.fetch(FetchDescriptor<Custumer>(predicate: #Predicate { $0.ownerScope == scope }))
         let trips = try context.fetch(FetchDescriptor<TripBookingRecord>(predicate: #Predicate { $0.ownerScope == scope }))
@@ -712,7 +692,9 @@ enum SupabaseDataSync {
                 local.updateAt = remoteDate
                 local.syncBaseUpdatedAt = remoteDate
             } else {
-                context.insert(TravelAgency(uuid: id, agencyCode: string(row, "agency_code") ?? "", name: string(row, "name") ?? "", contactPerson: string(row, "contact_person") ?? "", phone: string(row, "phone") ?? "", officeAddress: string(row, "office_address") ?? "", createdAt: date(row, "created_at") ?? remoteDate, updateAt: remoteDate, syncBaseUpdatedAt: remoteDate))
+                let agency = TravelAgency(uuid: id, agencyCode: string(row, "agency_code") ?? "", name: string(row, "name") ?? "", contactPerson: string(row, "contact_person") ?? "", phone: string(row, "phone") ?? "", officeAddress: string(row, "office_address") ?? "", createdAt: date(row, "created_at") ?? remoteDate, updateAt: remoteDate, syncBaseUpdatedAt: remoteDate)
+                agency.ownerScope = scope
+                context.insert(agency)
             }
             changed += 1
         }
@@ -743,6 +725,7 @@ enum SupabaseDataSync {
                 apply(row, to: local, updatedAt: remoteDate)
             } else {
                 let local = Custumer(uuid: id, name: string(row, "name") ?? "", email: string(row, "email") ?? "", avatarUrl: string(row, "avatar_url") ?? "", csource: string(row, "source") ?? "", type: integer(row, "type") ?? 1, customerCategory: integer(row, "category") ?? 1, travelAgencyCode: string(row, "travel_agency_code") ?? "", travelAgencyName: string(row, "travel_agency_name") ?? "", languagePreference: string(row, "language_preference") ?? "zh-Hans", remark: string(row, "remark") ?? "", createdAt: date(row, "created_at") ?? remoteDate, updateAt: remoteDate, syncBaseUpdatedAt: remoteDate)
+                local.ownerScope = scope
                 context.insert(local)
                 customerMap[id.lowercased()] = local
             }
@@ -778,6 +761,7 @@ enum SupabaseDataSync {
                 apply(row, to: local, updatedAt: remoteDate)
             } else {
                 let local = TripBookingRecord(form: tripForm(row, id: id))
+                local.ownerScope = scope
                 local.createdAt = date(row, "created_at") ?? remoteDate
                 apply(row, to: local, updatedAt: remoteDate)
                 context.insert(local)
@@ -832,8 +816,7 @@ enum SupabaseDataSync {
     }
 
     @MainActor
-    private static func deduplicateCustomerChildren(context: ModelContext) throws {
-        let scope = DataOwnership.activeScope
+    private static func deduplicateCustomerChildren(context: ModelContext, scope: String) throws {
         let customers = try context.fetch(FetchDescriptor<Custumer>(predicate: #Predicate { $0.ownerScope == scope }))
         let conflicts = try context.fetch(FetchDescriptor<CloudSyncConflict>(predicate: #Predicate { $0.ownerScope == scope && $0.tableName == "customers" }))
         let blockedCustomerIDs = Set(conflicts.map { $0.recordID.lowercased() })

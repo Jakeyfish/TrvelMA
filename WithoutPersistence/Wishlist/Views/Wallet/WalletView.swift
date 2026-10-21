@@ -171,6 +171,10 @@ struct WalletView: View {
             .onChange(of: auth.currentEmail) { _, _ in loadPaymentMethods() }
             .onChange(of: auth.isCloudAccount) { _, _ in loadPaymentMethods() }
             .onReceive(NotificationCenter.default.publisher(for: .accountAssetsDidSync)) { _ in loadPaymentMethods() }
+            .onReceive(NotificationCenter.default.publisher(for: .accountScopedLocalDataDidClear)) { notification in
+                guard (notification.object as? String) == DataOwnership.activeScope else { return }
+                loadPaymentMethods()
+            }
         }
     }
 
