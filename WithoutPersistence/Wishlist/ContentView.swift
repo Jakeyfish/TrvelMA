@@ -458,6 +458,7 @@ private struct CustomerBrowseView: View {
     @AppStorage(BaseCurrencyCatalog.countryCodeKey) private var baseCurrencyCountry = BaseCurrencyCatalog.defaultCountryCode
     @Query private var tripBookings: [TripBookingRecord]
     @Query private var allCustomers: [Custumer]
+    @Query private var syncConflicts: [CloudSyncConflict]
     let customer: CustomerProfileSnapshot
     private let registryCustomerID: String
     private let registryOwnerScope: String
@@ -469,9 +470,16 @@ private struct CustomerBrowseView: View {
         self.customer = snapshot
         registryCustomerID = snapshot.id
         registryOwnerScope = snapshot.ownerScope
-        let scope = DataOwnership.activeScope
+        let scope = snapshot.ownerScope
         _tripBookings = Query(filter: #Predicate { $0.ownerScope == scope })
         _allCustomers = Query(filter: #Predicate { $0.ownerScope == scope })
+        _syncConflicts = Query(filter: #Predicate { $0.ownerScope == scope && $0.tableName == "customers" })
+    }
+
+    private var hasPendingRemoteDeletion: Bool {
+        syncConflicts.contains {
+            $0.recordID.caseInsensitiveCompare(customer.id) == .orderedSame && $0.isRemoteDeletion
+        }
     }
 
     private var customerTrips: [TripBookingRecord] {
@@ -515,6 +523,13 @@ private struct CustomerBrowseView: View {
                         compactCustomerValue("旅行社代码", customer.travelAgencyCode.isEmpty ? "未选择" : customer.travelAgencyCode)
                         compactCustomerValue("旅行社名称", customer.travelAgencyName.isEmpty ? "未选择" : customer.travelAgencyName)
                     }
+                }
+            }
+
+            if hasPendingRemoteDeletion {
+                Section {
+                    Label("此客户已在另一台设备删除，请先处理同步冲突后再查看或编辑。", systemImage: "exclamationmark.triangle.fill")
+                        .foregroundStyle(.orange)
                 }
             }
 
@@ -616,11 +631,13 @@ private struct CustomerBrowseView: View {
         .navigationBarTitleDisplayMode(.inline)
         .toolbar(.visible, for: .navigationBar)
         .toolbar {
-            ToolbarItem(placement: .topBarTrailing) {
-                NavigationLink {
-                    CustomerDetailView(profile: customer)
-                } label: {
-                    Label("编辑", systemImage: "pencil")
+            if !hasPendingRemoteDeletion {
+                ToolbarItem(placement: .topBarTrailing) {
+                    NavigationLink {
+                        CustomerDetailView(profile: customer)
+                    } label: {
+                        Label("编辑", systemImage: "pencil")
+                    }
                 }
             }
             ToolbarItem(placement: .topBarTrailing) {
@@ -1198,6 +1215,19 @@ private struct CustomerDetailView: View {
                 message = "账号已切换，请返回当前账号后重新打开客户资料。"
                 return
             }
+            let conflictKey = "\(ownerScope)|customers|\(customerID.lowercased())"
+            let conflictDescriptor = FetchDescriptor<CloudSyncConflict>(predicate: #Predicate {
+                $0.key == conflictKey && $0.ownerScope == ownerScope
+            })
+            do {
+                if let conflict = try modelContext.fetch(conflictDescriptor).first, conflict.isRemoteDeletion {
+                    message = "此客户已在另一台设备删除。请先处理同步冲突，当前修改未保存。"
+                    return
+                }
+            } catch {
+                message = "无法确认客户的同步状态，修改尚未保存。请稍后重试。"
+                return
+            }
             let descriptor = FetchDescriptor<Custumer>(predicate: #Predicate {
                 $0.uuid == customerID && $0.ownerScope == ownerScope
             })
@@ -1205,15 +1235,8 @@ private struct CustomerDetailView: View {
                 if let current = try modelContext.fetch(descriptor).first {
                     record = current
                 } else {
-                    // The other device may have deleted this customer while the form
-                    // was open. Recreate the edited draft with the same ID; the next
-                    // sync will surface the remote deletion as a normal conflict.
-                    record = Custumer(uuid: customerID, name: trimmedName, email: "", csource: "客户",
-                                      type: 1, customerCategory: customerCategory,
-                                      languagePreference: languagePreference, remark: String(remark.prefix(256)),
-                                      syncBaseUpdatedAt: nil)
-                    record.ownerScope = ownerScope
-                    modelContext.insert(record)
+                    message = "此客户已在另一台设备删除，当前修改未保存。请先处理同步冲突。"
+                    return
                 }
             } catch {
                 message = "客户资料读取失败，修改尚未保存。请返回后重试。"
