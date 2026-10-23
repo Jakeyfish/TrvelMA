@@ -34,6 +34,36 @@ enum AppLanguage: String, CaseIterable, Identifiable {
     }
 }
 
+extension AppLanguageSettings {
+    /// An explicit in-app choice wins. Until the user chooses one, follow the
+    /// device language so manually localized strings and SwiftUI `Text` agree.
+    static var effectiveIdentifier: String {
+        if let saved = UserDefaults.standard.string(forKey: "appLanguage"),
+           let language = AppLanguage(rawValue: saved) {
+            return language.rawValue
+        }
+
+        let preferredIdentifier = Locale.preferredLanguages.first ?? Locale.current.identifier
+        let preferredLocale = Locale(identifier: preferredIdentifier)
+        let languageCode = preferredLocale.language.languageCode?.identifier.lowercased() ?? ""
+        if languageCode == "zh" {
+            let scriptCode = preferredLocale.language.script?.identifier.lowercased() ?? ""
+            let regionCode = preferredLocale.region?.identifier.lowercased() ?? ""
+            return scriptCode == "hant" || ["tw", "hk", "mo"].contains(regionCode)
+                ? AppLanguage.traditionalChinese.rawValue
+                : AppLanguage.simplifiedChinese.rawValue
+        }
+        if let language = AppLanguage(rawValue: languageCode) {
+            return language.rawValue
+        }
+        return AppLanguage.simplifiedChinese.rawValue
+    }
+
+    static var currentLocale: Locale {
+        Locale(identifier: effectiveIdentifier)
+    }
+}
+
 @Observable
 final class AppLanguageSettings {
     private let defaultsKey = "appLanguage"
@@ -43,8 +73,7 @@ final class AppLanguageSettings {
     }
 
     init() {
-        let saved = UserDefaults.standard.string(forKey: defaultsKey)
-        identifier = AppLanguage(rawValue: saved ?? "")?.rawValue ?? AppLanguage.simplifiedChinese.rawValue
+        identifier = Self.effectiveIdentifier
     }
 
     var locale: Locale { Locale(identifier: identifier) }

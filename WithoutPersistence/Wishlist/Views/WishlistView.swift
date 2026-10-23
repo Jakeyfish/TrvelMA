@@ -19,6 +19,7 @@ struct WishlistView: View {
     /// The data source containing trip collections.
     @Environment(DataSource.self) private var dataSource
     @Environment(AuthViewModel.self) private var auth
+    @Environment(AppLanguageSettings.self) private var languageSettings
     @Environment(\.modelContext) private var modelContext
 
     /// Indicates whether the sheet to add a trip is being presented.
@@ -38,16 +39,38 @@ struct WishlistView: View {
     @Namespace private var namespace
 
     private var accountEmailWidth: CGFloat {
-        // The email label includes the envelope icon and its spacing.
         min(max(CGFloat(auth.currentEmail.count) * 6.2 + 16, 122), 205)
+    }
+
+    private var accountEditionLabel: String {
+        switch (auth.isCloudAccount, languageSettings.selectedLanguage) {
+        case (true, .simplifiedChinese): "云端版"
+        case (false, .simplifiedChinese): "本地版"
+        case (true, .traditionalChinese): "雲端版"
+        case (false, .traditionalChinese): "本機版"
+        case (true, .english): "Cloud"
+        case (false, .english): "Local"
+        case (true, .spanish): "Nube"
+        case (false, .spanish): "Local"
+        case (true, .japanese): "クラウド"
+        case (false, .japanese): "ローカル"
+        case (true, .korean): "클라우드"
+        case (false, .korean): "로컬"
+        }
     }
 
     var body: some View {
         NavigationStack {
             VStack(spacing: 0) {
-                TripListDashboardView(showsDateControls: false)
-                    .padding(.horizontal, 16)
-                    .padding(.top, 12)
+                if auth.serverEntitlement?.edition == .cloud {
+                    CloudHomeDashboardView()
+                        .padding(.horizontal, 16)
+                        .padding(.top, 12)
+                } else {
+                    TripListDashboardView(showsDateControls: false)
+                        .padding(.horizontal, 16)
+                        .padding(.top, 12)
+                }
             }
             .background(Color(.systemGroupedBackground))
             .toolbar {
@@ -61,10 +84,20 @@ struct WishlistView: View {
                             .overlay(Circle().stroke(Color.accentColor.opacity(0.12), lineWidth: 1))
 
                         VStack(alignment: .leading, spacing: 2) {
-                            Text(auth.currentSalutation.isEmpty ? "欢迎回来" : auth.currentSalutation)
-                            .font(.system(size: 15, weight: .bold, design: .rounded))
-                            .foregroundStyle(.primary)
-                            .lineLimit(1)
+                            HStack(spacing: 5) {
+                                Text(auth.currentSalutation.isEmpty ? "欢迎回来" : auth.currentSalutation)
+                                    .font(.system(size: 15, weight: .bold, design: .rounded))
+                                    .foregroundStyle(.primary)
+                                    .lineLimit(1)
+
+                                Text(accountEditionLabel)
+                                    .font(.system(size: 8, weight: .semibold))
+                                    .foregroundStyle(auth.isCloudAccount ? Color.accentColor : Color.secondary)
+                                    .padding(.horizontal, 4)
+                                    .padding(.vertical, 2)
+                                    .background(auth.isCloudAccount ? Color.accentColor.opacity(0.10) : Color.secondary.opacity(0.10), in: Capsule())
+                                    .fixedSize()
+                            }
 
                             HStack(spacing: 4) {
                                 Image(systemName: "envelope.fill")
@@ -177,12 +210,15 @@ struct WishlistView: View {
                 }
                 .sharedBackgroundVisibility(.hidden)
             }
-            .sheet(isPresented: $isPresentingAddTrip) {
+            .adaptiveFormPresentation(isPresented: $isPresentingAddTrip) {
 //                AddTripFormView(isPresented: $isPresentingAddTrip)
 //                AddTripView(isPresented: $isPresentingAddTrip)
-                   AddTripFormView(isPresented: $isPresentingAddTrip)
-                    .navigationTransition(
-                        .zoom(sourceID: "addTrip", in: namespace))
+                if auth.serverEntitlement?.edition == .cloud {
+                    CloudNewTripSheet()
+                } else {
+                    AddTripFormView(isPresented: $isPresentingAddTrip)
+                        .navigationTransition(.zoom(sourceID: "addTrip", in: namespace))
+                }
             }
             .sheet(isPresented: $isPresentingLanguageSettings) {
                 LanguageSettingsView()
@@ -199,14 +235,18 @@ struct WishlistView: View {
             .sheet(isPresented: $isPresentingBaseCurrencySettings) {
                 BaseCurrencySettingsView()
             }
-            .sheet(isPresented: $isPresentingExpenseItems) {
+            .adaptiveFormPresentation(isPresented: $isPresentingExpenseItems) {
                 ExpenseItemManagementView()
             }
             .sheet(isPresented: $isPresentingPrivacyPolicy) {
                 PrivacyPolicyView()
             }
-            .sheet(isPresented: $isPresentingCooperativeAgencies) {
-                TravelAgencyListView()
+            .adaptiveFormPresentation(isPresented: $isPresentingCooperativeAgencies) {
+                if auth.serverEntitlement?.edition == .cloud {
+                    CloudTravelAgencyDirectoryView()
+                } else {
+                    TravelAgencyListView()
+                }
             }
             .alert(item: $accountDeletionAlert) { alert in
                 switch alert {
@@ -306,9 +346,22 @@ private struct ToolbarCircleIcon: View {
 }
 
 struct TripsPageView: View {
+    @Environment(AuthViewModel.self) private var auth
     @State private var isPresentingAddTrip = false
 
     var body: some View {
+        Group {
+            if auth.serverEntitlement?.edition == .cloud {
+                CloudTripDirectoryView()
+            } else {
+                localTripsPage
+            }
+        }
+        .toolbar(.hidden, for: .navigationBar)
+        .font(.system(size: 14))
+    }
+
+    private var localTripsPage: some View {
         NavigationStack {
             VStack(spacing: 0) {
                 HStack(alignment: .center) {
@@ -333,18 +386,17 @@ struct TripsPageView: View {
                     .padding(.horizontal, 16)
             }
             .background(Color(.systemGroupedBackground))
-            .sheet(isPresented: $isPresentingAddTrip) {
+            .adaptiveFormPresentation(isPresented: $isPresentingAddTrip) {
                 AddTripFormView(isPresented: $isPresentingAddTrip)
             }
         }
-        .toolbar(.hidden, for: .navigationBar)
-        .font(.system(size: 14))
     }
 }
 
 struct TripListDashboardView: View {
     var showsDateControls = true
     @Environment(\.locale) private var locale
+    @Environment(AppLanguageSettings.self) private var languageSettings
     @Environment(\.modelContext) private var modelContext
     @Query private var bookings: [TripBookingRecord]
     @State private var searchText = ""
@@ -361,6 +413,17 @@ struct TripListDashboardView: View {
     }
 
     private var selectedDate: Date { Date(timeIntervalSince1970: selectedDateTimestamp) }
+
+    private var tripSearchPlaceholder: String {
+        switch languageSettings.selectedLanguage {
+        case .simplifiedChinese: "搜索客户、地点、航班"
+        case .traditionalChinese: "搜尋客戶、地點或航班"
+        case .english: "Search customers, locations, or flights"
+        case .spanish: "Buscar clientes, lugares o vuelos"
+        case .japanese: "顧客、場所、便名を検索"
+        case .korean: "고객, 위치 또는 항공편 검색"
+        }
+    }
 
     private var datesWithBookings: [Date] {
         let calendar = Calendar.current
@@ -428,20 +491,7 @@ struct TripListDashboardView: View {
 
             }
 
-            // 首页不显示“7天 / 月历”切换和月历，但仍保留下方的 7 天日期筛选卡片。
-            if !showsDateControls || dateMode == .sevenDays {
-                ScrollView(.horizontal) {
-                    HStack(spacing: 8) {
-                        if !showsDateControls {
-                            allPendingDatesButton
-                        }
-                        ForEach(datesWithBookings, id: \.self) { day in
-                            dateButton(for: day)
-                        }
-                    }
-                }
-                .scrollIndicators(.hidden)
-            } else if showsDateControls && dateMode == .month {
+            if showsDateControls && dateMode == .month {
                 DatePicker("选择日期", selection: Binding(
                     get: { selectedDateFilter ?? selectedDate },
                     set: {
@@ -455,13 +505,19 @@ struct TripListDashboardView: View {
                     .background(Color(.secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 16))
             }
 
+            // The homepage and trip list share the same row of dates that contain trips.
+            if !showsDateControls || dateMode == .sevenDays || dateMode == .month {
+                dateNavigationStrip
+            }
+
             HStack(spacing: 10) {
                 Image(systemName: "magnifyingglass").foregroundStyle(.secondary)
                 SystemIMETextField(
                     text: $searchText,
-                    placeholder: String(localized: "搜索客户、地点、航班", locale: locale),
+                    placeholder: tripSearchPlaceholder,
                     capitalization: .none
                 )
+                .id(languageSettings.identifier)
                 .frame(height: 20)
                 if !searchText.isEmpty {
                     Button { searchText = "" } label: { Image(systemName: "xmark.circle.fill").foregroundStyle(.secondary) }
@@ -511,7 +567,7 @@ struct TripListDashboardView: View {
                 } else {
                     LazyVStack(spacing: 12) {
                         ForEach(visibleBookings, id: \.id) { booking in
-                            TripManagementCard(booking: booking)
+                            TripManagementCard(booking: booking, showsFlightActions: !booking.isCompleted && !booking.isCancelled)
                         }
                     }
                     .padding(.bottom, 30)
@@ -542,12 +598,15 @@ struct TripListDashboardView: View {
 
     private var allPendingDatesButton: some View {
         let today = Calendar.current.startOfDay(for: .now)
-        let count = bookings.filter {
+        let upcomingCount = bookings.filter {
             !$0.isCompleted
                 && !$0.isCancelled
                 && Calendar.current.startOfDay(for: $0.appointmentDate) >= today
         }.count
+        let count = showsDateControls ? bookings.count : upcomingCount
+        let selected = showsDateControls ? selectedDateFilter == nil : isShowingAllDates
         return Button {
+            selectedDateFilter = nil
             isShowingAllDates = true
         } label: {
             VStack(spacing: 3) {
@@ -557,14 +616,26 @@ struct TripListDashboardView: View {
                 .font(.system(size: 10))
                 .opacity(0.8)
             }
-            .foregroundStyle(isShowingAllDates ? Color.white : Color.primary)
+            .foregroundStyle(selected ? Color.white : Color.primary)
             .frame(width: 68, height: 66)
             .background {
                 RoundedRectangle(cornerRadius: 15, style: .continuous)
-                    .fill(isShowingAllDates ? Color.accentColor : Color(.secondarySystemGroupedBackground))
+                    .fill(selected ? Color.accentColor : Color(.secondarySystemGroupedBackground))
             }
         }
         .buttonStyle(.plain)
+    }
+
+    private var dateNavigationStrip: some View {
+        ScrollView(.horizontal) {
+            HStack(spacing: 8) {
+                allPendingDatesButton
+                ForEach(datesWithBookings, id: \.self) { day in
+                    dateButton(for: day)
+                }
+            }
+        }
+        .scrollIndicators(.hidden)
     }
 
     private func dateButton(for date: Date) -> some View {
@@ -618,7 +689,7 @@ struct TripListDashboardView: View {
     }
 }
 
-private enum TripListFilter: String, CaseIterable, Identifiable {
+enum TripListFilter: String, CaseIterable, Identifiable {
     case all, pending, unpaid, history
     var id: Self { self }
     var title: String {
@@ -631,7 +702,7 @@ private enum TripListFilter: String, CaseIterable, Identifiable {
     }
 }
 
-private enum TripDateMode: String, CaseIterable, Identifiable {
+enum TripDateMode: String, CaseIterable, Identifiable {
     case sevenDays, month
     var id: Self { self }
     var title: String { self == .sevenDays ? "周" : "月历" }
@@ -873,16 +944,22 @@ enum FlightTimeZoneResolver {
 }
 
 private struct TripManagementCard: View {
+    @Environment(AuthViewModel.self) private var auth
     @Environment(\.locale) private var locale
     @Environment(\.modelContext) private var modelContext
+    @Environment(\.openURL) private var openURL
     @AppStorage(BaseCurrencyCatalog.countryCodeKey) private var baseCurrencyCountry = BaseCurrencyCatalog.defaultCountryCode
+    @AppStorage(NavigationProvider.defaultsKey) private var defaultNavigationProvider = NavigationProvider.appleMaps.rawValue
     @Bindable var booking: TripBookingRecord
+    var showsFlightActions = true
     @State private var isShowingFinancialSettlement = false
     @State private var isShowingCompletionSettlementPrompt = false
     @State private var isShowingCancellationPrompt = false
     @State private var isFlightExpanded = false
     @State private var isLookingUpFlight = false
     @State private var flightLookupResult: VariFlightLookupResult?
+    @State private var flightCandidates: [VariFlightLookupResult] = []
+    @State private var isChoosingFlight = false
     @State private var flightLookupError: String?
     @State private var departureTimeZoneLabel = ""
     @State private var arrivalTimeZoneLabel = ""
@@ -926,19 +1003,20 @@ private struct TripManagementCard: View {
                         .frame(maxWidth: .infinity, alignment: .leading)
                     }
 
-                    VStack(alignment: .leading, spacing: 7) {
-                        routeRow(title: "起始点", value: booking.locationStart, color: .teal, isLast: false, icon: "mappin.and.ellipse")
-                        ForEach(Array(booking.locationStops.enumerated()), id: \.offset) { index, stop in
-                            routeRow(title: String(localized: "停靠点 \(index + 1)", locale: locale), value: stop, color: .orange, isLast: false)
-                        }
-                        routeRow(title: "目的地", value: booking.locationEnd, color: .orange, isLast: true, icon: "flag.checkered")
-                    }
-
                 }
             }
             .buttonStyle(.plain)
 
-            if !booking.flightInfo.isEmpty {
+            VStack(alignment: .leading, spacing: 7) {
+                routeRow(title: "起始点", value: booking.locationStart, color: .teal, isLast: false, icon: "mappin.and.ellipse")
+                ForEach(Array(booking.locationStops.enumerated()), id: \.offset) { index, stop in
+                    let titleFormat = String(localized: "停靠点 %lld", locale: locale)
+                    routeRow(title: String(format: titleFormat, locale: locale, arguments: [index + 1]), value: stop, color: .orange, isLast: false)
+                }
+                routeRow(title: "目的地", value: booking.locationEnd, color: .orange, isLast: true, icon: "flag.checkered")
+            }
+
+            if !booking.flightInfo.isEmpty && showsFlightActions {
                 VStack(spacing: 0) {
                     HStack(spacing: 8) {
                         Image(systemName: "airplane").foregroundStyle(Color.accentColor)
@@ -949,7 +1027,9 @@ private struct TripManagementCard: View {
                         Button {
                             let shouldExpand = !isFlightExpanded
                             withAnimation(.easeInOut(duration: 0.2)) { isFlightExpanded = shouldExpand }
-                            if shouldExpand && flightLookupResult == nil && !isLookingUpFlight { lookupFlight() }
+                            if shouldExpand {
+                                if flightLookupResult == nil, !isLookingUpFlight { loadSavedFlightOrLookup() }
+                            }
                         } label: {
                             HStack(spacing: 5) {
                                 if isLookingUpFlight { ProgressView().controlSize(.mini) }
@@ -961,6 +1041,16 @@ private struct TripManagementCard: View {
                         }
                         .buttonStyle(.plain)
                         .accessibilityHint("查询并显示航班信息")
+                        Button {
+                            lookupFlight()
+                        } label: {
+                            Image(systemName: "arrow.clockwise")
+                                .font(.caption.weight(.semibold))
+                                .foregroundStyle(Color.accentColor)
+                        }
+                        .buttonStyle(.plain)
+                        .disabled(isLookingUpFlight)
+                        .accessibilityLabel("刷新航班信息")
                     }
                     .padding(10)
 
@@ -1032,10 +1122,13 @@ private struct TripManagementCard: View {
         } message: {
             Text("是否财务结算？")
         }
-        .sheet(isPresented: $isShowingFinancialSettlement) {
+        .adaptiveFormPresentation(isPresented: $isShowingFinancialSettlement) {
             NavigationStack {
                 FinancialSettlementView(booking: booking)
             }
+        }
+        .adaptiveFormPresentation(isPresented: $isChoosingFlight) {
+            FlightCandidatePicker(candidates: flightCandidates, onSelect: selectFlight)
         }
         .padding(13)
         .background(Color(.secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 18, style: .continuous))
@@ -1088,14 +1181,54 @@ private struct TripManagementCard: View {
         flightLookupError = nil
         Task {
             do {
-                let result = try await VariFlightClient().lookup(flightNumber: booking.flightInfo, flightDate: booking.flightDate)
-                flightLookupResult = result
-                departureTimeZoneLabel = await FlightTimeZoneResolver.label(for: result.departureAirport, date: booking.flightDate) ?? ""
-                arrivalTimeZoneLabel = await FlightTimeZoneResolver.label(for: result.arrivalAirport, date: booking.flightDate) ?? ""
+                let cloudAccessToken: String?
+                if auth.isCloudAccount {
+                    cloudAccessToken = await auth.refreshCloudAccessToken() ?? auth.cloudAccessToken
+                    guard cloudAccessToken != nil else { throw VariFlightClientError.missingCloudSession }
+                } else {
+                    cloudAccessToken = nil
+                }
+                let candidates = try await VariFlightClient().lookupCandidatesForTrip(
+                    flightNumber: booking.flightInfo,
+                    flightDate: booking.flightDate,
+                    serviceType: booking.serviceType,
+                    locationStart: booking.locationStart,
+                    locationEnd: booking.locationEnd,
+                    cloudAccessToken: cloudAccessToken
+                )
+                flightCandidates = candidates
+                // Always keep leg selection explicit; the first candidate can be the wrong leg.
+                isChoosingFlight = true
             } catch {
                 flightLookupError = error.localizedDescription
             }
             isLookingUpFlight = false
+        }
+    }
+
+    private func loadSavedFlightOrLookup() {
+        if let json = booking.flightSelectionSnapshotJSON.data(using: .utf8),
+           let saved = try? JSONDecoder().decode(SavedFlightSelection.self, from: json),
+           saved.matches(flightNumber: booking.flightInfo, flightDate: booking.flightDate) {
+            flightLookupResult = saved.selected
+            return
+        }
+        lookupFlight()
+    }
+
+    private func selectFlight(_ result: VariFlightLookupResult) {
+        flightLookupResult = result
+        let saved = SavedFlightSelection(flightNumber: booking.flightInfo, flightDate: booking.flightDate, selected: result)
+        if let data = try? JSONEncoder().encode(saved) { booking.flightSelectionSnapshotJSON = String(decoding: data, as: UTF8.self) }
+        booking.flightDepartureTime = result.departureTime
+        booking.flightEstimatedArrivalTime = result.estimatedArrivalTime
+        booking.flightArrivalTerminal = result.arrivalTerminal
+        booking.flightBaggageCarousel = result.baggageCarousel
+        booking.updatedAt = .now
+        try? modelContext.save()
+        Task {
+            departureTimeZoneLabel = await FlightTimeZoneResolver.label(for: result.departureAirport, date: booking.flightDate) ?? ""
+            arrivalTimeZoneLabel = await FlightTimeZoneResolver.label(for: result.arrivalAirport, date: booking.flightDate) ?? ""
         }
     }
 
@@ -1154,10 +1287,31 @@ private struct TripManagementCard: View {
                 }
                 if !isLast { Rectangle().fill(Color.secondary.opacity(0.2)).frame(width: 2, height: 23) }
             }
-            VStack(alignment: .leading, spacing: 2) {
-                Text(LocalizedStringKey(title)).font(.caption).foregroundStyle(.secondary)
-                Text(value.isEmpty ? String(localized: "未填写") : value).font(.subheadline.weight(.medium)).foregroundStyle(value.isEmpty ? Color.secondary : Color.primary).lineLimit(2)
+            NavigationLink {
+                TripBrowseView(booking: booking)
+            } label: {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(LocalizedStringKey(title)).font(.caption).foregroundStyle(.secondary)
+                    Text(value.isEmpty ? String(localized: "未填写") : value).font(.subheadline.weight(.medium)).foregroundStyle(value.isEmpty ? Color.secondary : Color.primary).lineLimit(2)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                }
+                .contentShape(Rectangle())
             }
+            .buttonStyle(.plain)
+
+            Button {
+                let provider = NavigationProvider(rawValue: defaultNavigationProvider) ?? .appleMaps
+                if let url = provider.directionsURL(for: value) { openURL(url) }
+            } label: {
+                Image(systemName: "arrow.triangle.turn.up.right.diamond.fill")
+                    .font(.system(size: 17, weight: .semibold))
+                    .foregroundStyle(value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? Color.secondary.opacity(0.35) : Color.accentColor)
+                    .frame(width: 34, height: 34)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .disabled(value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+            .accessibilityLabel("导航至\(title)")
         }
     }
 
@@ -1564,7 +1718,8 @@ private struct TripBrowseView: View {
             Section("行程路线") {
                 navigationAddressRow(title: "起始点", address: booking.locationStart)
                 ForEach(Array(booking.locationStops.enumerated()), id: \.offset) { index, stop in
-                    navigationAddressRow(title: "停靠点 \(index + 1)", address: stop)
+                    let titleFormat = String(localized: "停靠点 %lld", locale: locale)
+                    navigationAddressRow(title: String(format: titleFormat, locale: locale, arguments: [index + 1]), address: stop)
                 }
                 navigationAddressRow(title: "目的地", address: booking.locationEnd)
             }
@@ -1730,7 +1885,7 @@ private struct TripBrowseView: View {
                 }
             }
         }
-        .sheet(item: $activeTripForm) { presentation in
+        .adaptiveItemFormPresentation(item: $activeTripForm) { presentation in
             AddTripFormView(
                 isPresented: Binding(
                     get: { activeTripForm != nil },
@@ -1746,7 +1901,7 @@ private struct TripBrowseView: View {
         } message: {
             Text("是否财务结算？")
         }
-        .sheet(isPresented: $isShowingFinancialSettlement) {
+        .adaptiveFormPresentation(isPresented: $isShowingFinancialSettlement) {
             NavigationStack {
                 FinancialSettlementView(booking: booking)
             }
@@ -1832,21 +1987,13 @@ private struct TripBrowseView: View {
     }
 
     private func lookupFlight() {
-        isLookingUpFlight = true
-        flightLookupError = nil
+        guard let data = booking.flightSelectionSnapshotJSON.data(using: .utf8),
+              let saved = try? JSONDecoder().decode(SavedFlightSelection.self, from: data),
+              saved.matches(flightNumber: booking.flightInfo, flightDate: booking.flightDate) else { return }
+        flightLookupResult = saved.selected
         Task {
-            defer { isLookingUpFlight = false }
-            do {
-                let result = try await VariFlightClient().lookup(
-                    flightNumber: booking.flightInfo,
-                    flightDate: booking.flightDate
-                )
-                flightLookupResult = result
-                departureTimeZoneLabel = await FlightTimeZoneResolver.label(for: result.departureAirport, date: booking.flightDate) ?? ""
-                arrivalTimeZoneLabel = await FlightTimeZoneResolver.label(for: result.arrivalAirport, date: booking.flightDate) ?? ""
-            } catch {
-                flightLookupError = error.localizedDescription
-            }
+            departureTimeZoneLabel = await FlightTimeZoneResolver.label(for: saved.selected.departureAirport, date: booking.flightDate) ?? ""
+            arrivalTimeZoneLabel = await FlightTimeZoneResolver.label(for: saved.selected.arrivalAirport, date: booking.flightDate) ?? ""
         }
     }
 
@@ -2039,10 +2186,17 @@ struct WishlistFormSliceTwo: View {
     
     var body: some View {
         VStack(spacing: 8) {
-            TextField("手机号码", text: $formData.phoneNumber)
-                .keyboardDoneToolbar()
-                .keyboardType(.phonePad)
-                .textFieldStyle(.roundedBorder)
+            SystemIMETextField(
+                text: $formData.phoneNumber,
+                placeholder: "手机号码",
+                keyboardType: .phonePad,
+                textContentType: .telephoneNumber
+            )
+            .padding(.horizontal, 10)
+            .padding(.vertical, 8)
+            .frame(height: 44)
+            .background(Color(.systemBackground), in: RoundedRectangle(cornerRadius: 6))
+            .overlay(RoundedRectangle(cornerRadius: 6).stroke(Color.secondary.opacity(0.35), lineWidth: 1))
         }
         .padding()
         .frame(height: height)

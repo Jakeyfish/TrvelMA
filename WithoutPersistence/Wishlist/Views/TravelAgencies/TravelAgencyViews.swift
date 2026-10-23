@@ -69,6 +69,7 @@ struct TravelAgencySelectionView: View {
 
 struct TravelAgencyListView: View {
     @Environment(\.modelContext) private var modelContext
+    @Environment(\.dismiss) private var dismiss
     @Query private var agencies: [TravelAgency]
     @State private var searchText = ""
     @State private var isAddingAgency = false
@@ -135,6 +136,9 @@ struct TravelAgencyListView: View {
             .navigationTitle("合作旅行社")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("关闭") { dismiss() }
+                }
                 ToolbarItem(placement: .topBarTrailing) {
                     Button { isAddingAgency = true } label: {
                         Image(systemName: "plus")
@@ -147,7 +151,7 @@ struct TravelAgencyListView: View {
                     .accessibilityLabel("新增旅行社")
                 }
             }
-            .sheet(isPresented: $isAddingAgency) {
+            .adaptiveFormPresentation(isPresented: $isAddingAgency) {
                 NavigationStack {
                     TravelAgencyEditView(agency: nil)
                 }
@@ -268,7 +272,7 @@ private struct TravelAgencyBrowseView: View {
                 .accessibilityLabel("删除旅行社")
             }
         }
-        .sheet(isPresented: $isEditing) {
+        .adaptiveFormPresentation(isPresented: $isEditing) {
             NavigationStack { TravelAgencyEditView(agency: agency) }
         }
         .confirmationDialog("确定删除该旅行社？", isPresented: $isConfirmingDelete, titleVisibility: .visible) {
@@ -329,18 +333,19 @@ private struct TravelAgencyEditView: View {
             Section("联系信息") {
                 HStack(spacing: 12) {
                     TextField("联系人", text: $contactPerson)
-                        .keyboardDoneToolbar()
-                    TextField("联系电话", text: $phone)
-                        .keyboardDoneToolbar()
-                        .keyboardType(.phonePad)
-                        .textContentType(.telephoneNumber)
+                    SystemIMETextField(
+                        text: $phone,
+                        placeholder: "联系电话",
+                        keyboardType: .phonePad,
+                        textContentType: .telephoneNumber
+                    )
                 }
                 TextField("办公地址", text: $officeAddress, axis: .vertical)
-                    .keyboardDoneToolbar()
                     .lineLimit(2...4)
                     .nativeIMEInput()
             }
         }
+        .keyboardDoneToolbar()
         .scrollDismissesKeyboard(.interactively)
         .navigationTitle(agency == nil ? "新增旅行社" : "编辑旅行社")
         .navigationBarTitleDisplayMode(.inline)
@@ -367,7 +372,6 @@ private struct TravelAgencyEditView: View {
                 Text("*").foregroundStyle(.red).accessibilityLabel("必填")
             }
             TextField(LocalizedStringKey(placeholder), text: text)
-                .keyboardDoneToolbar()
                 .textFieldStyle(.roundedBorder)
         }
         .padding(.vertical, 3)

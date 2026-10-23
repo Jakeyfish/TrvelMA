@@ -12,42 +12,195 @@ import MapKit
 import PhotosUI
 
 struct ContentView: View {
+    @Environment(AppLanguageSettings.self) private var languageSettings
+    @State private var selectedTab: MainTab = .home
 
     var body: some View {
         Group{
-            TabView {
-                Tab("主页", systemImage: "house.fill") {
-                    WishlistView()
-                    
-                }
-                
-                Tab("行程", systemImage: "books.vertical") {
-                    TripsPageView()
-                }
-                Tab("名片", systemImage: "person.text.rectangle.fill") {
-                    BusinessCardView()
-                }
-                Tab("钱包", systemImage: "wallet.bifold.fill") {
-                    WalletView()
-                }
-                Tab("客户", systemImage: "person.crop.rectangle.badge.plus.fill") {
-                    CustomerListView()
-                }
-                
-                //            Tab(role: .search) {
-                //                SearchView()
-                //            }
+            // TabView caches tab labels. Rebuild it when the in-app language
+            // changes so the tab bar cannot keep labels from the prior locale.
+            TabView(selection: $selectedTab) {
+                // Use a custom label with verbatim text. `Tab(_:systemImage:)`
+                // accepts a LocalizedStringKey, so passing a String that was
+                // already localized can cause SwiftUI to localize that result
+                // a second time using the system language.
+                WishlistView()
+                    .toolbar(UIDevice.current.userInterfaceIdiom == .pad ? .hidden : .visible, for: .tabBar)
+                    .tabItem {
+                        tabLabel("主页", systemImage: "house.fill")
+                    }
+                    .tag(MainTab.home)
+
+                TripsPageView()
+                    .toolbar(UIDevice.current.userInterfaceIdiom == .pad ? .hidden : .visible, for: .tabBar)
+                    .tabItem {
+                        tabLabel("行程", systemImage: "books.vertical")
+                    }
+                    .tag(MainTab.trips)
+
+                BusinessCardView()
+                    .toolbar(UIDevice.current.userInterfaceIdiom == .pad ? .hidden : .visible, for: .tabBar)
+                    .tabItem {
+                        tabLabel("名片", systemImage: "person.text.rectangle.fill")
+                    }
+                    .tag(MainTab.card)
+
+                WalletView()
+                    .toolbar(UIDevice.current.userInterfaceIdiom == .pad ? .hidden : .visible, for: .tabBar)
+                    .tabItem {
+                        tabLabel("钱包", systemImage: "wallet.bifold.fill")
+                    }
+                    .tag(MainTab.wallet)
+
+                CustomerListView()
+                    .toolbar(UIDevice.current.userInterfaceIdiom == .pad ? .hidden : .visible, for: .tabBar)
+                    .tabItem {
+                        tabLabel("客户", systemImage: "person.crop.rectangle.badge.plus.fill")
+                    }
+                    .tag(MainTab.customers)
+
             }
+            .id(languageSettings.identifier)
+            .safeAreaInset(edge: .bottom, spacing: 0) {
+                if UIDevice.current.userInterfaceIdiom == .pad {
+                    ipadBottomBar
+                }
+            }
+        }
+    }
+
+    private var ipadBottomBar: some View {
+        HStack(spacing: 4) {
+            ForEach(MainTab.allCases, id: \.self) { tab in
+                Button {
+                    selectedTab = tab
+                } label: {
+                    VStack(spacing: 4) {
+                        Image(systemName: tab.systemImage)
+                            .font(.system(size: 20, weight: .semibold))
+                        Text(tabLabelTitle(tab))
+                            .font(.system(size: 12, weight: .medium))
+                            .lineLimit(1)
+                    }
+                    .foregroundStyle(selectedTab == tab ? Color.accentColor : Color.primary)
+                    .frame(maxWidth: .infinity)
+                    .frame(height: 52)
+                    .background {
+                        if selectedTab == tab {
+                            Capsule().fill(Color.accentColor.opacity(0.12))
+                        }
+                    }
+                    .contentShape(Capsule())
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel(tabLabelTitle(tab))
+                .accessibilityAddTraits(selectedTab == tab ? .isSelected : [])
+            }
+        }
+        .padding(6)
+        .background(.ultraThinMaterial, in: Capsule())
+        .overlay(Capsule().strokeBorder(Color.primary.opacity(0.06), lineWidth: 1))
+        .padding(.horizontal, 16)
+        .padding(.top, 6)
+        .padding(.bottom, 6)
+        .frame(maxWidth: 720)
+        .frame(maxWidth: .infinity)
+    }
+
+    private func tabLabelTitle(_ tab: MainTab) -> String {
+        let title: String
+        switch tab {
+        case .home: title = "主页"
+        case .trips: title = "行程"
+        case .card: title = "名片"
+        case .wallet: title = "钱包"
+        case .customers: title = "客户"
+        }
+        return localizedTabTitle(title)
+    }
+
+    private func tabLabel(_ title: String, systemImage: String) -> some View {
+        Label {
+            Text(verbatim: localizedTabTitle(title))
+        } icon: {
+            Image(systemName: systemImage)
+        }
+    }
+
+    private func localizedTabTitle(_ title: String) -> String {
+        let localizedTitle: String
+        switch languageSettings.selectedLanguage {
+        case .simplifiedChinese:
+            localizedTitle = title
+        case .traditionalChinese:
+            switch title {
+            case "主页": localizedTitle = "主頁"
+            case "行程": localizedTitle = "行程"
+            case "名片": localizedTitle = "名片"
+            case "钱包": localizedTitle = "錢包"
+            case "客户": localizedTitle = "客戶"
+            default: localizedTitle = title
+            }
+        case .english:
+            switch title {
+            case "主页": localizedTitle = "Home"
+            case "行程": localizedTitle = "Trips"
+            case "名片": localizedTitle = "Contacts"
+            case "钱包": localizedTitle = "Wallet"
+            case "客户": localizedTitle = "Customers"
+            default: localizedTitle = title
+            }
+        case .spanish:
+            switch title {
+            case "主页": localizedTitle = "Inicio"
+            case "行程": localizedTitle = "Viajes"
+            case "名片": localizedTitle = "Contactos"
+            case "钱包": localizedTitle = "Cartera"
+            case "客户": localizedTitle = "Clientes"
+            default: localizedTitle = title
+            }
+        case .japanese:
+            switch title {
+            case "主页": localizedTitle = "ホーム"
+            case "行程": localizedTitle = "旅行"
+            case "名片": localizedTitle = "連絡先"
+            case "钱包": localizedTitle = "ウォレット"
+            case "客户": localizedTitle = "顧客"
+            default: localizedTitle = title
+            }
+        case .korean:
+            switch title {
+            case "主页": localizedTitle = "홈"
+            case "行程": localizedTitle = "여행"
+            case "名片": localizedTitle = "연락처"
+            case "钱包": localizedTitle = "지갑"
+            case "客户": localizedTitle = "고객"
+            default: localizedTitle = title
+            }
+        }
+        return localizedTitle
+    }
+}
+
+private enum MainTab: Hashable, CaseIterable {
+    case home, trips, card, wallet, customers
+
+    var systemImage: String {
+        switch self {
+        case .home: "house.fill"
+        case .trips: "books.vertical"
+        case .card: "person.text.rectangle.fill"
+        case .wallet: "wallet.bifold.fill"
+        case .customers: "person.crop.rectangle.badge.plus.fill"
         }
     }
 }
 
 
 struct CustomerListView: View {
-    @Environment(\.locale) private var locale
+    @Environment(AppLanguageSettings.self) private var languageSettings
+    @Environment(AuthViewModel.self) private var auth
     @Query private var customers: [Custumer]
-    @Query private var tripBookings: [TripBookingRecord]
-    @AppStorage(BaseCurrencyCatalog.countryCodeKey) private var baseCurrencyCountry = BaseCurrencyCatalog.defaultCountryCode
     @State private var isAddingCustomer = false
     @State private var selectedFilter: CustomerListFilter = .all
     @State private var searchText = ""
@@ -55,48 +208,10 @@ struct CustomerListView: View {
     init() {
         let scope = DataOwnership.activeScope
         _customers = Query(filter: #Predicate { $0.ownerScope == scope })
-        _tripBookings = Query(filter: #Predicate { $0.ownerScope == scope })
     }
 
     private var sortedCustomers: [Custumer] {
         customers.sorted { $0.updateAt > $1.updateAt }
-    }
-
-    private var tripCountsByCustomerID: [String: Int] {
-        let customersByName = Dictionary(grouping: customers, by: { $0.name })
-        var counts: [String: Int] = [:]
-        for booking in tripBookings where !booking.isCancelled {
-            if let customerID = booking.customerUUID {
-                counts[customerID, default: 0] += 1
-            } else if let matches = customersByName[booking.customerName], matches.count == 1,
-                      let customerID = matches.first?.uuid {
-                counts[customerID, default: 0] += 1
-            }
-        }
-        return counts
-    }
-
-    private var customerContributionTrips: [TripBookingRecord] {
-        var seen = Set<UUID>()
-        return customers
-            .flatMap { customerTripRecords(for: $0, customers: customers, bookings: tripBookings) }
-            .filter { seen.insert($0.id).inserted }
-    }
-
-    private var customerContributionTotalIncome: Double {
-        customerContributionTrips.reduce(0) { $0 + netIncome(for: $1) }
-    }
-
-    private var customerContributionUnpaid: Double {
-        customerContributionTrips
-            .filter { !$0.isPaid }
-            .reduce(0) { $0 + max(0, netIncome(for: $1)) }
-    }
-
-    private func netIncome(for booking: TripBookingRecord) -> Double {
-        booking.price + booking.tip + booking.expenseAdjustments.reduce(0) { total, item in
-            total + (item.isAddition ? abs(item.amount) : -abs(item.amount))
-        }
     }
 
     private var filteredCustomers: [Custumer] {
@@ -118,105 +233,29 @@ struct CustomerListView: View {
         }
     }
 
+    private var isOnlineOnly: Bool {
+        auth.serverEntitlement?.edition == .cloud && auth.serverEntitlement?.isCurrentlyActive == true
+    }
+
     var body: some View {
+        Group {
+            if isOnlineOnly {
+                CloudCustomerDirectoryView()
+            } else {
+                localBody
+            }
+        }
+    }
+
+    private var localBody: some View {
         NavigationStack {
             VStack(spacing: 0) {
-                HStack {
-                    HStack(spacing: 10) {
-                        Image(systemName: "person.2.fill")
-                            .font(.system(size: 15, weight: .semibold))
-                            .foregroundStyle(Color.accentColor)
-                            .frame(width: 34, height: 34)
-                            .background(Color.accentColor.opacity(0.12), in: RoundedRectangle(cornerRadius: 11, style: .continuous))
-                            .accessibilityHidden(true)
-
-                        Text("客户")
-                            .font(.system(size: 24, weight: .bold, design: .rounded))
-                            .foregroundStyle(.primary)
-                    }
-                    Spacer()
-                    Button {
-                        isAddingCustomer = true
-                    } label: {
-                        Image(systemName: "plus")
-                            .font(.system(size: 15, weight: .semibold))
-                            .foregroundStyle(.white)
-                            .frame(width: 34, height: 34)
-                            .background(Color.accentColor, in: Circle())
-                    }
-                    .buttonStyle(.plain)
-                    .accessibilityLabel("新增客户")
-                }
-                .padding(.horizontal, 20)
-                .padding(.vertical, 8)
-
-                VStack(spacing: 10) {
-                    LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: 10) {
-                        customerStatCard(icon: "person.2.fill", title: "客户", value: "\(customers.count)", detail: "\(customers.count)/1000 位客户", tint: .teal)
-                        customerContributionCard
-                    }
-
-                    HStack(spacing: 10) {
-                        ForEach(CustomerListFilter.allCases) { filter in
-                            Button {
-                                selectedFilter = filter
-                            } label: {
-                                HStack(spacing: 7) {
-                                    Image(systemName: filter.icon)
-                                        .font(.system(size: 15, weight: .semibold))
-                                        .foregroundStyle(selectedFilter == filter ? Color.accentColor : Color.secondary)
-                                        Text(LocalizedStringKey(filter.title))
-                                        .font(.system(size: 11, weight: .semibold))
-                                        .foregroundStyle(.primary)
-                                        .lineLimit(1)
-                                        .minimumScaleFactor(0.75)
-                                }
-                                .frame(maxWidth: .infinity, minHeight: 42, alignment: .leading)
-                                .padding(.horizontal, 10)
-                                .background(selectedFilter == filter ? Color.accentColor.opacity(0.12) : Color(.secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 13))
-                                .overlay(RoundedRectangle(cornerRadius: 13).stroke(selectedFilter == filter ? Color.accentColor.opacity(0.65) : Color.secondary.opacity(0.15), lineWidth: 1))
-                            }
-                            .buttonStyle(.plain)
-                        }
-                    }
-
-                    HStack(spacing: 9) {
-                        Image(systemName: "magnifyingglass")
-                            .font(.system(size: 14, weight: .semibold))
-                            .foregroundStyle(Color.accentColor)
-                            .frame(width: 29, height: 29)
-                            .background(Color.accentColor.opacity(0.10), in: RoundedRectangle(cornerRadius: 9, style: .continuous))
-                            .accessibilityHidden(true)
-                        SystemIMETextField(
-                            text: $searchText,
-                            placeholder: String(localized: "搜索姓名、电话、邮箱、地址或备注", locale: locale),
-                            capitalization: .none
-                        )
-                        .frame(maxWidth: .infinity)
-                        .frame(height: 36)
-                        .fixedSize(horizontal: false, vertical: true)
-                        if !searchText.isEmpty {
-                            Button {
-                                withAnimation(.easeOut(duration: 0.15)) { searchText = "" }
-                            } label: {
-                                Image(systemName: "xmark")
-                                    .font(.system(size: 11, weight: .bold))
-                                    .foregroundStyle(.secondary)
-                                    .frame(width: 30, height: 30)
-                                    .background(Color(.tertiarySystemGroupedBackground), in: Circle())
-                            }
-                            .accessibilityLabel("清除搜索")
-                            .transition(.scale.combined(with: .opacity))
-                        }
-                    }
-                    .padding(.horizontal, 10)
-                    .frame(height: 44)
-                    .background(Color(.secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
-                    .overlay(RoundedRectangle(cornerRadius: 14, style: .continuous).stroke(searchText.isEmpty ? Color.secondary.opacity(0.13) : Color.accentColor.opacity(0.42), lineWidth: 1))
-
-                }
-                .padding(.horizontal, 16)
-                .padding(.vertical, 8)
+                CustomerDirectoryControls(
+                    resultCount: filteredCustomers.count,
+                    selectedFilter: $selectedFilter,
+                    searchText: $searchText,
+                    onAdd: { isAddingCustomer = true }
+                )
 
                 ScrollView {
                     LazyVStack(spacing: 8) {
@@ -224,7 +263,12 @@ struct CustomerListView: View {
                             NavigationLink {
                                 CustomerBrowseView(customer: customer)
                             } label: {
-                                CustomerCardView(customer: customer, tripCount: tripCountsByCustomerID[customer.uuid] ?? 0)
+                            CustomerDirectoryRow(
+                                name: customer.name,
+                                category: customer.customerCategory,
+                            ) {
+                                CustomerAvatarView(path: customer.avatarUrl, size: 48, fallbackName: customer.name)
+                            }
                             }
                             .buttonStyle(.plain)
                         }
@@ -241,7 +285,7 @@ struct CustomerListView: View {
             }
             .background(Color(.systemGroupedBackground))
             .toolbar(.hidden, for: .navigationBar)
-            .sheet(isPresented: $isAddingCustomer) {
+            .adaptiveFormPresentation(isPresented: $isAddingCustomer) {
                 NavigationStack {
                     CustomerDetailView(customer: nil)
                 }
@@ -250,154 +294,6 @@ struct CustomerListView: View {
         .font(.system(size: 15))
     }
 
-    private func customerStatCard(icon: String, title: String, value: String, detail: LocalizedStringKey, tint: Color, highlightValue: Bool = false) -> some View {
-        VStack(alignment: .leading, spacing: 4) {
-            HStack(spacing: 7) {
-                Image(systemName: icon)
-                    .font(.system(size: 13, weight: .semibold))
-                    .foregroundStyle(tint)
-                    .frame(width: 27, height: 27)
-                    .background(tint.opacity(0.13), in: RoundedRectangle(cornerRadius: 9))
-                Text(LocalizedStringKey(title))
-                    .font(.caption.weight(.semibold))
-                    .foregroundStyle(.secondary)
-                    .lineLimit(1)
-            }
-            Text(value)
-                .font(.system(size: 22, weight: .bold, design: .rounded))
-                .foregroundStyle(highlightValue ? Color.green : Color.primary)
-                .lineLimit(1)
-                .minimumScaleFactor(0.7)
-            Text(detail)
-                .font(.system(size: 11))
-                .foregroundStyle(.secondary)
-                .lineLimit(1)
-                .minimumScaleFactor(0.75)
-        }
-        .frame(maxWidth: .infinity, minHeight: 82, alignment: .leading)
-        .padding(10)
-        .background(Color(.secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 15))
-        .overlay(RoundedRectangle(cornerRadius: 15).stroke(Color.secondary.opacity(0.15), lineWidth: 1))
-    }
-
-    private var customerContributionCard: some View {
-        VStack(alignment: .leading, spacing: 5) {
-            HStack(spacing: 7) {
-                Image(systemName: "chart.line.uptrend.xyaxis")
-                    .font(.system(size: 13, weight: .semibold))
-                    .foregroundStyle(Color.green)
-                    .frame(width: 27, height: 27)
-                    .background(Color.green.opacity(0.13), in: RoundedRectangle(cornerRadius: 9))
-                Text("客户贡献")
-                    .font(.caption.weight(.semibold))
-                    .foregroundStyle(.secondary)
-                    .lineLimit(1)
-                    .minimumScaleFactor(0.62)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-            }
-            HStack(spacing: 4) {
-                Text("总收入")
-                    .foregroundStyle(.secondary)
-                    .lineLimit(1)
-                    .minimumScaleFactor(0.65)
-                Spacer(minLength: 4)
-                Text(BaseCurrencyCatalog.format(customerContributionTotalIncome, countryCode: baseCurrencyCountry))
-                    .foregroundStyle(.green)
-                    .lineLimit(1)
-                    .minimumScaleFactor(0.65)
-            }
-            .font(.system(size: 13, weight: .bold, design: .rounded))
-            HStack(spacing: 4) {
-                Text("未收款")
-                    .foregroundStyle(.secondary)
-                    .lineLimit(1)
-                    .minimumScaleFactor(0.65)
-                Spacer(minLength: 4)
-                Text(BaseCurrencyCatalog.format(customerContributionUnpaid, countryCode: baseCurrencyCountry))
-                    .foregroundStyle(.orange)
-                    .lineLimit(1)
-                    .minimumScaleFactor(0.65)
-            }
-            .font(.system(size: 13, weight: .bold, design: .rounded))
-        }
-        .frame(maxWidth: .infinity, minHeight: 92, alignment: .leading)
-        .padding(10)
-        .background(Color(.secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 15))
-        .overlay(RoundedRectangle(cornerRadius: 15).stroke(Color.secondary.opacity(0.15), lineWidth: 1))
-    }
-}
-
-private enum CustomerListFilter: String, CaseIterable, Identifiable {
-    case all, regular, agency
-
-    var id: Self { self }
-    var title: String {
-        switch self {
-        case .all: "全部"
-        case .regular: "个人客户筛选"
-        case .agency: "旅行社"
-        }
-    }
-    var icon: String {
-        switch self {
-        case .all: "person.2.fill"
-        case .regular: "person.fill"
-        case .agency: "building.2.fill"
-        }
-    }
-}
-
-private struct CustomerCardView: View {
-    let customer: Custumer
-    let tripCount: Int
-
-    var body: some View {
-        HStack(spacing: 14) {
-            CustomerAvatarView(path: customer.avatarUrl, size: 48, fallbackName: customer.name)
-
-            VStack(alignment: .leading, spacing: 6) {
-                HStack(spacing: 8) {
-                    Text(customer.name)
-                        .font(.subheadline.weight(.semibold))
-                        .foregroundStyle(.primary)
-                        .lineLimit(1)
-                    Text(customer.customerCategory == 2 ? "旅行社" : "普通客户")
-                        .font(.system(size: 10, weight: .semibold))
-                        .foregroundStyle(customer.customerCategory == 2 ? .orange : .secondary)
-                        .padding(.horizontal, 7)
-                        .padding(.vertical, 3)
-                        .background((customer.customerCategory == 2 ? Color.orange : Color.secondary).opacity(0.12), in: Capsule())
-                }
-
-                if let phone = customer.connecttype.first?.connecttype, !phone.isEmpty {
-                    Label(phone, systemImage: "phone")
-                        .font(.footnote)
-                        .foregroundStyle(.secondary)
-                        .lineLimit(1)
-                } else if !customer.email.isEmpty {
-                    Label(customer.email, systemImage: "envelope")
-                        .font(.footnote)
-                        .foregroundStyle(.secondary)
-                        .lineLimit(1)
-                }
-            }
-            Spacer(minLength: 4)
-            VStack(spacing: 4) {
-                Image(systemName: "car.fill")
-                    .font(.system(size: 12, weight: .semibold))
-                    .foregroundStyle(Color.accentColor)
-                Text("\(tripCount) 次出行")
-                    .font(.system(size: 10, weight: .medium))
-                    .foregroundStyle(.secondary)
-                    .lineLimit(1)
-                    .fixedSize()
-            }
-        }
-        .padding(14)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(Color(.secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 16, style: .continuous))
-        .contentShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
-    }
 }
 
 private struct CustomerContactSnapshot: Identifiable {
@@ -476,6 +372,10 @@ private struct CustomerBrowseView: View {
         _syncConflicts = Query(filter: #Predicate { $0.ownerScope == scope && $0.tableName == "customers" })
     }
 
+    @MainActor private var currentCustomer: CustomerProfileSnapshot {
+        allCustomers.first(where: { $0.uuid == customer.id }).map(CustomerProfileSnapshot.init) ?? customer
+    }
+
     private var hasPendingRemoteDeletion: Bool {
         syncConflicts.contains {
             $0.recordID.caseInsensitiveCompare(customer.id) == .orderedSame && $0.isRemoteDeletion
@@ -483,25 +383,25 @@ private struct CustomerBrowseView: View {
     }
 
     private var customerTrips: [TripBookingRecord] {
-        let isUniqueCustomerName = allCustomers.filter { $0.name == customer.name }.count == 1
+        let isUniqueCustomerName = allCustomers.filter { $0.name == currentCustomer.name }.count == 1
         return tripBookings
             .filter { booking in
                 guard !booking.isCancelled else { return false }
                 if booking.customerUUID == customer.id { return true }
                 return booking.customerUUID == nil
                     && isUniqueCustomerName
-                    && booking.customerName == customer.name
+                    && booking.customerName == currentCustomer.name
             }
             .sorted { $0.appointmentDate > $1.appointmentDate }
     }
 
     private var hasAnyTripHistory: Bool {
-        let isUniqueCustomerName = allCustomers.filter { $0.name == customer.name }.count == 1
+        let isUniqueCustomerName = allCustomers.filter { $0.name == currentCustomer.name }.count == 1
         return tripBookings.contains { booking in
             if booking.customerUUID == customer.id { return true }
             return booking.customerUUID == nil
                 && isUniqueCustomerName
-                && booking.customerName == customer.name
+                && booking.customerName == currentCustomer.name
         }
     }
 
@@ -509,19 +409,19 @@ private struct CustomerBrowseView: View {
         List {
             Section {
                 HStack(spacing: 14) {
-                    CustomerAvatarView(path: customer.avatarUrl, size: 76, fallbackName: customer.name)
+                    CustomerAvatarView(path: currentCustomer.avatarUrl, size: 76, fallbackName: currentCustomer.name)
                     VStack(alignment: .leading, spacing: 6) {
-                        Text(customer.name).font(.headline.weight(.semibold))
-                        Text(customer.customerCategory == 2 ? "旅行社" : "普通客户")
+                        Text(currentCustomer.name).font(.headline.weight(.semibold))
+                        Text(currentCustomer.customerCategory == 2 ? "旅行社" : "普通客户")
                             .font(.footnote)
                             .foregroundStyle(.secondary)
                     }
                 }
-                LabeledContent("语言喜好", value: AppLanguage(rawValue: customer.languagePreference)?.nativeName ?? customer.languagePreference)
-                if customer.customerCategory == 2 {
+                LabeledContent("语言喜好", value: AppLanguage(rawValue: currentCustomer.languagePreference)?.nativeName ?? currentCustomer.languagePreference)
+                if currentCustomer.customerCategory == 2 {
                     HStack(spacing: 12) {
-                        compactCustomerValue("旅行社代码", customer.travelAgencyCode.isEmpty ? "未选择" : customer.travelAgencyCode)
-                        compactCustomerValue("旅行社名称", customer.travelAgencyName.isEmpty ? "未选择" : customer.travelAgencyName)
+                        compactCustomerValue("旅行社代码", currentCustomer.travelAgencyCode.isEmpty ? "未选择" : currentCustomer.travelAgencyCode)
+                        compactCustomerValue("旅行社名称", currentCustomer.travelAgencyName.isEmpty ? "未选择" : currentCustomer.travelAgencyName)
                     }
                 }
             }
@@ -534,7 +434,7 @@ private struct CustomerBrowseView: View {
             }
 
             Section("联系方式") {
-                ForEach(customer.contacts) { contact in
+                ForEach(currentCustomer.contacts) { contact in
                     HStack(spacing: 8) {
                         Text(LocalizedStringKey(contact.type))
                             .font(.caption.weight(.medium))
@@ -571,19 +471,19 @@ private struct CustomerBrowseView: View {
                     .font(.system(size: 12))
                     .padding(.vertical, 3)
                 }
-                if customer.contacts.isEmpty && customer.email.isEmpty {
+                if currentCustomer.contacts.isEmpty && currentCustomer.email.isEmpty {
                     Text("暂无联系方式").foregroundStyle(.secondary)
-                } else if customer.contacts.isEmpty {
+                } else if currentCustomer.contacts.isEmpty {
                     HStack {
                         Text("邮箱")
                         Spacer()
-                        Text(customer.email).foregroundStyle(.secondary)
+                        Text(currentCustomer.email).foregroundStyle(.secondary)
                     }
                 }
             }
 
             Section("常用地址") {
-                ForEach(customer.addresses) { address in
+                ForEach(currentCustomer.addresses) { address in
                     VStack(alignment: .leading, spacing: 6) {
                         HStack {
                             Text(LocalizedStringKey(address.type)).font(.footnote.weight(.medium))
@@ -604,12 +504,12 @@ private struct CustomerBrowseView: View {
                     }
                     .padding(.vertical, 4)
                 }
-                if customer.addresses.isEmpty { Text("暂无常用地址").foregroundStyle(.secondary) }
+                if currentCustomer.addresses.isEmpty { Text("暂无常用地址").foregroundStyle(.secondary) }
             }
 
             Section("备注") {
-                Text(customer.remark.isEmpty ? "暂无备注" : customer.remark)
-                    .foregroundStyle(customer.remark.isEmpty ? .secondary : .primary)
+                Text(currentCustomer.remark.isEmpty ? "暂无备注" : currentCustomer.remark)
+                    .foregroundStyle(currentCustomer.remark.isEmpty ? .secondary : .primary)
             }
 
             Section {
@@ -634,7 +534,7 @@ private struct CustomerBrowseView: View {
             if !hasPendingRemoteDeletion {
                 ToolbarItem(placement: .topBarTrailing) {
                     NavigationLink {
-                        CustomerDetailView(profile: customer)
+                        CustomerDetailView(profile: currentCustomer)
                     } label: {
                         Label("编辑", systemImage: "pencil")
                     }
@@ -771,19 +671,7 @@ private struct CustomerAvatarView: View {
     }
 
     var body: some View {
-        Group {
-            if let imageData, let image = UIImage(data: imageData) {
-                Image(uiImage: image).resizable().scaledToFill()
-            } else {
-                Text(String(fallbackName.prefix(1)))
-                    .font(.system(size: size * 0.42, weight: .bold, design: .rounded))
-                    .foregroundStyle(Color.accentColor)
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
-                    .background(Color.accentColor.opacity(0.12))
-            }
-        }
-        .frame(width: size, height: size)
-        .clipShape(Circle())
+        CustomerAvatarImage(data: imageData, name: fallbackName, size: size)
     }
 }
 
@@ -1075,7 +963,7 @@ private struct CustomerDetailView: View {
 
             Section("备注（最多 256 字）") {
                 LimitedIMETextEditor(text: $remark, maxLength: 256)
-                    .frame(minHeight: 100)
+                    .frame(minWidth: 0, maxWidth: .infinity, minHeight: 100)
                 Text("\(remark.count)/256")
                     .font(.system(size: 12))
                     .foregroundStyle(.secondary)
@@ -1212,7 +1100,7 @@ private struct CustomerDetailView: View {
         let record: Custumer
         if let customerID = registryCustomerID, let ownerScope = registryOwnerScope {
             guard DataOwnership.activeScope == ownerScope else {
-                message = "账号已切换，请返回当前账号后重新打开客户资料。"
+                message = String(localized: "账号已切换，请返回当前账号后重新打开客户资料。", locale: AppLanguageSettings.currentLocale)
                 return
             }
             let conflictKey = "\(ownerScope)|customers|\(customerID.lowercased())"
@@ -1221,11 +1109,11 @@ private struct CustomerDetailView: View {
             })
             do {
                 if let conflict = try modelContext.fetch(conflictDescriptor).first, conflict.isRemoteDeletion {
-                    message = "此客户已在另一台设备删除。请先处理同步冲突，当前修改未保存。"
+                    message = String(localized: "此客户已在另一台设备删除。请先处理同步冲突，当前修改未保存。", locale: AppLanguageSettings.currentLocale)
                     return
                 }
             } catch {
-                message = "无法确认客户的同步状态，修改尚未保存。请稍后重试。"
+                message = String(localized: "无法确认客户的同步状态，修改尚未保存。请稍后重试。", locale: AppLanguageSettings.currentLocale)
                 return
             }
             let descriptor = FetchDescriptor<Custumer>(predicate: #Predicate {
@@ -1235,11 +1123,11 @@ private struct CustomerDetailView: View {
                 if let current = try modelContext.fetch(descriptor).first {
                     record = current
                 } else {
-                    message = "此客户已在另一台设备删除，当前修改未保存。请先处理同步冲突。"
+                    message = String(localized: "此客户已在另一台设备删除，当前修改未保存。请先处理同步冲突。", locale: AppLanguageSettings.currentLocale)
                     return
                 }
             } catch {
-                message = "客户资料读取失败，修改尚未保存。请返回后重试。"
+                message = String(localized: "客户资料读取失败，修改尚未保存。请返回后重试。", locale: AppLanguageSettings.currentLocale)
                 return
             }
         } else {
@@ -1318,16 +1206,34 @@ private struct AddressDraft: Identifiable {
     var isDefault: Bool = false
 }
 
-private struct AddressSuggestionField: View {
+struct AddressSuggestionField: View {
     @Binding var text: String
     @ObservedObject var searcher: AddressAutocompleteSearcher
+    var placeholder = "输入地址，可搜索地点"
     let isActive: Bool
     let onFocus: () -> Void
     let onSelect: (String) -> Void
 
+    init(
+        text: Binding<String>,
+        searcher: AddressAutocompleteSearcher,
+        placeholder: String = "输入地址，可搜索地点",
+        isActive: Bool,
+        onFocus: @escaping () -> Void,
+        onSelect: @escaping (String) -> Void
+    ) {
+        _text = text
+        self.searcher = searcher
+        self.placeholder = placeholder
+        self.isActive = isActive
+        self.onFocus = onFocus
+        self.onSelect = onSelect
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
-            SystemIMETextField(text: $text, placeholder: "输入地址，可搜索地点")
+            SystemIMETextField(text: $text, placeholder: placeholder)
+                .frame(minWidth: 0, maxWidth: .infinity, alignment: .leading)
                 .onChange(of: text) { _, value in
                     searcher.searchQuery = value
                     onFocus()
@@ -1349,6 +1255,7 @@ private struct AddressSuggestionField: View {
                 }
             }
         }
+        .frame(minWidth: 0, maxWidth: .infinity, alignment: .leading)
     }
 }
 

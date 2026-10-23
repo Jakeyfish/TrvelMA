@@ -21,7 +21,6 @@ struct ForgotPasswordView: View {
             Form {
                 Section {
                     TextField("邮箱", text: $email)
-                        .keyboardDoneToolbar()
                         .textContentType(.emailAddress)
                         .keyboardType(.emailAddress)
                         .textInputAutocapitalization(.never)
@@ -30,9 +29,13 @@ struct ForgotPasswordView: View {
                         Button("发送云端重置邮件") { sendCloudRecovery() }
                     } else {
                         HStack {
-                            TextField("验证码", text: $verificationCode)
-                                .keyboardDoneToolbar()
-                                .keyboardType(.numberPad)
+                            SystemIMETextField(
+                                text: $verificationCode,
+                                placeholder: "验证码",
+                                keyboardType: .numberPad,
+                                textContentType: .oneTimeCode,
+                                clearsZeroOnFocus: false
+                            )
                             Button {
                                 codeRequested = true
                                 isError = false
@@ -43,23 +46,21 @@ struct ForgotPasswordView: View {
                             }
                         }
                         SecureField("新密码（至少 6 位）", text: $newPassword)
-                            .keyboardDoneToolbar()
                             .textContentType(.newPassword)
                         SecureField("确认新密码", text: $confirmPassword)
-                            .keyboardDoneToolbar()
                             .textContentType(.newPassword)
                     }
                 }
 
                 if let message {
                     Section {
-                        Text(LocalizedStringKey(message))
+                        Text(message)
                             .font(.footnote)
                             .foregroundStyle(isError ? Color.red : Color.secondary)
                     }
                 } else if isShowingCodeNotice {
                     Section {
-                        Text("演示模式验证码：\(auth.demoVerificationCode)（尚未接入短信/邮件发送）")
+                        Text(String(format: String(localized: "演示模式验证码：%@（尚未接入短信/邮件发送）", locale: AppLanguageSettings.currentLocale), locale: AppLanguageSettings.currentLocale, arguments: [auth.demoVerificationCode]))
                             .font(.footnote)
                             .foregroundStyle(.secondary)
                     }
@@ -73,6 +74,7 @@ struct ForgotPasswordView: View {
                     }
                 }
             }
+            .keyboardDoneToolbar()
             .navigationTitle("忘记密码")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {

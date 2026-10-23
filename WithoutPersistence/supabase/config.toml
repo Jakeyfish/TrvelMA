@@ -1,0 +1,2 @@
+[functions.variflight-lookup]
+verify_jwt = true

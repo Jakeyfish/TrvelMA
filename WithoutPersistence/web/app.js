@@ -18,6 +18,8 @@ const webReminderTimers = new Map();
 const state = {
   session: readSession(),
   user: null,
+  productEdition: "sync",
+  entitlementResolved: false,
   page: "home",
   tripFilter: "all",
   homeDate: "",
@@ -75,6 +77,8 @@ function resetAccountWorkspace() {
   for (const timer of webReminderTimers.values()) clearTimeout(timer);
   webReminderTimers.clear();
   state.page = "home";
+  state.productEdition = "sync";
+  state.entitlementResolved = false;
   state.customers = [];
   state.contacts = [];
   state.addresses = [];
@@ -204,7 +208,7 @@ function renderConnectionStatus() {
 }
 
 function writeOfflineCache(snapshot, userID = state.user?.id) {
-  if (!userID) return;
+  if (!userID || state.productEdition === "cloud") return;
   const compact = structuredClone(snapshot);
   const settings = compact.settings?.[0];
   for (const key of ["business_card_data", "wallet_payment_methods"]) {
@@ -279,6 +283,7 @@ function restoreQueuedStorageImages(snapshot, operations, userID) {
 }
 
 function persistOfflineOperation(operation, userID = state.user?.id) {
+  if (state.productEdition === "cloud") throw new Error("云端版需要联网保存，请恢复网络后重试。");
   if (!userID) throw new Error("离线保存需要先登录云端账号。");
   const envelope = readOfflineQueue(userID);
   envelope.operations.push({ ...operation, id: crypto.randomUUID(), owner_id: userID, created_at: new Date().toISOString() });
@@ -324,12 +329,21 @@ async function replayOfflineQueue() {
           break;
         }
         if (operation.kind === "storage-upload") {
+          const assetPath = operation.path?.startsWith("object/account-assets/")
+            ? operation.path.slice("object/account-assets/".length) : "";
+          if (!isOwnedAccountAssetPath(assetPath, replayUserID)) {
+            blockedByServer = true;
+            showToast("离线图片路径不属于当前账号，已暂停同步以保护账号资料。请联系支持人员处理。", true);
+            break;
+          }
           const binary = atob(operation.base64);
           const bytes = Uint8Array.from(binary, character => character.charCodeAt(0));
           await storageRequest(operation.path, {
             method: "POST", body: new Blob([bytes], { type: operation.contentType || "image/jpeg" }),
             contentType: operation.contentType || "image/jpeg", queueOffline: false,
           });
+        } else if (operation.kind === "storage-delete") {
+          await removeAccountAssetImage(operation.path, replayUserID, false);
         } else {
           await request(operation.table, {
             method: operation.method, query: operation.query, body: operation.body,
@@ -393,6 +407,9 @@ async function request(tableOrPath, { method = "GET", query = {}, body, prefer, 
   if (!isAuthPath && (!requestUserID || state.user?.id !== requestUserID || session.user?.id !== requestUserID)) {
     throw new Error("账号已切换，请重新加载当前账号资料。");
   }
+  if (!isAuthPath && state.productEdition === "cloud" && method !== "GET" && queueOffline && queuedOperationCount() > 0) {
+    throw new Error("还有未完成的离线修改，请先联网同步后再继续编辑。");
+  }
   const url = apiURL(isAuthPath ? tableOrPath : `/rest/v1/${tableOrPath}`, query);
   const headers = {
     apikey: SUPABASE_PUBLISHABLE_KEY,
@@ -407,9 +424,12 @@ async function request(tableOrPath, { method = "GET", query = {}, body, prefer, 
   }
   let response;
   try {
-    response = await fetch(url, { method, headers, body: body === undefined ? undefined : JSON.stringify(body) });
+    response = await fetch(url, {
+      method, headers, body: body === undefined ? undefined : JSON.stringify(body),
+      cache: state.productEdition === "cloud" ? "no-store" : "default",
+    });
   } catch (error) {
-    if (!queueOffline || method === "GET" || isAuthPath || !requestUserID || !isNetworkFailure(error)) throw error;
+    if (!queueOffline || state.productEdition === "cloud" || method === "GET" || isAuthPath || !requestUserID || !isNetworkFailure(error)) throw error;
     const table = tableOrPath.replace(/^\/rest\/v1\//, "");
     const operation = { table, method, query, body, prefer };
     persistOfflineOperation(operation, requestUserID);
@@ -419,7 +439,11 @@ async function request(tableOrPath, { method = "GET", query = {}, body, prefer, 
   if (!isAuthPath && state.user?.id !== requestUserID) throw new Error("账号已切换，请重新加载当前账号资料。");
   const text = await response.text();
   const payload = text ? (() => { try { return JSON.parse(text); } catch { return text; } })() : null;
-  if (!response.ok) throw new Error(friendlyError(typeof payload === "object" && payload ? payload : { message: text }));
+  if (!response.ok) {
+    const error = new Error(friendlyError(typeof payload === "object" && payload ? payload : { message: text }));
+    error.status = response.status;
+    throw error;
+  }
   networkToastShownForCurrentOutage = false;
   return payload;
 }
@@ -440,6 +464,12 @@ async function upsert(table, row, conflict = "id") {
     prefer: "resolution=merge-duplicates,return=representation",
   });
   return Array.isArray(rows) ? rows[0] : row;
+}
+
+async function callOnlineRPC(name, body) {
+  return request(`rpc/${name}`, {
+    method: "POST", body, prefer: "return=minimal", queueOffline: false,
+  });
 }
 
 async function patch(table, filters, body) {
@@ -465,17 +495,17 @@ async function loadData() {
     snapshot = { customers, contacts, addresses, trips, agencies, settings, stops, expenses };
     const queued = readOfflineQueue().operations;
     for (const operation of queued) applyQueuedOperation(snapshot, operation);
-    writeOfflineCache(snapshot);
+    if (state.productEdition !== "cloud") writeOfflineCache(snapshot);
     restoreQueuedStorageImages(snapshot, queued, state.user.id);
     state.offline = false;
   } catch (error) {
     if (state.user?.id !== userID) return;
-    const cached = isNetworkFailure(error) ? readOfflineCache() : null;
+    const cached = state.productEdition !== "cloud" && isNetworkFailure(error) ? readOfflineCache() : null;
     if (!cached) throw error;
     snapshot = cached;
     const queued = readOfflineQueue().operations;
     for (const operation of queued) applyQueuedOperation(snapshot, operation);
-    writeOfflineCache(snapshot);
+    if (state.productEdition !== "cloud") writeOfflineCache(snapshot);
     restoreQueuedStorageImages(snapshot, queued, state.user.id);
     state.offline = true;
   }
@@ -519,6 +549,60 @@ async function loadData() {
     expenses: state.expenses.filter(expense => expense.trip_id === trip.id && !expense.deleted_at).sort((a, b) => a.position - b.position),
   }));
   scheduleWebReminders();
+}
+
+async function resolveProductEdition() {
+  const userID = state.user?.id;
+  if (!userID) throw new Error("请先登录云端账号。");
+  const cacheKey = `${ACCOUNT_PREFERENCE_PREFIX}${userID}.product-edition`;
+  const cached = (() => { try { return JSON.parse(localStorage.getItem(cacheKey) || "null"); } catch { return null; } })();
+  try {
+    const rows = await request("account_entitlements", {
+      query: { select: "edition,status,expires_at,max_devices", owner_id: `eq.${userID}`, limit: "1" },
+      queueOffline: false,
+    });
+    if (state.user?.id !== userID) throw new Error("账号已切换，请重新加载当前账号资料。");
+    const entitlement = rows?.[0];
+    if (!entitlement) {
+      throw new Error("此云端账号尚未开通云端权益，资料没有删除；请联系管理员开通访问。");
+    } else {
+      const expiration = entitlement.expires_at ? Date.parse(entitlement.expires_at) : Infinity;
+      if (!(entitlement.status === "active" || entitlement.status === "grace")
+          || (entitlement.expires_at && !Number.isFinite(expiration))
+          || expiration <= Date.now()) {
+        throw new Error("云端权益已过期或暂停，请联系支持人员恢复账户访问。");
+      }
+      if (!(["cloud", "sync"].includes(entitlement.edition))) {
+        throw new Error("此账号当前没有 Web 云端访问权益。");
+      }
+      state.productEdition = entitlement.edition;
+      localStorage.setItem(cacheKey, JSON.stringify(entitlement));
+      if (state.productEdition === "cloud") localStorage.removeItem(offlineCacheKey(userID));
+    }
+    state.entitlementResolved = true;
+  } catch (error) {
+    // A missing table is a rollout-compatible legacy state. Network failures
+    // may use the last account-scoped edition; unknown accounts fail closed.
+    if (error.status === 404) {
+      state.productEdition = "sync";
+      state.entitlementResolved = true;
+      localStorage.setItem(cacheKey, JSON.stringify({ edition: "sync", status: "legacy" }));
+    } else if (isNetworkFailure(error) && cached && ["cloud", "sync"].includes(cached.edition)) {
+      const expiry = cached.expires_at ? Date.parse(cached.expires_at) : Infinity;
+      if (expiry <= Date.now() || (cached.expires_at && !Number.isFinite(expiry))
+          || !["active", "grace", "legacy"].includes(cached.status)) throw error;
+      state.productEdition = cached.edition;
+      state.entitlementResolved = true;
+      if (state.productEdition === "cloud") localStorage.removeItem(offlineCacheKey(userID));
+    } else if (isNetworkFailure(error) && readOfflineCache(userID)) {
+      // Before the entitlement service rollout, existing browser accounts had
+      // no edition marker. Preserve their previously working sync behavior.
+      state.productEdition = "sync";
+      state.entitlementResolved = true;
+    } else {
+      throw error;
+    }
+  }
 }
 
 function defaultSettings() {
@@ -620,6 +704,14 @@ function renderLogin() {
         <button class="button primary full" type="submit" ${state.busy ? "disabled" : ""}>${state.busy ? "正在登录…" : "登录"}</button>
       </form></section>
     </main>`;
+}
+
+function renderPendingSyncBlocker() {
+  const count = queuedOperationCount();
+  const message = state.productEdition === "cloud"
+    ? "云端版尚有同步版留下的待提交修改，当前同步未完成。"
+    : "云端暂时没有接受全部待同步修改。";
+  document.getElementById("app").innerHTML = `<main class="offline-start"><section class="panel"><h1>还有修改等待同步</h1><p>${escapeHTML(message)}队列中的 ${count} 项修改仍保存在本机；保持当前账号登录，联网后可以继续重试。</p><button class="button primary" data-action="retry-offline-load">重试同步</button><button class="button" data-action="signout">退出登录</button></section></main>`;
 }
 
 const navItems = [
@@ -902,7 +994,7 @@ function renderWallet() {
 }
 
 function imageDataURL(base64) { return base64 ? `data:image/jpeg;base64,${base64}` : ""; }
-async function storageRequest(path, { method = "GET", body, contentType, queueOffline = true } = {}) {
+async function storageRequest(path, { method = "GET", body, contentType, queueOffline = true, offlinePath } = {}) {
   const requestUserID = state.user?.id;
   const session = await currentSession();
   if (!session) throw new Error("云端登录状态已失效，请重新登录。");
@@ -919,10 +1011,16 @@ async function storageRequest(path, { method = "GET", body, contentType, queueOf
     await queueUpload();
     return { ok: true, queued: true };
   }
+  if (queueOffline && method === "DELETE" && state.productEdition !== "cloud"
+      && (queuedOperationCount() > 0 || !navigator.onLine)) {
+    persistOfflineOperation({ kind: "storage-delete", path: offlinePath || path }, requestUserID);
+    return { ok: true, queued: true };
+  }
   let response;
   try {
     response = await fetch(`${SUPABASE_URL}/storage/v1/${path}`, {
       method,
+      cache: state.productEdition === "cloud" ? "no-store" : "default",
       headers: {
         apikey: SUPABASE_PUBLISHABLE_KEY,
         Authorization: `Bearer ${session.access_token}`,
@@ -932,14 +1030,23 @@ async function storageRequest(path, { method = "GET", body, contentType, queueOf
       body,
     });
   } catch (error) {
-    if (!queueOffline || method !== "POST" || !isNetworkFailure(error)) throw error;
-    await queueUpload();
-    return { ok: true, queued: true };
+    if (!queueOffline || !isNetworkFailure(error)) throw error;
+    if (method === "POST") {
+      await queueUpload();
+      return { ok: true, queued: true };
+    }
+    if (method === "DELETE" && state.productEdition !== "cloud") {
+      persistOfflineOperation({ kind: "storage-delete", path: offlinePath || path }, requestUserID);
+      return { ok: true, queued: true };
+    }
+    throw error;
   }
   if (state.user?.id !== requestUserID) throw new Error("账号已切换，请重新加载当前账号资料。");
   if (!response.ok) {
     const payload = await response.json().catch(() => ({}));
-    throw new Error(payload.message || payload.error || "云端图片存储失败，请确认已应用 Storage 配置。");
+    const error = new Error(payload.message || payload.error || "云端图片存储失败，请确认已应用 Storage 配置。");
+    error.status = response.status;
+    throw error;
   }
   return response;
 }
@@ -959,10 +1066,35 @@ async function imageAsJpeg(base64) {
 }
 async function uploadAssetImage(base64, path) {
   const jpeg = await imageAsJpeg(base64);
-  await storageRequest(`object/account-assets/${objectPath(path)}`, { method: "POST", body: jpeg, contentType: "image/jpeg" });
+  return storageRequest(`object/account-assets/${objectPath(path)}`, { method: "POST", body: jpeg, contentType: "image/jpeg" });
+}
+function accountAssetImagePaths(column, value) {
+  if (!value || typeof value !== "object") return [];
+  if (column === "business_card_data") {
+    return [value.portraitPath, ...(value.qrCodes || []).map(item => item.imagePath)].filter(path => typeof path === "string" && path);
+  }
+  return (value.methods || []).map(item => item.qrImagePath).filter(path => typeof path === "string" && path);
+}
+function isOwnedAccountAssetPath(path, ownerID) {
+  const components = String(path || "").split("/");
+  let decodedComponents;
+  try { decodedComponents = components.map(component => decodeURIComponent(component)); }
+  catch { return false; }
+  return decodedComponents.length >= 2 && decodedComponents[0] === ownerID
+    && decodedComponents.every(component => component && component !== "." && component !== ".." && !/[\\/]/.test(component));
+}
+async function removeAccountAssetImage(path, ownerID, queueOffline = false) {
+  if (!isOwnedAccountAssetPath(path, ownerID)) throw new Error("图片路径不属于当前账号，已阻止删除。");
+  return storageRequest("object/account-assets", {
+    method: "DELETE", body: JSON.stringify({ prefixes: [path] }),
+    contentType: "application/json", queueOffline, offlinePath: path,
+  });
 }
 async function hydrateAccountAssets() {
+  const ownerID = state.user?.id;
+  if (!ownerID) throw new Error("请先登录云端账号。");
   const getBase64 = async path => {
+    if (!isOwnedAccountAssetPath(path, ownerID)) throw new Error("图片路径不属于当前账号，已阻止读取。");
     const response = await storageRequest(`object/authenticated/account-assets/${objectPath(path)}`);
     const bytes = new Uint8Array(await response.arrayBuffer());
     let binary = "";
@@ -986,15 +1118,17 @@ function renderBusinessCard() {
   const email = state.user?.email || "未填写";
   const portrait = card.portraitData ? `<img src="${imageDataURL(card.portraitData)}" alt="名片头像">` : `<span>人像</span>`;
   const styleName = Number(card.style) === 1 ? "金属质感" : "简洁平版";
-  return `<section class="business-card-editor"><div class="panel business-card-settings"><div class="business-card-photo"><label class="business-avatar-picker">${portrait}<span>更换头像<input type="file" accept="image/*" data-card-photo></span></label></div><div class="readonly-profile"><label>姓名<input readonly value="${escapeHTML(name)}"></label><label>电话<input readonly value="${escapeHTML(phone)}"></label><label>电子邮箱<input readonly value="${escapeHTML(email)}"></label></div><label class="field">昵称<input data-card-field="nickname" value="${escapeHTML(card.nickname || "")}" placeholder="输入名片上显示的昵称"></label><div class="field"><label>名片样式</label><div class="business-style-options"><button class="business-style-option ${Number(card.style) === 0 ? "selected" : ""}" data-action="card-style" data-style="0"><strong>样式一</strong><small>简洁平版</small></button><button class="business-style-option ${Number(card.style) === 1 ? "selected" : ""}" data-action="card-style" data-style="1"><strong>样式二</strong><small>金属质感</small></button></div></div><button class="button primary" data-action="save-business-card">保存名片</button></div><div class="business-card-preview ${Number(card.style) === 1 ? "metallic" : "flat"}"><div class="preview-heading">${card.portraitData ? `<img src="${imageDataURL(card.portraitData)}" alt="">` : `<span>${escapeHTML(String(name).slice(0, 1))}</span>`}<div><strong>${escapeHTML(card.nickname || name)}</strong><small>${escapeHTML(name)}</small></div></div><div class="preview-contact"><span>${escapeHTML(phone)}</span><span>${escapeHTML(email)}</span></div><small>${styleName}</small></div></section><section class="panel account-asset-panel"><div class="section-heading"><h2>二维码</h2><button class="button small" data-action="add-card-qr">＋ 添加</button></div>${card.qrCodes.length ? `<div class="asset-list">${card.qrCodes.map(qr => `<article class="asset-row"><button class="asset-image-button" data-action="preview-card-qr" data-id="${escapeHTML(qr.id)}" ${qr.imageData ? "" : "disabled"}>${qr.imageData ? `<img src="${imageDataURL(qr.imageData)}" alt="${escapeHTML(qr.name || "二维码")}">` : `<span>添加二维码</span>`}</button><div class="asset-row-content"><label>二维码名称<input data-card-qr-name="${escapeHTML(qr.id)}" value="${escapeHTML(qr.name || "")}" placeholder="例如：微信"></label><label class="button small asset-upload">${qr.imageData ? "更换二维码" : "选择二维码图片"}<input type="file" accept="image/*" data-card-qr-image="${escapeHTML(qr.id)}"></label></div><button class="button small danger" data-action="remove-card-qr" data-id="${escapeHTML(qr.id)}">删除</button></article>`).join("")}</div>` : `<p class="empty-hint">添加微信、LINE 或其他联系二维码。</p>`}</section>`;
+  return `<section class="business-card-editor"><div class="panel business-card-settings"><div class="business-card-photo"><label class="business-avatar-picker">${portrait}<span>更换头像<input type="file" accept="image/*" data-card-photo></span></label>${card.portraitData ? `<button class="button small danger" data-action="remove-card-photo">删除头像</button>` : ""}</div><div class="readonly-profile"><label>姓名<input readonly value="${escapeHTML(name)}"></label><label>电话<input readonly value="${escapeHTML(phone)}"></label><label>电子邮箱<input readonly value="${escapeHTML(email)}"></label></div><label class="field">昵称<input data-card-field="nickname" value="${escapeHTML(card.nickname || "")}" placeholder="输入名片上显示的昵称"></label><div class="field"><label>名片样式</label><div class="business-style-options"><button class="business-style-option ${Number(card.style) === 0 ? "selected" : ""}" data-action="card-style" data-style="0"><strong>样式一</strong><small>简洁平版</small></button><button class="business-style-option ${Number(card.style) === 1 ? "selected" : ""}" data-action="card-style" data-style="1"><strong>样式二</strong><small>金属质感</small></button></div></div><button class="button primary" data-action="save-business-card">保存名片</button></div><div class="business-card-preview ${Number(card.style) === 1 ? "metallic" : "flat"}"><div class="preview-heading">${card.portraitData ? `<img src="${imageDataURL(card.portraitData)}" alt="">` : `<span>${escapeHTML(String(name).slice(0, 1))}</span>`}<div><strong>${escapeHTML(card.nickname || name)}</strong><small>${escapeHTML(name)}</small></div></div><div class="preview-contact"><span>${escapeHTML(phone)}</span><span>${escapeHTML(email)}</span></div><small>${styleName}</small></div></section><section class="panel account-asset-panel"><div class="section-heading"><h2>二维码</h2><button class="button small" data-action="add-card-qr">＋ 添加</button></div>${card.qrCodes.length ? `<div class="asset-list">${card.qrCodes.map(qr => `<article class="asset-row"><button class="asset-image-button" data-action="preview-card-qr" data-id="${escapeHTML(qr.id)}" ${qr.imageData ? "" : "disabled"}>${qr.imageData ? `<img src="${imageDataURL(qr.imageData)}" alt="${escapeHTML(qr.name || "二维码")}">` : `<span>添加二维码</span>`}</button><div class="asset-row-content"><label>二维码名称<input data-card-qr-name="${escapeHTML(qr.id)}" value="${escapeHTML(qr.name || "")}" placeholder="例如：微信"></label><label class="button small asset-upload">${qr.imageData ? "更换二维码" : "选择二维码图片"}<input type="file" accept="image/*" data-card-qr-image="${escapeHTML(qr.id)}"></label></div><button class="button small danger" data-action="remove-card-qr" data-id="${escapeHTML(qr.id)}">删除</button></article>`).join("")}</div>` : `<p class="empty-hint">添加微信、LINE 或其他联系二维码。</p>`}</section>`;
 }
 
-async function cloudAssetValue(column, value, ownerID) {
+async function cloudAssetValue(column, value, ownerID, uploadedPaths = []) {
   const cloudValue = structuredClone(value);
   const saveImage = async (item, dataKey, pathKey, path) => {
     if (!item[dataKey]) return;
+    const isNewObject = !item[pathKey];
     const objectName = item[pathKey] || `${ownerID}/${path}`;
-    await uploadAssetImage(item[dataKey], objectName);
+    const upload = await uploadAssetImage(item[dataKey], objectName);
+    if (isNewObject && !upload?.queued) uploadedPaths.push(objectName);
     item[pathKey] = objectName;
     delete item[dataKey];
   };
@@ -1012,38 +1146,66 @@ async function cloudAssetValue(column, value, ownerID) {
   }
   return cloudValue;
 }
-async function persistAccountAsset(column, value) {
+async function persistAccountAsset(column, value, removedPaths = []) {
   const ownerID = state.user?.id;
   if (!ownerID) throw new Error("请先登录云端账号。");
+  const previousSettings = state.settings || defaultSettings();
+  const oldPaths = accountAssetImagePaths(column, previousSettings[column]);
+  const pendingByAccount = state.pendingAccountAssetCleanup || (state.pendingAccountAssetCleanup = {});
+  const pendingPaths = pendingByAccount[ownerID] || [];
+  const queueCountBefore = queuedOperationCount();
   const updatedAt = new Date().toISOString();
-  const cloudValue = await cloudAssetValue(column, value, ownerID);
-  if (state.user?.id !== ownerID) throw new Error("账号已切换，请重新加载当前账号资料。");
-  if (column === "business_card_data") {
-    if (cloudValue.portraitPath) value.portraitPath = cloudValue.portraitPath;
-    for (const item of value.qrCodes || []) {
-      const saved = (cloudValue.qrCodes || []).find(candidate => candidate.id === item.id);
-      if (saved?.imagePath) item.imagePath = saved.imagePath;
+  let cloudValue;
+  const uploadedPaths = [];
+  let row;
+  try {
+    cloudValue = await cloudAssetValue(column, value, ownerID, uploadedPaths);
+    if (state.user?.id !== ownerID) throw new Error("账号已切换，请重新加载当前账号资料。");
+    if (column === "business_card_data") {
+      if (cloudValue.portraitPath) value.portraitPath = cloudValue.portraitPath;
+      for (const item of value.qrCodes || []) {
+        const saved = (cloudValue.qrCodes || []).find(candidate => candidate.id === item.id);
+        if (saved?.imagePath) item.imagePath = saved.imagePath;
+      }
+    } else {
+      for (const item of value.methods || []) {
+        const saved = (cloudValue.methods || []).find(candidate => candidate.id === item.id);
+        if (saved?.qrImagePath) item.qrImagePath = saved.qrImagePath;
+      }
     }
-  } else {
-    for (const item of value.methods || []) {
-      const saved = (cloudValue.methods || []).find(candidate => candidate.id === item.id);
-      if (saved?.qrImagePath) item.qrImagePath = saved.qrImagePath;
+    row = { ...previousSettings, owner_id: ownerID, [column]: cloudValue, [`${column}_updated_at`]: updatedAt, updated_at: updatedAt };
+    await upsert("user_settings", row, "owner_id");
+    if (state.user?.id !== ownerID) throw new Error("账号已切换，请重新加载当前账号资料。");
+  } catch (error) {
+    if (uploadedPaths.length && queuedOperationCount() === queueCountBefore && navigator.onLine) {
+      await Promise.allSettled(uploadedPaths.map(path => removeAccountAssetImage(path, ownerID)));
     }
+    throw error;
   }
-  const row = { ...(state.settings || defaultSettings()), owner_id: ownerID, [column]: cloudValue, [`${column}_updated_at`]: updatedAt, updated_at: updatedAt };
-  await upsert("user_settings", row, "owner_id");
-  if (state.user?.id !== ownerID) throw new Error("账号已切换，请重新加载当前账号资料。");
   state.settings = row;
+  const otherColumn = column === "business_card_data" ? "wallet_payment_methods" : "business_card_data";
+  const retainedPaths = new Set([
+    ...accountAssetImagePaths(column, cloudValue),
+    ...accountAssetImagePaths(otherColumn, previousSettings[otherColumn]),
+  ]);
+  const stalePaths = [...new Set([...oldPaths, ...pendingPaths, ...removedPaths])]
+    .filter(path => isOwnedAccountAssetPath(path, ownerID) && !retainedPaths.has(path));
+  const queueCleanup = !navigator.onLine || state.offline || queuedOperationCount() !== queueCountBefore;
+  const cleanupResults = await Promise.allSettled(stalePaths.map(path => removeAccountAssetImage(path, ownerID, queueCleanup)));
+  const failedPaths = stalePaths.filter((_, index) => cleanupResults[index].status === "rejected");
+  if (failedPaths.length) pendingByAccount[ownerID] = failedPaths;
+  else delete pendingByAccount[ownerID];
+  return { cleanupFailed: failedPaths.length > 0 };
 }
 
-async function saveBusinessCard(silent = false) {
-  await persistAccountAsset("business_card_data", state.businessCard);
-  if (!silent) showToast("名片已保存并同步到云端。");
+async function saveBusinessCard(silent = false, removedPaths = []) {
+  const result = await persistAccountAsset("business_card_data", state.businessCard, removedPaths);
+  if (!silent) showToast(result.cleanupFailed ? "名片已同步，但旧图片未能全部清理，请重新保存重试。" : "名片已保存并同步到云端。", result.cleanupFailed);
 }
 
-async function savePaymentMethods(silent = false) {
-  await persistAccountAsset("wallet_payment_methods", { methods: state.paymentMethods });
-  if (!silent) showToast("收款方式已保存并同步到云端。");
+async function savePaymentMethods(silent = false, removedPaths = []) {
+  const result = await persistAccountAsset("wallet_payment_methods", { methods: state.paymentMethods }, removedPaths);
+  if (!silent) showToast(result.cleanupFailed ? "收款方式已同步，但旧图片未能全部清理，请重新保存重试。" : "收款方式已保存并同步到云端。", result.cleanupFailed);
 }
 
 async function readImageBase64(file) {
@@ -1109,10 +1271,9 @@ function renderSettings() {
   const countries = [["US", "美国", "美元", "US Dollar", "USD", "$"], ["CA", "加拿大", "加拿大元", "Canadian Dollar", "CAD", "CA$"], ["CN", "中国", "人民币", "Chinese Yuan", "CNY", "¥"], ["GB", "英国", "英镑", "British Pound", "GBP", "£"], ["JP", "日本", "日元", "Japanese Yen", "JPY", "¥"], ["KR", "韩国", "韩元", "South Korean Won", "KRW", "₩"], ["ES", "西班牙", "欧元", "Euro", "EUR", "€"], ["FR", "法国", "欧元", "Euro", "EUR", "€"], ["DE", "德国", "欧元", "Euro", "EUR", "€"], ["AU", "澳大利亚", "澳元", "Australian Dollar", "AUD", "A$"], ["HK", "中国香港", "港元", "Hong Kong Dollar", "HKD", "HK$"], ["TW", "中国台湾", "新台币", "New Taiwan Dollar", "TWD", "NT$"], ["SG", "新加坡", "新加坡元", "Singapore Dollar", "SGD", "S$"], ["MX", "墨西哥", "墨西哥比索", "Mexican Peso", "MXN", "MX$"], ["IN", "印度", "印度卢比", "Indian Rupee", "INR", "₹"], ["CH", "瑞士", "瑞士法郎", "Swiss Franc", "CHF", "CHF"]];
   const configuredNavigation = state.settings?.navigation_provider;
   const navigation = getAccountPreference("navigation") || (configuredNavigation === "apple_maps" ? "appleMaps" : configuredNavigation || "appleMaps");
-  const flightKey = getAccountPreference("variflight-key");
   const selectedCurrency = countries.find(([code]) => code === settings.currency_country_code) || countries[0];
   const languageCode = normalizedLanguageCode(settings.language_code);
-  return `<section class="panel" style="max-width:760px"><div class="section-heading" style="margin-top:0"><h2>账户偏好</h2></div><form id="settingsForm"><div class="form-grid"><div class="field"><label for="language">语言偏好</label><select id="language" name="language_code"><option value="zh-Hans" ${languageCode === "zh-Hans" ? "selected" : ""}>简体中文</option><option value="zh-Hant" ${languageCode === "zh-Hant" ? "selected" : ""}>繁體中文</option><option value="en" ${languageCode === "en" ? "selected" : ""}>English</option><option value="ja" ${languageCode === "ja" ? "selected" : ""}>日本語</option><option value="ko" ${languageCode === "ko" ? "selected" : ""}>한국어</option><option value="es" ${languageCode === "es" ? "selected" : ""}>Español</option></select><small>偏好保存至云端；Web 界面目前使用简体中文。</small></div><div class="field"><label for="currency">国家和地区 · 本位币</label><select id="currency" name="currency_country_code">${countries.map(([code, country, currencyName, currencyEnglish, currencyCode, symbol]) => `<option value="${code}" ${settings.currency_country_code === code ? "selected" : ""}>${country} · ${symbol} ${currencyName} (${currencyCode})</option>`).join("")}</select><small>${escapeHTML(selectedCurrency[3])} · ${escapeHTML(selectedCurrency[4])}</small></div><div class="field"><label for="navigation_provider">默认导航</label><select id="navigation_provider" name="navigation_provider"><option value="appleMaps" ${navigation === "appleMaps" ? "selected" : ""}>Apple 地图</option><option value="googleMaps" ${navigation === "googleMaps" ? "selected" : ""}>Google Maps</option></select></div><div class="field"><label for="variflight_key">飞友 API 密钥</label><input id="variflight_key" name="variflight_key" type="password" autocomplete="off" value="${escapeHTML(flightKey)}" placeholder="粘贴你的飞友 API 密钥"><small>仅保存在此浏览器，不会同步到云端。</small></div></div><button class="button primary" type="submit">保存设置</button></form></section>
+  return `<section class="panel" style="max-width:760px"><div class="section-heading" style="margin-top:0"><h2>账户偏好</h2></div><form id="settingsForm"><div class="form-grid"><div class="field"><label for="language">语言偏好</label><select id="language" name="language_code"><option value="zh-Hans" ${languageCode === "zh-Hans" ? "selected" : ""}>简体中文</option><option value="zh-Hant" ${languageCode === "zh-Hant" ? "selected" : ""}>繁體中文</option><option value="en" ${languageCode === "en" ? "selected" : ""}>English</option><option value="ja" ${languageCode === "ja" ? "selected" : ""}>日本語</option><option value="ko" ${languageCode === "ko" ? "selected" : ""}>한국어</option><option value="es" ${languageCode === "es" ? "selected" : ""}>Español</option></select><small>偏好保存至云端；Web 界面目前使用简体中文。</small></div><div class="field"><label for="currency">国家和地区 · 本位币</label><select id="currency" name="currency_country_code">${countries.map(([code, country, currencyName, currencyEnglish, currencyCode, symbol]) => `<option value="${code}" ${settings.currency_country_code === code ? "selected" : ""}>${country} · ${symbol} ${currencyName} (${currencyCode})</option>`).join("")}</select><small>${escapeHTML(selectedCurrency[3])} · ${escapeHTML(selectedCurrency[4])}</small></div><div class="field"><label for="navigation_provider">默认导航</label><select id="navigation_provider" name="navigation_provider"><option value="appleMaps" ${navigation === "appleMaps" ? "selected" : ""}>Apple 地图</option><option value="googleMaps" ${navigation === "googleMaps" ? "selected" : ""}>Google Maps</option></select></div></div><p class="muted">航班查询由云端安全代理处理，无需在浏览器保存飞友密钥。</p><button class="button primary" type="submit">保存设置</button></form></section>
     <section class="panel expense-catalog-panel" style="max-width:760px;margin-top:14px"><div class="section-heading" style="margin-top:0"><div><h2>费用项目</h2><p>这些名称会用于财务结算选择。默认包含居间费和高速通行费。</p></div><button class="button small" data-action="add-expense-name">＋ 添加项目</button></div><div class="expense-name-list">${expenseCatalog().map(name => `<div class="expense-name-row"><input data-expense-name value="${escapeHTML(name)}"><button class="button small danger" data-action="remove-expense-name">−</button></div>`).join("")}</div><button class="button primary" data-action="save-expense-catalog" style="margin-top:12px">保存费用项目</button></section>
     <section class="panel" style="max-width:760px;margin-top:14px"><div class="section-heading" style="margin-top:0"><h2>云端账户</h2></div><div class="customer-info"><strong>${escapeHTML(state.user?.email || "")}</strong><small>使用同一云端账号与 iPhone 应用同步。</small></div></section>`;
 }
@@ -1284,20 +1445,26 @@ function flattenFlightFields(value, output = {}) {
 }
 
 async function lookupFlight(form) {
-  const apiKey = getAccountPreference("variflight-key");
   const number = form?.elements.flight_info.value.trim().toUpperCase().replace(/[^A-Z0-9]/g, "");
   const date = form?.elements.flight_date.value;
-  if (!apiKey) throw new Error("请先在设置中保存飞友 API 密钥。");
   if (!number || !date) throw new Error("请填写航班号和航班起飞日期。");
+  const session = await currentSession();
+  if (!session?.access_token || !state.user?.id) throw new Error("云端登录状态已失效，请重新登录后查询航班。");
+  if (!state.entitlementResolved || !["cloud", "sync"].includes(state.productEdition)) throw new Error("此账号当前没有有效的云端航班查询权限。");
   const button = form.querySelector('[data-action="lookup-flight"]');
   button.disabled = true; button.textContent = "查询中…";
   try {
-    const response = await fetch("https://ai.variflight.com/servers/aviation/mcp", {
-      method: "POST", headers: { "X-API-Key": apiKey, Accept: "application/json, text/event-stream", "Content-Type": "application/json", "MCP-Protocol-Version": "2025-03-26" },
-      body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/call", params: { name: "searchFlightsByNumber", arguments: { fnum: number, date } } }),
+    const response = await fetch(`${SUPABASE_URL}/functions/v1/variflight-lookup`, {
+      method: "POST",
+      headers: { apikey: SUPABASE_PUBLISHABLE_KEY, Authorization: `Bearer ${session.access_token}`, "Content-Type": "application/json" },
+      body: JSON.stringify({ flightNumber: number, flightDate: date }),
     });
     const raw = await response.text();
-    if (!response.ok) throw new Error(`飞友航班查询失败（HTTP ${response.status}）`);
+    if (!response.ok) {
+      let message = `航班查询失败（HTTP ${response.status}）。`;
+      try { message = JSON.parse(raw).error || message; } catch { /* keep the safe status message */ }
+      throw new Error(message);
+    }
     let payload;
     try { payload = JSON.parse(raw); } catch {
       const messages = raw.split(/\n\s*\n/).map(block => block.split("\n").filter(line => line.startsWith("data:")).map(line => line.slice(5).trim()).join("\n")).filter(Boolean);
@@ -1315,7 +1482,7 @@ async function lookupFlight(form) {
     if (!details && !fields.departure && !fields.arrival) throw new Error("查询成功，但响应中没有可显示的航班信息。");
     showToast("航班信息已查询并填入表单。");
   } catch (error) {
-    if (error instanceof TypeError) throw new Error("浏览器无法连接飞友接口。该接口可能不允许网页跨域请求；航班详情仍可手动填写。请勿把 API 密钥发给他人。");
+    if (error instanceof TypeError) throw new Error("无法连接云端航班查询服务，请检查网络后重试；航班详情仍可手动填写。");
     throw error;
   } finally { button.disabled = false; button.textContent = "查询航班"; }
 }
@@ -1392,15 +1559,28 @@ async function submitSettlement(form) {
   const trip = state.trips.find(item => item.id === draft.tripID);
   if (!trip) throw new Error("找不到对应的行程记录。");
   const now = new Date().toISOString();
-  await patch("trip_expenses", { trip_id: `eq.${trip.id}`, deleted_at: "is.null" }, { deleted_at: now, updated_at: now });
-  for (const [position, item] of draft.expenses.entries()) {
-    await upsert("trip_expenses", {
-      id: item.id || crypto.randomUUID(), owner_id: state.user.id, trip_id: trip.id,
-      is_addition: item.is_addition, title: item.title.trim(), amount: item.amount,
-      position, created_at: item.created_at || now, updated_at: now, deleted_at: null,
+  if (state.productEdition === "cloud") {
+    const { stops = [], expenses: _oldExpenses, ...tripColumns } = trip;
+    const updatedTrip = { ...tripColumns, price: draft.price, tip: draft.tip, is_paid: true, updated_at: now };
+    const expenseRows = draft.expenses.map((item, position) => ({
+      id: item.id || crypto.randomUUID(), is_addition: item.is_addition,
+      title: item.title.trim(), amount: item.amount, position,
+    }));
+    const stopRows = stops.map((item, position) => ({ id: item.id, position, address: item.address }));
+    await callOnlineRPC("save_online_trip", {
+      p_trip: updatedTrip, p_stops: stopRows, p_expenses: expenseRows,
     });
+  } else {
+    await patch("trip_expenses", { trip_id: `eq.${trip.id}`, deleted_at: "is.null" }, { deleted_at: now, updated_at: now });
+    for (const [position, item] of draft.expenses.entries()) {
+      await upsert("trip_expenses", {
+        id: item.id || crypto.randomUUID(), owner_id: state.user.id, trip_id: trip.id,
+        is_addition: item.is_addition, title: item.title.trim(), amount: item.amount,
+        position, created_at: item.created_at || now, updated_at: now, deleted_at: null,
+      });
+    }
+    await patch("trips", { id: `eq.${trip.id}` }, { price: draft.price, tip: draft.tip, is_paid: true, updated_at: now });
   }
-  await patch("trips", { id: `eq.${trip.id}` }, { price: draft.price, tip: draft.tip, is_paid: true, updated_at: now });
   state.settlementDraft = null;
   document.getElementById("modal-root")?.remove();
   await loadData(); renderApp(); showToast("财务结算已保存并同步。");
@@ -1485,6 +1665,11 @@ async function doLogin(form) {
     if (state.user && state.user.id !== data.user.id) resetAccountWorkspace();
     writeSession({ ...data, expires_at: Date.now() + (data.expires_in || 3600) * 1000 });
     state.user = data.user;
+    await resolveProductEdition();
+    if (state.productEdition === "cloud" && queuedOperationCount() > 0) {
+      await replayOfflineQueue();
+      if (queuedOperationCount() > 0) throw new Error("此账号有尚未提交的离线修改；请联网完成同步后再使用云端版。");
+    }
     await loadData();
     if (state.user?.id !== attemptedUserID) return;
     state.page = "home";
@@ -1493,7 +1678,11 @@ async function doLogin(form) {
   } catch (error) {
     if (attemptedUserID && state.user?.id !== attemptedUserID) return;
     state.error = error.message || "登录失败。";
-    clearSession();
+    if (attemptedUserID && queuedOperationCount() > 0) {
+      renderPendingSyncBlocker();
+    } else {
+      clearSession();
+    }
   } finally {
     state.busy = false;
     if (!state.session) renderLogin();
@@ -1508,12 +1697,23 @@ async function initialize() {
   const initializedUserID = session.user.id;
   state.user = session.user;
   try {
+    await resolveProductEdition();
+    if (state.user?.id !== initializedUserID) return;
+    if (state.productEdition === "cloud" && queuedOperationCount() > 0) {
+      await replayOfflineQueue();
+      if (state.user?.id !== initializedUserID) return;
+      if (queuedOperationCount() > 0) throw new Error("此账号有尚未提交的离线修改；请联网完成同步后再使用云端版。");
+    }
     await loadData();
     if (state.user?.id !== initializedUserID) return;
     renderApp();
     if (navigator.onLine) void replayOfflineQueue();
   } catch (error) {
     if (state.user?.id !== initializedUserID) return;
+    if (queuedOperationCount() > 0) {
+      renderPendingSyncBlocker();
+      return;
+    }
     if (isNetworkFailure(error) && state.user) {
       state.offline = true;
       document.getElementById("app").innerHTML = `<main class="offline-start"><section class="panel"><h1>暂时无法连接云端</h1><p>此浏览器还没有可用的离线资料缓存。请恢复网络后重试；登录状态和待同步修改会保留。</p><button class="button primary" data-action="retry-offline-load">重试连接</button></section></main>`;
@@ -1550,6 +1750,11 @@ async function markTrip(id, updates) {
 
 async function deleteTrip(id) {
   if (!confirm("确定删除这条行程吗？删除后会从各设备同步移除。")) return;
+  if (state.productEdition === "cloud") {
+    await callOnlineRPC("delete_online_trip", { p_trip_id: id });
+    await loadData(); renderApp(); showToast("行程已删除。");
+    return;
+  }
   const deletedAt = new Date().toISOString();
   await Promise.all([
     patch("trip_stops", { trip_id: `eq.${id}`, deleted_at: "is.null" }, { deleted_at: deletedAt, updated_at: deletedAt }),
@@ -1563,6 +1768,11 @@ async function deleteCustomer(id) {
   const customer = customerByID(id);
   if (state.trips.some(trip => trip.customer_id === id || (!trip.customer_id && trip.customer_name === customer?.name))) { showToast("该客户已有行程记录，不能删除。", true); return; }
   if (!confirm("确定删除这位客户吗？")) return;
+  if (state.productEdition === "cloud") {
+    await callOnlineRPC("delete_online_customer", { p_customer_id: id });
+    await loadData(); renderApp(); showToast("客户已删除。");
+    return;
+  }
   const deletedAt = new Date().toISOString();
   await Promise.all([
     patch("customer_contacts", { customer_id: `eq.${id}`, deleted_at: "is.null" }, { deleted_at: deletedAt, updated_at: deletedAt }),
@@ -1592,29 +1802,53 @@ async function submitCustomer(form) {
     created_at: existing?.created_at || now, updated_at: now, deleted_at: null,
   };
   if (Number(data.category) === 2 && (!row.travel_agency_code || !row.travel_agency_name)) throw new Error("请选择关联的旅行社。");
-  await upsert("customers", row);
   const oldContacts = contactRows(id);
   const oldAddresses = addressRows(id);
-  await Promise.all([
-    patch("customer_contacts", { customer_id: `eq.${id}`, deleted_at: "is.null" }, { deleted_at: now, updated_at: now }),
-    patch("customer_addresses", { customer_id: `eq.${id}`, deleted_at: "is.null" }, { deleted_at: now, updated_at: now }),
-  ]);
   const defaultContact = Number(new FormData(form).get("contact_default"));
   const defaultAddress = Number(new FormData(form).get("address_default"));
-  const addressTasks = [...form.querySelectorAll("[data-address-row]")].map(async (record, index) => {
+  const addresses = [...form.querySelectorAll("[data-address-row]")].flatMap((record, index) => {
     const address = record.querySelector('[name="address_value"]').value.trim();
-    if (!address) return;
+    if (!address) return [];
     const prior = oldAddresses.find(item => item.id === record.dataset.id);
-    await upsert("customer_addresses", { id: prior?.id || crypto.randomUUID(), owner_id: state.user.id, customer_id: id, label: record.querySelector('[name="address_label"]').value, address, is_default: index === defaultAddress, created_at: prior?.created_at || now, updated_at: now, deleted_at: null });
+    return [{
+      id: prior?.id || crypto.randomUUID(), label: record.querySelector('[name="address_label"]').value,
+      address, is_default: index === defaultAddress,
+    }];
   });
-  // Await all saved rows so customer edits are fully synchronized before the view refreshes.
-  const contactTasks = [...form.querySelectorAll("[data-contact-row]")].map(async (record, index) => {
+  const contacts = [...form.querySelectorAll("[data-contact-row]")].flatMap((record, index) => {
     const value = record.querySelector('[name="contact_value"]').value.trim();
-    if (!value) return;
+    if (!value) return [];
     const prior = oldContacts.find(item => item.id === record.dataset.id);
-    await upsert("customer_contacts", { id: prior?.id || crypto.randomUUID(), owner_id: state.user.id, customer_id: id, label: record.querySelector('[name="contact_type"]').value, contact_type: record.querySelector('[name="contact_type"]').value, value, is_default: index === defaultContact, created_at: prior?.created_at || now, updated_at: now, deleted_at: null });
+    const contactType = record.querySelector('[name="contact_type"]').value;
+    return [{
+      id: prior?.id || crypto.randomUUID(), label: contactType, contact_type: contactType,
+      value, is_default: index === defaultContact,
+    }];
   });
-  await Promise.all([...contactTasks, ...addressTasks]);
+  if (state.productEdition === "cloud") {
+    await callOnlineRPC("save_online_customer", {
+      p_customer: row, p_contacts: contacts, p_addresses: addresses,
+    });
+  } else {
+    await upsert("customers", row);
+    await Promise.all([
+      patch("customer_contacts", { customer_id: `eq.${id}`, deleted_at: "is.null" }, { deleted_at: now, updated_at: now }),
+      patch("customer_addresses", { customer_id: `eq.${id}`, deleted_at: "is.null" }, { deleted_at: now, updated_at: now }),
+    ]);
+    // Await all saved rows so customer edits are fully synchronized before the view refreshes.
+    await Promise.all([
+      ...contacts.map(contact => upsert("customer_contacts", {
+        ...contact, owner_id: state.user.id, customer_id: id,
+        created_at: oldContacts.find(item => item.id === contact.id)?.created_at || now,
+        updated_at: now, deleted_at: null,
+      })),
+      ...addresses.map(address => upsert("customer_addresses", {
+        ...address, owner_id: state.user.id, customer_id: id,
+        created_at: oldAddresses.find(item => item.id === address.id)?.created_at || now,
+        updated_at: now, deleted_at: null,
+      })),
+    ]);
+  }
   await loadData(); renderApp(); showToast(existing ? "客户资料已更新。" : "客户已新增。");
 }
 
@@ -1671,14 +1905,27 @@ async function submitTrip(form) {
   if (row.reminder_enabled && !row.reminder_at) throw new Error("请设置第一次提醒时间。");
   if (row.has_second_reminder && !row.second_reminder_at) throw new Error("请设置第二次提醒时间。");
   const stopAddresses = [...form.querySelectorAll("[data-stop-input]")].map(input => input.value.trim()).filter(Boolean);
-  await upsert("trips", row);
-  if (existing) {
-    const deletedAt = now;
-    await patch("trip_stops", { trip_id: `eq.${row.id}`, deleted_at: "is.null" }, { deleted_at: deletedAt, updated_at: deletedAt });
-  }
-  for (const [position, address] of stopAddresses.entries()) {
+  const stops = stopAddresses.map((address, position) => {
     const prior = existing?.stops?.[position];
-    await upsert("trip_stops", { id: prior?.id || crypto.randomUUID(), owner_id: state.user.id, trip_id: row.id, position, address, updated_at: now, deleted_at: null });
+    return { id: prior?.id || crypto.randomUUID(), position, address };
+  });
+  if (state.productEdition === "cloud") {
+    const expenses = (existing?.expenses || []).map((item, position) => ({
+      id: item.id, is_addition: Boolean(item.is_addition), title: item.title || "",
+      amount: Number(item.amount || 0), position,
+    }));
+    await callOnlineRPC("save_online_trip", { p_trip: row, p_stops: stops, p_expenses: expenses });
+  } else {
+    await upsert("trips", row);
+    if (existing) {
+      const deletedAt = now;
+      await patch("trip_stops", { trip_id: `eq.${row.id}`, deleted_at: "is.null" }, { deleted_at: deletedAt, updated_at: deletedAt });
+    }
+    for (const [position, stop] of stops.entries()) {
+      await upsert("trip_stops", {
+        ...stop, owner_id: state.user.id, trip_id: row.id, updated_at: now, deleted_at: null,
+      });
+    }
   }
   await loadData(); renderApp(); showToast(existing ? "行程已更新。" : "行程已新增。");
 }
@@ -1693,8 +1940,6 @@ async function submitSettings(form) {
   await upsert("user_settings", settings, "owner_id");
   if (state.user?.id !== ownerID) return;
   setAccountPreference("navigation", data.navigation_provider || "appleMaps");
-  if (data.variflight_key?.trim()) setAccountPreference("variflight-key", data.variflight_key.trim());
-  else removeAccountPreference("variflight-key");
   state.settings = settings; renderApp(); showToast("设置已保存。");
 }
 
@@ -1885,9 +2130,10 @@ document.addEventListener("click", async event => {
       await savePaymentMethods();
     }
     else if (action === "remove-payment-method") {
+      const removedMethod = state.paymentMethods.find(item => item.id === button.dataset.id);
       state.paymentMethods = state.paymentMethods.filter(item => item.id !== button.dataset.id);
       updatePageContent();
-      await savePaymentMethods();
+      await savePaymentMethods(false, [removedMethod?.qrImagePath].filter(Boolean));
     }
     else if (action === "add-card-qr") {
       state.businessCard.qrCodes.push({ id: crypto.randomUUID(), name: "", imageData: null });
@@ -1895,9 +2141,10 @@ document.addEventListener("click", async event => {
       await saveBusinessCard();
     }
     else if (action === "remove-card-qr") {
+      const removedQR = state.businessCard.qrCodes.find(item => item.id === button.dataset.id);
       state.businessCard.qrCodes = state.businessCard.qrCodes.filter(item => item.id !== button.dataset.id);
       updatePageContent();
-      await saveBusinessCard();
+      await saveBusinessCard(false, [removedQR?.imagePath].filter(Boolean));
     }
     else if (action === "card-style") {
       state.businessCard.style = Number(button.dataset.style);
@@ -1905,6 +2152,13 @@ document.addEventListener("click", async event => {
       await saveBusinessCard();
     }
     else if (action === "save-business-card") await saveBusinessCard();
+    else if (action === "remove-card-photo") {
+      const removedPath = state.businessCard.portraitPath;
+      state.businessCard.portraitData = null;
+      delete state.businessCard.portraitPath;
+      updatePageContent();
+      await saveBusinessCard(false, [removedPath].filter(Boolean));
+    }
     else if (action === "preview-card-qr") showQRPreview("名片二维码", state.businessCard.qrCodes.find(item => item.id === button.dataset.id)?.imageData, state.businessCard.qrCodes.find(item => item.id === button.dataset.id)?.name, "card", button.dataset.id);
     else if (action === "preview-payment-qr") showQRPreview("收款二维码", state.paymentMethods.find(item => item.id === button.dataset.id)?.qrImageData, state.paymentMethods.find(item => item.id === button.dataset.id)?.name, "payment", button.dataset.id);
     else if (action === "share-qr") await shareQR(button.dataset.kind, button.dataset.id);

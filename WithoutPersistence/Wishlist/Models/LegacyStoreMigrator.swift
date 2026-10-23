@@ -28,9 +28,9 @@ enum LegacyStoreMigrator {
         var errorDescription: String? {
             switch self {
             case .verificationFailed(let details):
-                "旧资料迁移未通过完整性检查（\(details)）。原数据库已保留，请勿删除或重置应用数据。"
+                String(format: String(localized: "旧资料迁移未通过完整性检查（%@）。原数据库已保留，请勿删除或重置应用数据。"), details)
             case .storesUnavailable:
-                "本机或云端资料库尚未准备好，请重试。"
+                String(localized: "本机或云端资料库尚未准备好，请重试。")
             }
         }
     }

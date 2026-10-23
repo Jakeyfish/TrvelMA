@@ -80,7 +80,6 @@ struct LoginView: View {
                         .pickerStyle(.segmented)
 
                         TextField("邮箱", text: $email)
-                            .keyboardDoneToolbar()
                             .textContentType(.emailAddress)
                             .keyboardType(.emailAddress)
                             .textInputAutocapitalization(.never)
@@ -95,10 +94,8 @@ struct LoginView: View {
                             Group {
                                 if isPasswordVisible {
                                     TextField("密码", text: $password)
-                                        .keyboardDoneToolbar()
                                 } else {
                                     SecureField("密码", text: $password)
-                                        .keyboardDoneToolbar()
                                 }
                             }
                             .textContentType(.password)
@@ -133,7 +130,7 @@ struct LoginView: View {
                     .overlay(RoundedRectangle(cornerRadius: 22).stroke(fieldBorder.opacity(0.8), lineWidth: 1))
 
                     if let errorMessage {
-                        Text(LocalizedStringKey(errorMessage))
+                        Text(errorMessage)
                             .font(.footnote)
                             .foregroundStyle(isDarkMode ? Color(red: 1, green: 0.72, blue: 0.72) : Color.red)
                             .frame(maxWidth: .infinity, alignment: .leading)
@@ -181,6 +178,7 @@ struct LoginView: View {
                 }
                 .padding(.horizontal, 24)
                 .padding(.vertical, 18)
+                .keyboardDoneToolbar()
             }
             .toolbar(.hidden, for: .navigationBar)
             .onAppear {
@@ -188,11 +186,11 @@ struct LoginView: View {
                     email = rememberedEmail
                 }
             }
-            .sheet(isPresented: $showRegister) {
+            .adaptiveFormPresentation(isPresented: $showRegister) {
                 RegisterView()
                     .environment(auth)
             }
-            .sheet(isPresented: $showForgotPassword) {
+            .adaptiveFormPresentation(isPresented: $showForgotPassword) {
                 ForgotPasswordView()
                     .environment(auth)
             }

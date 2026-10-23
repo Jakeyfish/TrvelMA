@@ -100,6 +100,10 @@ enum SupabaseDataSync {
     static func recordDeletion(table: String, id: String, context: ModelContext) {
         let key = "\(table):\(id.lowercased())"
         let scope = DataOwnership.activeScope
+        // Local-only accounts never create cloud deletion work. This keeps the
+        // standalone edition independent from Supabase even if a view reuses
+        // the shared delete helper.
+        guard DataOwnership.isCloudScope(scope) else { return }
         let descriptor = FetchDescriptor<CloudSyncDeletion>(predicate: #Predicate { $0.key == key && $0.ownerScope == scope })
         if let existing = try? context.fetch(descriptor).first {
             existing.deletedAt = .now
@@ -139,7 +143,7 @@ enum SupabaseDataSync {
         }
 
         private static var locale: Locale {
-            Locale(identifier: UserDefaults.standard.string(forKey: "appLanguage") ?? "zh-Hans")
+            AppLanguageSettings.currentLocale
         }
 
         private static func localized(_ key: String) -> String {
@@ -154,6 +158,38 @@ enum SupabaseDataSync {
         }
 
         private static func localizedKnownMessage(_ message: String) -> String {
+            switch message {
+            case "当前账号无权处理此同步冲突。":
+                return String(localized: "当前账号无权处理此同步冲突。", locale: locale)
+            case "客户资料仍在打开，请先退出客户资料页面，再接受删除。":
+                return String(localized: "客户资料仍在打开，请先退出客户资料页面，再接受删除。", locale: locale)
+            case "冲突版本无法读取，记录仍保留，请重新同步后再试。":
+                return String(localized: "冲突版本无法读取，记录仍保留，请重新同步后再试。", locale: locale)
+            case "行程冲突的记录编号无效，记录仍保留。":
+                return String(localized: "行程冲突的记录编号无效，记录仍保留。", locale: locale)
+            case "暂不支持处理此类同步冲突，记录仍保留。":
+                return String(localized: "暂不支持处理此类同步冲突，记录仍保留。", locale: locale)
+            case "发现双端修改，但无法保存云端版本；本机和云端数据均未覆盖。":
+                return String(localized: "发现双端修改，但无法保存云端版本；本机和云端数据均未覆盖。", locale: locale)
+            case "本机名片或收款方式数据无法读取，请重新保存后同步。":
+                return String(localized: "本机名片或收款方式数据无法读取，请重新保存后同步。", locale: locale)
+            case "名片头像属于另一个云端账号，请先在原账号同步图片，或重新选择头像。":
+                return String(localized: "名片头像属于另一个云端账号，请先在原账号同步图片，或重新选择头像。", locale: locale)
+            case "名片二维码属于另一个云端账号，请先在原账号同步图片，或重新选择二维码。":
+                return String(localized: "名片二维码属于另一个云端账号，请先在原账号同步图片，或重新选择二维码。", locale: locale)
+            case "收款二维码属于另一个云端账号，请先在原账号同步图片，或重新选择二维码。":
+                return String(localized: "收款二维码属于另一个云端账号，请先在原账号同步图片，或重新选择二维码。", locale: locale)
+            case "名片或收款二维码图片无法读取，请重新选择后同步。":
+                return String(localized: "名片或收款二维码图片无法读取，请重新选择后同步。", locale: locale)
+            case "云端图片读取失败，请检查 Storage 数据库迁移和私有存储权限。":
+                return String(localized: "云端图片读取失败，请检查 Storage 数据库迁移和私有存储权限。", locale: locale)
+            case "云端删除记录同步失败。":
+                return String(localized: "云端删除记录同步失败。", locale: locale)
+            case "云端图片上传失败，请检查 Storage 迁移和权限配置。":
+                return String(localized: "云端图片上传失败，请检查 Storage 迁移和权限配置。", locale: locale)
+            default:
+                break
+            }
             if message.localizedLowercase.contains("all object keys must match") {
                 return String(localized: "批量上传的数据字段格式不一致，请更新应用后重新同步。", locale: locale)
             }
@@ -163,6 +199,17 @@ enum SupabaseDataSync {
                 let table = String(message.dropFirst("云端数据表未就绪或权限配置不正确（".count).dropLast(2))
                 let format = String(localized: "云端数据表未就绪或权限配置不正确（%@）。", locale: locale)
                 return String(format: format, locale: locale, arguments: [table as CVarArg])
+            } else if message.hasPrefix("云端子记录同步失败（"), message.hasSuffix("）。") {
+                let table = String(message.dropFirst("云端子记录同步失败（".count).dropLast(2))
+                let format = String(localized: "云端子记录同步失败（%@）。", locale: locale)
+                return String(format: format, locale: locale, arguments: [table as CVarArg])
+            } else if message.hasPrefix("云端图片上传失败：") {
+                let detail = String(message.dropFirst("云端图片上传失败：".count))
+                if detail == "请检查 Storage 迁移和权限配置。" {
+                    return String(localized: "云端图片上传失败，请检查 Storage 迁移和权限配置。", locale: locale)
+                }
+                let format = String(localized: "云端图片上传失败：%@", locale: locale)
+                return String(format: format, locale: locale, arguments: [detail as CVarArg])
             }
             return message
         }
@@ -175,6 +222,9 @@ enum SupabaseDataSync {
         // Freeze the owner scope before any network await. The active account may
         // change while a request is in flight, but this sync must stay isolated.
         let scope = DataOwnership.cloudScope(for: normalizedEmail)
+        guard DataOwnership.isCloudScope(DataOwnership.activeScope), DataOwnership.activeScope == scope else {
+            throw SyncError.accountChanged
+        }
         let ownerID = try await currentUserID(accessToken: accessToken)
         guard DataOwnership.activeScope == scope else { throw SyncError.accountChanged }
         var summary = Summary()
@@ -204,7 +254,7 @@ enum SupabaseDataSync {
             summary.deleted += 1
         }
         if !tombstones.isEmpty { try context.save() }
-        summary.downloaded = try await pullAndMerge(context: context, token: accessToken, scope: scope)
+        summary.downloaded = try await pullAndMerge(context: context, token: accessToken, scope: scope, ownerID: ownerID)
         try deduplicateCustomerChildren(context: context, scope: scope)
         try context.save()
         let pendingConflicts = try context.fetch(FetchDescriptor<CloudSyncConflict>(predicate: #Predicate { $0.ownerScope == scope }))
@@ -222,13 +272,20 @@ enum SupabaseDataSync {
         }, token: accessToken)
         summary.agencies = agencies.count
 
-        try await upsert("customers", rows: customers.map { customer in
-            ["id": customer.uuid, "owner_id": ownerID, "name": customer.name, "email": customer.email,
-             "avatar_url": customer.avatarUrl, "source": customer.csource, "type": customer.type,
-             "category": customer.customerCategory, "travel_agency_code": customer.travelAgencyCode,
-             "travel_agency_name": customer.travelAgencyName, "language_preference": customer.languagePreference,
-             "remark": customer.remark, "created_at": iso(customer.createdAt), "updated_at": iso(customer.updateAt), "deleted_at": NSNull()]
-        }, token: accessToken)
+        var customerRows: [[String: Any]] = []
+        customerRows.reserveCapacity(customers.count)
+        for customer in customers {
+            var row: [String: Any] = ["id": customer.uuid, "owner_id": ownerID, "name": customer.name, "email": customer.email,
+                                      "avatar_url": "", "source": customer.csource, "type": customer.type,
+                                      "category": customer.customerCategory, "travel_agency_code": customer.travelAgencyCode,
+                                      "travel_agency_name": customer.travelAgencyName, "language_preference": customer.languagePreference,
+                                      "remark": customer.remark, "created_at": iso(customer.createdAt), "updated_at": iso(customer.updateAt), "deleted_at": NSNull()]
+            row["avatar_url"] = try await uploadCustomerAvatarIfNeeded(
+                customer.avatarUrl, customerID: customer.uuid, ownerID: ownerID, token: accessToken
+            )
+            customerRows.append(row)
+        }
+        try await upsert("customers", rows: customerRows, token: accessToken)
         summary.customers = customers.count
 
         var contacts: [[String: Any]] = []
@@ -270,6 +327,7 @@ enum SupabaseDataSync {
                 "flight_estimated_arrival_time": nullable(trip.flightEstimatedArrivalTime),
                 "flight_arrival_terminal": nullable(trip.flightArrivalTerminal),
                 "flight_baggage_carousel": nullable(trip.flightBaggageCarousel),
+                "flight_selection_snapshot": flightSelectionSnapshotValue(trip.flightSelectionSnapshotJSON),
                 "reminder_at": nullable(trip.reminderDateTime.map(iso)),
                 "second_reminder_at": nullable(trip.secondReminderDateTime.map(iso))
             ]
@@ -422,7 +480,12 @@ enum SupabaseDataSync {
     static func syncAccountAssets(email: String, accessToken: String) async throws {
         let normalizedEmail = email.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
         guard !normalizedEmail.isEmpty else { return }
+        let expectedScope = DataOwnership.cloudScope(for: normalizedEmail)
+        guard DataOwnership.isCloudScope(DataOwnership.activeScope), DataOwnership.activeScope == expectedScope else {
+            throw SyncError.accountChanged
+        }
         let ownerID = try await currentUserID(accessToken: accessToken)
+        guard DataOwnership.activeScope == expectedScope else { throw SyncError.accountChanged }
         let settings = try await fetchRows("user_settings", token: accessToken).first
         var update: [String: Any] = ["owner_id": ownerID]
         var downloadedAssets = false
@@ -451,12 +514,12 @@ enum SupabaseDataSync {
                     update[cloudKey] = json
                     update["\(cloudKey)_updated_at"] = iso(effectiveLocalDate)
                 } else if let remoteData {
-                    let localJSON = try await hydrateAccountImages(in: remoteData, asset: asset, token: accessToken)
+                    let localJSON = try await hydrateAccountImages(in: remoteData, asset: asset, ownerID: ownerID, token: accessToken)
                     AccountAssetStore.set(localJSON, for: asset, email: normalizedEmail, namespace: .cloud, updatedAt: remoteDate)
                     downloadedAssets = true
                 }
             } else if let remoteData, let remoteDate {
-                let localJSON = try await hydrateAccountImages(in: remoteData, asset: asset, token: accessToken)
+                let localJSON = try await hydrateAccountImages(in: remoteData, asset: asset, ownerID: ownerID, token: accessToken)
                 AccountAssetStore.set(localJSON, for: asset, email: normalizedEmail, namespace: .cloud, updatedAt: remoteDate)
                 downloadedAssets = true
             }
@@ -544,24 +607,35 @@ enum SupabaseDataSync {
     }
 
     private static func isAccountAssetPath(_ path: String, ownerID: String) -> Bool {
-        let components = path.split(separator: "/")
+        let allowedBytes = path.utf8.allSatisfy { byte in
+            (65...90).contains(byte) || (97...122).contains(byte) || (48...57).contains(byte)
+                || byte == 45 || byte == 46 || byte == 95 || byte == 47
+        }
+        guard allowedBytes else { return false }
+        let components = path.split(separator: "/", omittingEmptySubsequences: false)
         return components.count >= 2
-            && components.first.map { String($0) } == ownerID
-            && components.allSatisfy { $0 != "." && $0 != ".." }
+            && components.first.map(String.init) == ownerID
+            && components.allSatisfy { !$0.isEmpty && $0 != "." && $0 != ".." }
     }
 
     /// Downloads referenced private images into the existing on-device Codable
     /// models. This keeps older app UI code and offline access working unchanged.
-    private static func hydrateAccountImages(in data: Data, asset: AccountAssetStore.Asset, token: String) async throws -> Data {
+    private static func hydrateAccountImages(in data: Data, asset: AccountAssetStore.Asset, ownerID: String, token: String) async throws -> Data {
         guard var root = try JSONSerialization.jsonObject(with: data, options: [.fragmentsAllowed]) as? [String: Any] else { return data }
         switch asset {
         case .businessCard:
             if let path = root["portraitPath"] as? String, !path.isEmpty {
+                guard isAccountAssetPath(path, ownerID: ownerID) else {
+                    throw SyncError.response("云端图片读取失败，请检查 Storage 数据库迁移和私有存储权限。")
+                }
                 root["portraitData"] = try await downloadImage(path: path, token: token).base64EncodedString()
             }
             if var codes = root["qrCodes"] as? [[String: Any]] {
                 for index in codes.indices {
                     if let path = codes[index]["imagePath"] as? String, !path.isEmpty {
+                        guard isAccountAssetPath(path, ownerID: ownerID) else {
+                            throw SyncError.response("云端图片读取失败，请检查 Storage 数据库迁移和私有存储权限。")
+                        }
                         codes[index]["imageData"] = try await downloadImage(path: path, token: token).base64EncodedString()
                     }
                 }
@@ -571,6 +645,9 @@ enum SupabaseDataSync {
             if var methods = root["methods"] as? [[String: Any]] {
                 for index in methods.indices {
                     if let path = methods[index]["qrImagePath"] as? String, !path.isEmpty {
+                        guard isAccountAssetPath(path, ownerID: ownerID) else {
+                            throw SyncError.response("云端图片读取失败，请检查 Storage 数据库迁移和私有存储权限。")
+                        }
                         methods[index]["qrImageData"] = try await downloadImage(path: path, token: token).base64EncodedString()
                     }
                 }
@@ -605,6 +682,68 @@ enum SupabaseDataSync {
         try await validateStorageResponse(request)
     }
 
+    /// Customer.avatarUrl remains a local document path for the existing UI,
+    /// while Supabase stores a stable owner-scoped object path in avatar_url.
+    private static func uploadCustomerAvatarIfNeeded(
+        _ localPath: String, customerID: String, ownerID: String, token: String
+    ) async throws -> String {
+        guard !localPath.isEmpty else { return "" }
+        guard UUID(uuidString: customerID) != nil else { throw SyncError.response("客户头像对应的客户编号无效。") }
+
+        if isAccountAssetPath(localPath, ownerID: ownerID) {
+            guard localPath.hasPrefix("\(ownerID)/customers/\(customerID.lowercased())/avatars/") else {
+                throw SyncError.response("客户头像路径与当前客户不匹配，已阻止同步。")
+            }
+            return localPath
+        }
+
+        guard let fileURL = localCustomerAvatarURL(localPath) else {
+            throw SyncError.response("本机客户头像路径无效，未上传任何数据。")
+        }
+        guard let imageData = try? Data(contentsOf: fileURL), !imageData.isEmpty,
+              let image = UIImage(data: imageData),
+              let normalizedJPEG = image.jpegData(compressionQuality: 0.88) else { return "" }
+        let digest = SHA256.hash(data: normalizedJPEG).map { String(format: "%02x", $0) }.joined()
+        let objectPath = "\(ownerID)/customers/\(customerID.lowercased())/avatars/\(digest).jpg"
+        try await uploadImage(base64: imageData.base64EncodedString(), path: objectPath, token: token)
+        return objectPath
+    }
+
+    private static func localCustomerAvatarURL(_ path: String) -> URL? {
+        if path.hasPrefix("/") {
+            return FileManager.default.fileExists(atPath: path) ? URL(fileURLWithPath: path) : nil
+        }
+        let components = path.split(separator: "/", omittingEmptySubsequences: false)
+        guard !components.isEmpty, !components.contains(".."), !components.contains(".") else { return nil }
+        let documents = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
+        let url = documents.appendingPathComponent(path)
+        return FileManager.default.fileExists(atPath: url.path) ? url : nil
+    }
+
+    /// Downloads a cloud avatar into a cache folder unique to both account and
+    /// customer, so CustomerAvatarView can render it exactly like local photos.
+    private static func cacheCustomerAvatar(
+        _ objectPath: String, customerID: String, ownerID: String, token: String
+    ) async throws -> String {
+        guard UUID(uuidString: customerID) != nil,
+              isAccountAssetPath(objectPath, ownerID: ownerID),
+              objectPath.hasPrefix("\(ownerID)/customers/\(customerID.lowercased())/avatars/") else {
+            throw SyncError.response("客户头像不属于当前云端账号，已阻止读取。")
+        }
+        let fileName = URL(fileURLWithPath: objectPath).lastPathComponent
+        let localPath = "CustomerAvatars/\(ownerID.lowercased())/\(customerID.lowercased())/\(fileName)"
+        let documents = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
+        let destination = documents.appendingPathComponent(localPath)
+        if FileManager.default.fileExists(atPath: destination.path) { return localPath }
+
+        let imageData = try await downloadImage(path: objectPath, token: token)
+        try FileManager.default.createDirectory(
+            at: destination.deletingLastPathComponent(), withIntermediateDirectories: true
+        )
+        try imageData.write(to: destination, options: .atomic)
+        return localPath
+    }
+
     private static func downloadImage(path: String, token: String) async throws -> Data {
         var request = storageRequest(path: path, token: token, operation: "object/authenticated")
         request.httpMethod = "GET"
@@ -620,6 +759,7 @@ enum SupabaseDataSync {
         var request = URLRequest(url: SupabaseAuthClient.endpoint(path: "/storage/v1/\(operation)/account-assets/\(encodedPath)"))
         request.setValue(SupabaseAuthClient.publishableKey, forHTTPHeaderField: "apikey")
         request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        SupabaseAuthClient.applyAccountDeviceHeader(to: &request)
         return request
     }
 
@@ -639,6 +779,7 @@ enum SupabaseDataSync {
         request.httpMethod = "POST"
         request.setValue(SupabaseAuthClient.publishableKey, forHTTPHeaderField: "apikey")
         request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        SupabaseAuthClient.applyAccountDeviceHeader(to: &request)
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.setValue("resolution=merge-duplicates,return=minimal", forHTTPHeaderField: "Prefer")
         request.httpBody = try JSONSerialization.data(withJSONObject: row, options: [.fragmentsAllowed])
@@ -676,13 +817,38 @@ enum SupabaseDataSync {
     }
 
     @MainActor
-    private static func pullAndMerge(context: ModelContext, token: String, scope: String) async throws -> Int {
+    private static func pullAndMerge(context: ModelContext, token: String, scope: String, ownerID: String) async throws -> Int {
         var changed = 0
         let agencies = try context.fetch(FetchDescriptor<TravelAgency>(predicate: #Predicate { $0.ownerScope == scope }))
         let customers = try context.fetch(FetchDescriptor<Custumer>(predicate: #Predicate { $0.ownerScope == scope }))
         let trips = try context.fetch(FetchDescriptor<TripBookingRecord>(predicate: #Predicate { $0.ownerScope == scope }))
         let cloudAgencies = try await fetchRows("travel_agencies", token: token)
-        let cloudCustomers = try await fetchRows("customers", token: token)
+        let fetchedCloudCustomers = try await fetchRows("customers", token: token)
+        var cloudCustomers: [[String: Any]] = []
+        cloudCustomers.reserveCapacity(fetchedCloudCustomers.count)
+        for var row in fetchedCloudCustomers {
+            guard !isDeleted(row), let customerID = string(row, "id") else {
+                cloudCustomers.append(row)
+                continue
+            }
+            let remotePath = string(row, "avatar_url") ?? ""
+            if !remotePath.isEmpty, isAccountAssetPath(remotePath, ownerID: ownerID) {
+                row["avatar_url"] = try await cacheCustomerAvatar(
+                    remotePath, customerID: customerID, ownerID: ownerID, token: token
+                )
+            } else if !remotePath.isEmpty {
+                // If this is the original device, retain its still-available
+                // legacy file so the next upload can migrate it to Storage.
+                let localPath = customers.first(where: { $0.uuid.caseInsensitiveCompare(customerID) == .orderedSame })?.avatarUrl
+                if localPath == remotePath, let localPath, localCustomerAvatarURL(localPath) != nil {
+                    row["avatar_url"] = localPath
+                } else {
+                    // A device-local path from an older sync is not portable.
+                    row["avatar_url"] = ""
+                }
+            }
+            cloudCustomers.append(row)
+        }
         let cloudTrips = try await fetchRows("trips", token: token)
         let agencyMap = Dictionary(uniqueKeysWithValues: agencies.map { ($0.uuid.lowercased(), $0) })
         var customerMap = Dictionary(uniqueKeysWithValues: customers.map { ($0.uuid.lowercased(), $0) })
@@ -899,6 +1065,7 @@ enum SupabaseDataSync {
         request.httpMethod = "GET"
         request.setValue(SupabaseAuthClient.publishableKey, forHTTPHeaderField: "apikey")
         request.setValue("Bearer \(accessToken)", forHTTPHeaderField: "Authorization")
+        SupabaseAuthClient.applyAccountDeviceHeader(to: &request)
         let (data, response) = try await URLSession.shared.data(for: request)
         guard let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode),
               let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
@@ -919,6 +1086,7 @@ enum SupabaseDataSync {
             request.httpMethod = "GET"
             request.setValue(SupabaseAuthClient.publishableKey, forHTTPHeaderField: "apikey")
             request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+            SupabaseAuthClient.applyAccountDeviceHeader(to: &request)
             request.setValue("items", forHTTPHeaderField: "Range-Unit")
             request.setValue("\(offset)-\(offset + pageSize - 1)", forHTTPHeaderField: "Range")
             let (data, response) = try await URLSession.shared.data(for: request)
@@ -941,6 +1109,7 @@ enum SupabaseDataSync {
         request.httpMethod = "PATCH"
         request.setValue(SupabaseAuthClient.publishableKey, forHTTPHeaderField: "apikey")
         request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        SupabaseAuthClient.applyAccountDeviceHeader(to: &request)
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.setValue("return=minimal", forHTTPHeaderField: "Prefer")
         request.httpBody = try JSONSerialization.data(withJSONObject: ["deleted_at": iso(deletion.deletedAt), "updated_at": iso(deletion.deletedAt)])
@@ -962,6 +1131,7 @@ enum SupabaseDataSync {
             request.httpMethod = "PATCH"
             request.setValue(SupabaseAuthClient.publishableKey, forHTTPHeaderField: "apikey")
             request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+            SupabaseAuthClient.applyAccountDeviceHeader(to: &request)
             request.setValue("application/json", forHTTPHeaderField: "Content-Type")
             request.setValue("return=minimal", forHTTPHeaderField: "Prefer")
             request.httpBody = try JSONSerialization.data(withJSONObject: ["deleted_at": iso(.now), "updated_at": iso(.now)])
@@ -1008,6 +1178,7 @@ enum SupabaseDataSync {
         trip.flightEstimatedArrivalTime = string(row, "flight_estimated_arrival_time")
         trip.flightArrivalTerminal = string(row, "flight_arrival_terminal")
         trip.flightBaggageCarousel = string(row, "flight_baggage_carousel")
+        trip.flightSelectionSnapshotJSON = flightSelectionSnapshotString(row["flight_selection_snapshot"])
         trip.memo = string(row, "memo") ?? ""
         trip.price = number(row, "price") ?? 0
         trip.tip = number(row, "tip") ?? 0
@@ -1044,6 +1215,7 @@ enum SupabaseDataSync {
         form.flightEstimatedArrivalTime = string(row, "flight_estimated_arrival_time") ?? ""
         form.flightArrivalTerminal = string(row, "flight_arrival_terminal") ?? ""
         form.flightBaggageCarousel = string(row, "flight_baggage_carousel") ?? ""
+        form.flightSelectionSnapshotJSON = flightSelectionSnapshotString(row["flight_selection_snapshot"])
         form.TripMemo = string(row, "memo") ?? ""
         form.TripPrice = number(row, "price") ?? 0
         form.isPaid = boolean(row, "is_paid")
@@ -1075,6 +1247,7 @@ enum SupabaseDataSync {
         request.httpMethod = "POST"
         request.setValue(SupabaseAuthClient.publishableKey, forHTTPHeaderField: "apikey")
         request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        SupabaseAuthClient.applyAccountDeviceHeader(to: &request)
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.setValue("resolution=merge-duplicates,return=minimal", forHTTPHeaderField: "Prefer")
         request.httpBody = try JSONSerialization.data(withJSONObject: rows, options: [.fragmentsAllowed])
@@ -1093,6 +1266,19 @@ enum SupabaseDataSync {
 
     private static func nullable<T>(_ value: T?) -> Any {
         value.map { $0 as Any } ?? NSNull()
+    }
+
+    private static func flightSelectionSnapshotValue(_ json: String) -> Any {
+        guard let data = json.data(using: .utf8),
+              let value = try? JSONSerialization.jsonObject(with: data) else { return NSNull() }
+        return value
+    }
+
+    private static func flightSelectionSnapshotString(_ value: Any?) -> String {
+        guard let value, !(value is NSNull), JSONSerialization.isValidJSONObject(value),
+              let data = try? JSONSerialization.data(withJSONObject: value),
+              let json = String(data: data, encoding: .utf8) else { return "" }
+        return json
     }
 
     private static func stableUUID(_ value: String) -> String {

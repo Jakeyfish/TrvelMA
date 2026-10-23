@@ -3,16 +3,51 @@ import Observation
 import Security
 import SwiftData
 import UserNotifications
+import OSLog
 
 /// Supports on-device accounts and Supabase email/password authentication.
 @Observable
 final class AuthViewModel {
+    private let entitlementLogger = Logger(subsystem: "com.yunshengtech.travelmanager", category: "CloudEntitlement")
     private(set) var isLoggedIn = false
     private(set) var currentEmail = ""
     private(set) var currentSalutation = ""
     private(set) var currentPhone = ""
     private(set) var isCloudAccount = false
     private(set) var isCloudSyncInProgress = false
+    private(set) var serverEntitlement: SupabaseAuthClient.AccountEntitlement?
+    private(set) var entitlementLookupFailed = false
+    private(set) var deviceLimitReached = false
+    private(set) var deviceRegistrationVerified = false
+    private(set) var requiresCloudReauthentication = false
+    private(set) var entitlementLookupCompleted = false
+    private(set) var entitlementServiceAvailable = false
+    private(set) var entitlementLegacyMode = false
+    var productEdition: ProductEdition {
+        guard isCloudAccount else { return .local }
+        guard entitlementLookupCompleted else { return .sync }
+        if entitlementLegacyMode { return .sync }
+        guard let entitlement = serverEntitlement, entitlement.isCurrentlyActive else { return .local }
+        return entitlement.edition
+    }
+    var canUseCurrentCloudEdition: Bool {
+        guard isCloudAccount, entitlementLookupCompleted else { return false }
+        if entitlementLegacyMode { return true }
+        guard deviceRegistrationVerified else { return false }
+        guard let entitlement = serverEntitlement, entitlement.isCurrentlyActive else { return false }
+        if entitlement.edition == .cloud {
+            // Online-only accounts must have a fresh server verification and
+            // a usable session; a cached grant alone must never open cloud UI.
+            return !entitlementLookupFailed && cloudAccessToken != nil
+        }
+        return entitlement.edition == .sync
+    }
+
+    var shouldBlockCloudClient: Bool {
+        isCloudAccount && entitlementLookupCompleted && !canUseCurrentCloudEdition
+    }
+    private var entitlementLoadedForEmail = ""
+    private var isForegroundEntitlementCheckInProgress = false
 
     func setCloudSyncInProgress(_ inProgress: Bool) {
         isCloudSyncInProgress = inProgress
@@ -23,21 +58,221 @@ final class AuthViewModel {
     }
 
     func refreshCloudAccessToken() async -> String? {
-        guard isCloudAccount,
-              let refreshToken = SecureCloudSession.load(key: "auth.cloud.refreshToken") else { return nil }
+        guard isCloudAccount else { return nil }
+        guard let refreshToken = SecureCloudSession.load(key: "auth.cloud.refreshToken") else {
+            entitlementLogger.error("Session refresh unavailable because no refresh token was stored")
+            requiresCloudReauthentication = true
+            return nil
+        }
         do {
             let response = try await SupabaseAuthClient.refreshSession(refreshToken: refreshToken)
-            guard let access = response.accessToken, let refresh = response.refreshToken,
-                  SecureCloudSession.save(access, key: "auth.cloud.accessToken"),
-                  SecureCloudSession.save(refresh, key: "auth.cloud.refreshToken") else { return nil }
+            guard let access = response.accessToken, let refresh = response.refreshToken else {
+                entitlementLogger.error("Session refresh response did not contain both tokens")
+                return nil
+            }
+            guard SecureCloudSession.save(access, key: "auth.cloud.accessToken"),
+                  SecureCloudSession.save(refresh, key: "auth.cloud.refreshToken") else {
+                entitlementLogger.error("Session refresh succeeded but the renewed tokens could not be stored")
+                return nil
+            }
             if let phone = response.user?.userMetadata?.phone {
                 currentPhone = phone
                 UserDefaults.standard.set(phone, forKey: sessionPhoneKey)
             }
             return access
         } catch {
+            if let authError = error as? SupabaseAuthClient.AuthError,
+               case let .response(statusCode, _) = authError {
+                entitlementLogger.error("Session refresh failed with HTTP status \(statusCode, privacy: .public)")
+                if statusCode == 400 || statusCode == 401 || statusCode == 403 {
+                    requiresCloudReauthentication = true
+                }
+            } else {
+                let diagnostic = error as NSError
+                entitlementLogger.error("Session refresh failed in \(diagnostic.domain, privacy: .public), code \(diagnostic.code, privacy: .public)")
+            }
             return nil
         }
+    }
+
+    /// Loads the server-managed edition for this account before opening its
+    /// account-scoped data route.
+    func loadServerEntitlementIfNeeded(retryCount: Int = 0) async {
+        guard isCloudAccount else { return }
+        let email = Self.normalize(currentEmail)
+        guard !email.isEmpty, entitlementLoadedForEmail != email else { return }
+        entitlementLoadedForEmail = email
+        serverEntitlement = nil
+        entitlementLookupFailed = false
+        deviceLimitReached = false
+        deviceRegistrationVerified = false
+        requiresCloudReauthentication = false
+        entitlementLookupCompleted = false
+        entitlementServiceAvailable = false
+        entitlementLegacyMode = false
+        let cacheKey = "account.entitlement.cache.v1.\(email)"
+        if let cached = UserDefaults.standard.data(forKey: cacheKey),
+           let entitlement = try? JSONDecoder().decode(SupabaseAuthClient.AccountEntitlement.self, from: cached) {
+            serverEntitlement = entitlement
+            entitlementServiceAvailable = true
+        }
+
+        var token = cloudAccessToken
+        if token == nil {
+            token = await refreshCloudAccessToken()
+        }
+        guard let initialToken = token else {
+            entitlementLogger.error("Entitlement lookup skipped because no usable access token was available")
+            entitlementLookupFailed = true
+            entitlementLookupCompleted = true
+            return
+        }
+        do {
+            let lookup: SupabaseAuthClient.AccountEntitlementLookup
+            var verifiedToken = initialToken
+            do {
+                lookup = try await SupabaseAuthClient.fetchAccountEntitlement(accessToken: initialToken)
+            } catch let error as SupabaseAuthClient.AuthError {
+                guard case let .response(statusCode, _) = error, statusCode == 401 else { throw error }
+                guard let refreshedToken = await refreshCloudAccessToken() else { throw error }
+                verifiedToken = refreshedToken
+                lookup = try await SupabaseAuthClient.fetchAccountEntitlement(accessToken: refreshedToken)
+            }
+            guard isCloudAccount, Self.normalize(currentEmail) == email else { return }
+            entitlementLookupFailed = false
+            switch lookup {
+            case .legacyTableUnavailable:
+                entitlementServiceAvailable = false
+                entitlementLegacyMode = true
+                deviceRegistrationVerified = true
+                entitlementLookupCompleted = true
+                serverEntitlement = nil
+                UserDefaults.standard.removeObject(forKey: cacheKey)
+            case .noGrant:
+                entitlementServiceAvailable = true
+                entitlementLegacyMode = false
+                deviceRegistrationVerified = false
+                entitlementLookupCompleted = true
+                serverEntitlement = nil
+                UserDefaults.standard.removeObject(forKey: cacheKey)
+            case .granted(let entitlement):
+                entitlementServiceAvailable = true
+                entitlementLegacyMode = false
+                serverEntitlement = entitlement
+                guard entitlement.isCurrentlyActive,
+                      entitlement.edition == .cloud || entitlement.edition == .sync else {
+                    deviceRegistrationVerified = false
+                    entitlementLookupCompleted = true
+                    break
+                }
+                do {
+                    try await SupabaseAuthClient.registerCurrentDevice(accessToken: verifiedToken)
+                    guard isCloudAccount, Self.normalize(currentEmail) == email else { return }
+                    deviceRegistrationVerified = true
+                    deviceLimitReached = false
+                    entitlementLookupCompleted = true
+                } catch {
+                    guard isCloudAccount, Self.normalize(currentEmail) == email else { return }
+                    deviceRegistrationVerified = false
+                    if let authError = error as? SupabaseAuthClient.AuthError,
+                       case .deviceLimitReached = authError {
+                        deviceLimitReached = true
+                    }
+                    entitlementLookupFailed = true
+                    entitlementLookupCompleted = true
+                    entitlementLogger.error("Device registration failed: \(error.localizedDescription, privacy: .public)")
+                    return
+                }
+                if let data = try? JSONEncoder().encode(entitlement) {
+                    UserDefaults.standard.set(data, forKey: cacheKey)
+                }
+            }
+        } catch {
+            guard isCloudAccount, Self.normalize(currentEmail) == email else { return }
+            // SwiftUI may cancel the startup task while the app switches its
+            // account-scoped store. URLSession reports that as -999. It is not
+            // an entitlement failure, and the same account must be eligible
+            // for a fresh lookup when the replacement task starts.
+            let diagnostic = error as NSError
+            if Task.isCancelled || (diagnostic.domain == NSURLErrorDomain && diagnostic.code == NSURLErrorCancelled) {
+                entitlementLoadedForEmail = ""
+                // If SwiftUI tears down the caller while this account is
+                // still active, expose a retry state instead of leaving the
+                // root view on its indefinite verification spinner. Normal
+                // storage-mode changes no longer cancel this task.
+                entitlementLookupFailed = true
+                entitlementLookupCompleted = true
+                entitlementLogger.debug("Entitlement lookup was cancelled; allowing a retry")
+                return
+            }
+            if retryCount == 0, Self.isTransientEntitlementError(error) {
+                entitlementLogger.warning("Entitlement lookup had a transient failure; retrying once")
+                entitlementLoadedForEmail = ""
+                do {
+                    try await Task.sleep(for: .milliseconds(600))
+                } catch {
+                    entitlementLoadedForEmail = ""
+                    entitlementLookupFailed = true
+                    entitlementLookupCompleted = true
+                    entitlementLogger.debug("Entitlement retry was cancelled")
+                    return
+                }
+                guard isCloudAccount, Self.normalize(currentEmail) == email else { return }
+                guard !Task.isCancelled else {
+                    entitlementLoadedForEmail = ""
+                    entitlementLookupFailed = true
+                    entitlementLookupCompleted = true
+                    entitlementLogger.debug("Entitlement retry was cancelled before it started")
+                    return
+                }
+                await loadServerEntitlementIfNeeded(retryCount: retryCount + 1)
+                return
+            }
+            if let authError = error as? SupabaseAuthClient.AuthError,
+               case let .response(statusCode, _) = authError {
+                entitlementLogger.error("Entitlement lookup failed with HTTP status \(statusCode, privacy: .public)")
+                if statusCode == 401 || statusCode == 403 {
+                    requiresCloudReauthentication = true
+                }
+            } else {
+                entitlementLogger.error("Entitlement lookup failed in \(diagnostic.domain, privacy: .public), code \(diagnostic.code, privacy: .public)")
+            }
+            entitlementLookupFailed = true
+            entitlementLookupCompleted = true
+            entitlementServiceAvailable = serverEntitlement != nil
+        }
+    }
+
+    private static func isTransientEntitlementError(_ error: Error) -> Bool {
+        if let authError = error as? SupabaseAuthClient.AuthError,
+           case let .response(statusCode, _) = authError {
+            return statusCode == 408 || statusCode == 425 || (500...599).contains(statusCode)
+        }
+        let diagnostic = error as NSError
+        return diagnostic.domain == NSURLErrorDomain && diagnostic.code != NSURLErrorCancelled
+    }
+
+    func retryServerEntitlementLookup() async {
+        entitlementLoadedForEmail = ""
+        await loadServerEntitlementIfNeeded()
+    }
+
+    /// Revalidates an online-only account when the app returns to the foreground.
+    /// Device access can be revoked while this app is suspended on another device.
+    func recheckOnlineOnlyAccessOnForeground() async {
+        guard isCloudAccount,
+              entitlementLookupCompleted,
+              serverEntitlement?.edition == .cloud,
+              !isForegroundEntitlementCheckInProgress else { return }
+
+        isForegroundEntitlementCheckInProgress = true
+        defer { isForegroundEntitlementCheckInProgress = false }
+
+        // Fail closed while the server rechecks the grant and device registration.
+        deviceRegistrationVerified = false
+        entitlementLookupCompleted = false
+        entitlementLoadedForEmail = ""
+        await loadServerEntitlementIfNeeded()
     }
 
     private let sessionEmailKey = "auth.session.email"
@@ -55,7 +290,7 @@ final class AuthViewModel {
     func login(email: String, password: String, context: ModelContext) -> String? {
         let normalizedEmail = Self.normalize(email)
         guard Self.isValidEmail(normalizedEmail), !password.isEmpty else {
-            return "请输入有效的邮箱和密码。"
+            return Self.localized("请输入有效的邮箱和密码。")
         }
         let localAccount = account(for: normalizedEmail, in: context)
         let storedPassword = localAccount.flatMap { PasswordKeychain.password(for: $0.email) }
@@ -63,14 +298,14 @@ final class AuthViewModel {
             && password == "123456"
             && storedPassword == nil
         guard storedPassword == password || isLegacyDemoLogin else {
-            return "邮箱或密码不正确。"
+            return Self.localized("邮箱或密码不正确。")
         }
         let localScope = DataOwnership.localScope(email: normalizedEmail)
         DataOwnership.activateLocal(scope: localScope)
         do {
             try DataOwnership.adoptLegacyLocalRecords(context: context, scope: localScope)
         } catch {
-            return "迁移本机资料失败：\(error.localizedDescription)"
+            return Self.localized("迁移本机资料失败，请返回后重试。")
         }
         currentEmail = normalizedEmail
         currentSalutation = localAccount?.salutation ?? ""
@@ -85,19 +320,19 @@ final class AuthViewModel {
     func loginToCloud(email: String, password: String) async -> String? {
         let normalizedEmail = Self.normalize(email)
         guard Self.isValidEmail(normalizedEmail), !password.isEmpty else {
-            return "请输入有效的邮箱和密码。"
+            return Self.localized("请输入有效的邮箱和密码。")
         }
         do {
             let response = try await SupabaseAuthClient.signIn(email: normalizedEmail, password: password)
             guard let accessToken = response.accessToken, let refreshToken = response.refreshToken else {
-                return "登录未完成，请检查邮箱验证状态后重试。"
+                return Self.localized("登录未完成，请检查邮箱验证状态后重试。")
             }
             let accessSaved = SecureCloudSession.save(accessToken, key: "auth.cloud.accessToken")
             let refreshSaved = SecureCloudSession.save(refreshToken, key: "auth.cloud.refreshToken")
             guard accessSaved && refreshSaved else {
                 SecureCloudSession.delete(key: "auth.cloud.accessToken")
                 SecureCloudSession.delete(key: "auth.cloud.refreshToken")
-                return "无法在此设备安全保存云端登录状态，请检查钥匙串设置后重试。"
+                return Self.localized("无法在此设备安全保存云端登录状态，请检查钥匙串设置后重试。")
             }
             currentEmail = response.user?.email ?? normalizedEmail
             currentSalutation = response.user?.userMetadata?.salutation ?? ""
@@ -108,15 +343,15 @@ final class AuthViewModel {
             saveSession(for: currentEmail, salutation: currentSalutation, phone: currentPhone, isCloud: true)
             return nil
         } catch {
-            return error.localizedDescription
+            return Self.cloudErrorMessage(error)
         }
     }
 
     func registerCloud(email: String, salutation: String, phone: String, password: String) async -> String? {
         let normalizedEmail = Self.normalize(email)
-        guard Self.isValidEmail(normalizedEmail) else { return "请输入有效的邮箱地址。" }
-        guard phone.filter(\.isNumber).count >= 6 else { return "请输入有效的手机号。" }
-        guard password.count >= 6 else { return "密码至少需要 6 位。" }
+        guard Self.isValidEmail(normalizedEmail) else { return Self.localized("请输入有效的邮箱地址。") }
+        guard phone.filter(\.isNumber).count >= 6 else { return Self.localized("请输入有效的手机号。") }
+        guard password.count >= 6 else { return Self.localized("密码至少需要 6 位。") }
         do {
             let response = try await SupabaseAuthClient.signUp(
                 email: normalizedEmail,
@@ -125,14 +360,14 @@ final class AuthViewModel {
                 phone: phone
             )
             guard let accessToken = response.accessToken, let refreshToken = response.refreshToken else {
-                return "注册成功。请先到邮箱完成验证，再返回登录。"
+                return Self.localized("注册成功。请先到邮箱完成验证，再返回登录。")
             }
             let accessSaved = SecureCloudSession.save(accessToken, key: "auth.cloud.accessToken")
             let refreshSaved = SecureCloudSession.save(refreshToken, key: "auth.cloud.refreshToken")
             guard accessSaved && refreshSaved else {
                 SecureCloudSession.delete(key: "auth.cloud.accessToken")
                 SecureCloudSession.delete(key: "auth.cloud.refreshToken")
-                return "账号已创建，但无法在此设备安全保存登录状态。请重新登录。"
+                return Self.localized("账号已创建，但无法在此设备安全保存登录状态。请重新登录。")
             }
             currentEmail = response.user?.email ?? normalizedEmail
             currentSalutation = response.user?.userMetadata?.salutation ?? ""
@@ -143,29 +378,29 @@ final class AuthViewModel {
             saveSession(for: currentEmail, salutation: currentSalutation, phone: currentPhone, isCloud: true)
             return nil
         } catch {
-            return error.localizedDescription
+            return Self.cloudErrorMessage(error)
         }
     }
 
     func sendCloudPasswordRecovery(email: String) async -> String? {
         let normalizedEmail = Self.normalize(email)
-        guard Self.isValidEmail(normalizedEmail) else { return "请输入有效的邮箱地址。" }
+        guard Self.isValidEmail(normalizedEmail) else { return Self.localized("请输入有效的邮箱地址。") }
         do {
             try await SupabaseAuthClient.requestPasswordRecovery(email: normalizedEmail)
             return nil
         } catch {
-            return error.localizedDescription
+            return Self.cloudErrorMessage(error)
         }
     }
 
     func register(email: String, salutation: String, phone: String, password: String, context: ModelContext) -> String? {
         let normalizedEmail = Self.normalize(email)
-        guard Self.isValidEmail(normalizedEmail) else { return "请输入有效的邮箱地址。" }
-        guard phone.filter(\.isNumber).count >= 6 else { return "请输入有效的手机号。" }
-        guard password.count >= 6 else { return "密码至少需要 6 位。" }
-        guard account(for: normalizedEmail, in: context) == nil else { return "该邮箱已注册，请直接登录。" }
+        guard Self.isValidEmail(normalizedEmail) else { return Self.localized("请输入有效的邮箱地址。") }
+        guard phone.filter(\.isNumber).count >= 6 else { return Self.localized("请输入有效的手机号。") }
+        guard password.count >= 6 else { return Self.localized("密码至少需要 6 位。") }
+        guard account(for: normalizedEmail, in: context) == nil else { return Self.localized("该邮箱已注册，请直接登录。") }
         guard PasswordKeychain.save(password, for: normalizedEmail) else {
-            return "无法安全保存密码，请检查设备钥匙串状态。"
+            return Self.localized("无法安全保存密码，请检查设备钥匙串状态。")
         }
 
         context.insert(LocalAccount(email: normalizedEmail, salutation: salutation.trimmingCharacters(in: .whitespacesAndNewlines), phone: phone))
@@ -175,18 +410,18 @@ final class AuthViewModel {
         } catch {
             context.rollback()
             PasswordKeychain.delete(for: normalizedEmail)
-            return "保存账号失败：\(error.localizedDescription)"
+            return Self.localized("无法保存账号资料，请稍后重试。")
         }
     }
 
     func resetPassword(email: String, verificationCode: String, newPassword: String, context: ModelContext) -> String? {
         let normalizedEmail = Self.normalize(email)
-        guard Self.isValidEmail(normalizedEmail) else { return "请输入有效的邮箱地址。" }
-        guard let account = account(for: normalizedEmail, in: context) else { return "该邮箱尚未注册。" }
-        guard verificationCode == demoVerificationCode else { return "验证码不正确。演示验证码为 123456。" }
-        guard newPassword.count >= 6 else { return "新密码至少需要 6 位。" }
+        guard Self.isValidEmail(normalizedEmail) else { return Self.localized("请输入有效的邮箱地址。") }
+        guard let account = account(for: normalizedEmail, in: context) else { return Self.localized("该邮箱尚未注册。") }
+        guard verificationCode == demoVerificationCode else { return Self.localized("验证码不正确。演示验证码为 123456。") }
+        guard newPassword.count >= 6 else { return Self.localized("新密码至少需要 6 位。") }
         guard PasswordKeychain.save(newPassword, for: normalizedEmail) else {
-            return "无法安全更新密码，请检查设备钥匙串状态。"
+            return Self.localized("无法安全更新密码，请检查设备钥匙串状态。")
         }
         account.updatedAt = .now
         do {
@@ -194,13 +429,26 @@ final class AuthViewModel {
             return nil
         } catch {
             context.rollback()
-            return "更新账号失败：\(error.localizedDescription)"
+            return Self.localized("无法更新账号资料，请稍后重试。")
         }
+    }
+
+    private static func localized(_ key: String) -> String {
+        String(localized: String.LocalizationValue(key), locale: AppLanguageSettings.currentLocale)
+    }
+
+    private static func cloudErrorMessage(_ error: Error) -> String {
+        if let authError = error as? SupabaseAuthClient.AuthError,
+           let message = authError.errorDescription {
+            return message
+        }
+        return localized("无法连接云端账号，请检查网络后重试。")
     }
 
     func logout() {
         if isCloudAccount, let accessToken = SecureCloudSession.load(key: "auth.cloud.accessToken") {
             Task { await Self.remoteLogout(accessToken: accessToken) }
+            Task { await SupabaseAuthClient.releaseCurrentDevice(accessToken: accessToken) }
         }
         isLoggedIn = false
         currentEmail = ""
@@ -208,6 +456,15 @@ final class AuthViewModel {
         currentPhone = ""
         isCloudAccount = false
         isCloudSyncInProgress = false
+        serverEntitlement = nil
+        entitlementLookupFailed = false
+        deviceLimitReached = false
+        deviceRegistrationVerified = false
+        requiresCloudReauthentication = false
+        entitlementLookupCompleted = false
+        entitlementServiceAvailable = false
+        entitlementLegacyMode = false
+        entitlementLoadedForEmail = ""
         DataOwnership.activateLocal(email: currentEmail)
         SecureCloudSession.delete(key: "auth.cloud.accessToken")
         SecureCloudSession.delete(key: "auth.cloud.refreshToken")

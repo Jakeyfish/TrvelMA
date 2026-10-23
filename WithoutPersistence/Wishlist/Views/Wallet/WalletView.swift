@@ -147,6 +147,16 @@ struct WalletView: View {
     private var totalVolume: Double { categories.reduce(0) { $0 + $1.absoluteAmount } }
 
     var body: some View {
+        Group {
+            if auth.serverEntitlement?.edition == .cloud {
+                CloudWalletView()
+            } else {
+                localWalletPage
+            }
+        }
+    }
+
+    private var localWalletPage: some View {
         NavigationStack {
             ScrollView {
                 VStack(spacing: 18) {
@@ -518,7 +528,17 @@ struct WalletView: View {
             "暂无收支": "暫無收支", "所选日期内没有财务记录": "所選日期內沒有財務記錄",
             "收支明细": "收支明細", "条行程": "筆行程", "收入": "收入", "支出": "支出",
             "收款方式": "收款方式", "添加": "新增",
-            "天": "日", "本周": "本週", "本月": "本月", "年": "年"
+            "天": "日", "本周": "本週", "本月": "本月", "年": "年",
+            "添加收款方式名称和二维码，方便向客户展示。": "新增收款方式名稱和 QR Code，方便向客戶展示。",
+            "收款方式名称": "收款方式名稱",
+            "例如：微信、Venmo": "例如：微信、Venmo",
+            "添加收款二维码": "新增收款二維碼",
+            "点击二维码可直接查看": "點擊二維碼即可檢視",
+            "删除收款方式": "刪除收款方式",
+            "收款二维码": "收款二維碼",
+            "完成": "完成",
+            "查看收款二维码": "檢視收款二維碼",
+            "选择图片": "選擇圖片",
         ]
         return translations[text] ?? text
     }

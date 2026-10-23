@@ -28,24 +28,29 @@ struct RegisterView: View {
                     SystemIMETextField(text: $salutation, placeholder: "称呼")
                         .frame(minHeight: 22)
                     TextField("邮箱", text: $email)
-                        .keyboardDoneToolbar()
                         .textContentType(.emailAddress)
                         .keyboardType(.emailAddress)
                         .textInputAutocapitalization(.never)
                         .autocorrectionDisabled()
-                    TextField("手机号", text: $phone)
-                        .keyboardDoneToolbar()
-                        .textContentType(.telephoneNumber)
-                        .keyboardType(.phonePad)
+                    SystemIMETextField(
+                        text: $phone,
+                        placeholder: "手机号",
+                        keyboardType: .phonePad,
+                        textContentType: .telephoneNumber
+                    )
                 }
 
                 Section {
                     passwordField(title: "密码", value: $password)
                     passwordField(title: "检验密码", value: $confirmPassword)
                     HStack {
-                        TextField("验证码", text: $verificationCode)
-                            .keyboardDoneToolbar()
-                            .keyboardType(.numberPad)
+                        SystemIMETextField(
+                            text: $verificationCode,
+                            placeholder: "验证码",
+                            keyboardType: .numberPad,
+                            textContentType: .oneTimeCode,
+                            clearsZeroOnFocus: false
+                        )
                         Button {
                             codeRequested = true
                             isError = false
@@ -59,13 +64,13 @@ struct RegisterView: View {
 
                 if let message {
                     Section {
-                        Text(LocalizedStringKey(message))
+                        Text(message)
                             .font(.footnote)
                             .foregroundStyle(isError ? Color.red : Color.secondary)
                     }
                 } else if isShowingCodeNotice {
                     Section {
-                        Text("演示模式验证码：\(auth.demoVerificationCode)（尚未接入短信/邮件发送）")
+                        Text(String(format: String(localized: "演示模式验证码：%@（尚未接入短信/邮件发送）", locale: AppLanguageSettings.currentLocale), locale: AppLanguageSettings.currentLocale, arguments: [auth.demoVerificationCode]))
                             .font(.footnote)
                             .foregroundStyle(.secondary)
                     }
@@ -77,6 +82,7 @@ struct RegisterView: View {
                         .disabled(isSubmitting)
                 }
             }
+            .keyboardDoneToolbar()
             .navigationTitle("用户注册")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
@@ -92,10 +98,8 @@ struct RegisterView: View {
             Group {
                 if isPasswordVisible {
                     TextField(LocalizedStringKey(title), text: value)
-                        .keyboardDoneToolbar()
                 } else {
                     SecureField(title, text: value)
-                        .keyboardDoneToolbar()
                 }
             }
             .textContentType(.newPassword)
@@ -126,7 +130,7 @@ struct RegisterView: View {
             }
             isSubmitting = false
             if let error {
-                if useCloudAccount && error.hasPrefix("注册成功。") {
+                if useCloudAccount && error.hasPrefix(String(localized: "注册成功。", locale: AppLanguageSettings.currentLocale)) {
                     isError = false
                     message = error
                 } else {

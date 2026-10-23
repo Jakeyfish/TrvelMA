@@ -21,7 +21,7 @@ python3 -m http.server 4173
 - 合作旅行社新增、编辑和软删除
 - 钱包按天、本周、本月、年汇总收入与费用调整；可维护收款方式、二维码预览与分享
 - 名片头像、只读注册资料、昵称、两种样式和多个二维码；名片与收款方式保存到同一云端账户
-- 本位币、默认导航、航班查询密钥和费用项目设置
+- 本位币、默认导航和费用项目设置
 
 名片头像、名片二维码和收款二维码使用私有 Supabase Storage。启用图片上传前，先在 Supabase SQL Editor 应用 `supabase/migrations/202610200001_private_account_asset_storage.sql`。旧 Base64 图片会在 Web 首次载入或 iOS 下次同步时复制到 Storage；本机离线副本继续保留。
 
@@ -32,6 +32,7 @@ Web 在每个云端账号的浏览器本地保存一份业务缓存。网络中�
 ## 云端安全与限制
 
 - 所有数据库请求以用户 JWT 发出，依赖 Supabase RLS；绝不在浏览器放置 service-role key 或航班服务密钥。
+- Web 和 iOS 云端航班查询通过已验证登录态的 `variflight-lookup` Edge Function；飞友密钥只存 Supabase Function Secret，函数逐次验证账号权益，并限制每账号每小时 30 次、整个项目每小时 300 次。两条限额迁移已应用，函数已部署，`VARIFLIGHT_API_KEY` 已配置在 Supabase Edge Function Secrets 中。
 - 生产部署必须使用 HTTPS，并在 Supabase Auth 的重定向 URL 配置中加入正式 Web 域名。
 - 当前 Web 页面界面为简体中文；语言偏好会保存到云端，但尚未驱动整套 Web 界面翻译。
 - 浏览器提醒只能在浏览器页面保持打开时触发；页面关闭或浏览器暂停后，不能保证送达。iOS 使用系统本地通知。

@@ -1,6 +1,23 @@
 import Foundation
 import SwiftData
 
+/// Product capabilities are separate from authentication/storage mode.
+/// Cloud accounts currently resolve to `.sync` for backward compatibility;
+/// StoreKit/server entitlements can later resolve them to `.cloud` or `.sync`.
+enum ProductEdition: String, Codable {
+    case local
+    case cloud
+    case sync
+
+    var usesCloudAccount: Bool { self != .local }
+    var allowsCrossDeviceSync: Bool { self == .sync }
+    var allowsOfflineEdits: Bool { self != .cloud }
+
+    static func current(isCloudAccount: Bool) -> Self {
+        isCloudAccount ? .sync : .local
+    }
+}
+
 enum CloudLocalDataPreference: String, CaseIterable, Identifiable {
     case syncLocalData
     case cloudDataOnly
@@ -44,6 +61,10 @@ enum DataOwnership {
 
     static func cloudScope(for email: String) -> String {
         "cloud:\(email.trimmingCharacters(in: .whitespacesAndNewlines).lowercased())"
+    }
+
+    static func isCloudScope(_ scope: String) -> Bool {
+        scope.hasPrefix("cloud:")
     }
 
     static func activateLocal(scope: String) {

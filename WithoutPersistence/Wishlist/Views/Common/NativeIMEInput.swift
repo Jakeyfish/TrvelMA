@@ -1,6 +1,12 @@
 import SwiftUI
 import UIKit
 
+func numericTextFieldWidth(for value: String, placeholder: String) -> CGFloat {
+    let visibleValue = value.isEmpty ? placeholder : value
+    let estimatedWidth = CGFloat(max(visibleValue.count, 1)) * 9 + 12
+    return min(max(estimatedWidth, 28), 144)
+}
+
 /// UIKit text input that keeps uncommitted pinyin/Wubi composition inside the system field.
 struct SystemIMETextField: UIViewRepresentable {
     @Binding var text: String
@@ -8,10 +14,29 @@ struct SystemIMETextField: UIViewRepresentable {
     var keyboardType: UIKeyboardType = .default
     var capitalization: UITextAutocapitalizationType = .sentences
     var autocorrection: UITextAutocorrectionType = .default
+    var textContentType: UITextContentType?
+    var clearsZeroOnFocus: Bool = true
+    var textAlignment: TextAlignment = .leading
     var fontSize: CGFloat = 17
+    var isFocused: Binding<Bool>? = nil
 
     func makeCoordinator() -> Coordinator {
-        Coordinator(text: $text)
+        Coordinator(
+            text: $text,
+            selectsOrClearsOnFocus: keyboardType == .numberPad || keyboardType == .decimalPad || keyboardType == .phonePad,
+            clearsZeroOnFocus: clearsZeroOnFocus && (keyboardType == .numberPad || keyboardType == .decimalPad),
+            isFocused: isFocused
+        )
+    }
+
+    func sizeThatFits(_ proposal: ProposedViewSize, uiView: UITextField, context: Context) -> CGSize? {
+        // UITextField's intrinsic width can follow a long value. In an HStack,
+        // report only the width the parent offers so text scrolls inside the
+        // field instead of widening the entire form.
+        CGSize(
+            width: proposal.width ?? 0,
+            height: proposal.height ?? max(uiView.intrinsicContentSize.height, 1)
+        )
     }
 
     func makeUIView(context: Context) -> UITextField {
@@ -21,6 +46,8 @@ struct SystemIMETextField: UIViewRepresentable {
         field.keyboardType = keyboardType
         field.autocapitalizationType = capitalization
         field.autocorrectionType = autocorrection
+        field.textContentType = textContentType
+        field.textAlignment = textAlignment == .trailing ? .right : .left
         field.delegate = context.coordinator
         field.inputAccessoryView = KeyboardDoneAccessory.make(target: context.coordinator, action: #selector(Coordinator.dismissKeyboard))
         field.addTarget(context.coordinator, action: #selector(Coordinator.editingChanged(_:)), for: .editingChanged)
@@ -31,11 +58,21 @@ struct SystemIMETextField: UIViewRepresentable {
 
     func updateUIView(_ field: UITextField, context: Context) {
         context.coordinator.text = $text
+        context.coordinator.isFocused = isFocused
+        context.coordinator.selectsOrClearsOnFocus = keyboardType == .numberPad || keyboardType == .decimalPad || keyboardType == .phonePad
+        context.coordinator.clearsZeroOnFocus = clearsZeroOnFocus && (keyboardType == .numberPad || keyboardType == .decimalPad)
         field.placeholder = placeholder
         field.keyboardType = keyboardType
         field.autocapitalizationType = capitalization
         field.autocorrectionType = autocorrection
+        field.textContentType = textContentType
+        field.textAlignment = textAlignment == .trailing ? .right : .left
         field.font = .systemFont(ofSize: fontSize)
+        if isFocused?.wrappedValue == true, !field.isFirstResponder {
+            field.becomeFirstResponder()
+        } else if isFocused?.wrappedValue == false, field.isFirstResponder {
+            field.resignFirstResponder()
+        }
         // Never replace the text while iOS is composing a pinyin/Wubi candidate.
         guard field.markedTextRange == nil, field.text != text else { return }
         field.text = text
@@ -43,10 +80,16 @@ struct SystemIMETextField: UIViewRepresentable {
 
     final class Coordinator: NSObject, UITextFieldDelegate {
         var text: Binding<String>
+        var selectsOrClearsOnFocus: Bool
+        var clearsZeroOnFocus: Bool
+        var isFocused: Binding<Bool>?
         weak var textField: UITextField?
 
-        init(text: Binding<String>) {
+        init(text: Binding<String>, selectsOrClearsOnFocus: Bool = false, clearsZeroOnFocus: Bool = true, isFocused: Binding<Bool>? = nil) {
             self.text = text
+            self.selectsOrClearsOnFocus = selectsOrClearsOnFocus
+            self.clearsZeroOnFocus = clearsZeroOnFocus
+            self.isFocused = isFocused
         }
 
         @objc func editingChanged(_ field: UITextField) {
@@ -58,6 +101,32 @@ struct SystemIMETextField: UIViewRepresentable {
         }
 
         @objc func dismissKeyboard() { textField?.resignFirstResponder() }
+
+        func textFieldDidBeginEditing(_ field: UITextField) {
+            if isFocused?.wrappedValue != true { isFocused?.wrappedValue = true }
+            guard selectsOrClearsOnFocus,
+                  let currentValue = field.text?.trimmingCharacters(in: .whitespacesAndNewlines),
+                  !currentValue.isEmpty else { return }
+
+            let formatter = NumberFormatter()
+            formatter.locale = .current
+            let numericValue = formatter.number(from: currentValue)?.doubleValue ?? Double(currentValue)
+            if clearsZeroOnFocus, let numericValue, abs(numericValue) < 0.000_000_1 {
+                field.text = ""
+                if !text.wrappedValue.isEmpty { text.wrappedValue = "" }
+                return
+            }
+
+            DispatchQueue.main.async { [weak field] in
+                guard let field, field.isFirstResponder,
+                      let end = field.position(from: field.beginningOfDocument, offset: field.text?.utf16.count ?? 0) else { return }
+                field.selectedTextRange = field.textRange(from: field.beginningOfDocument, to: end)
+            }
+        }
+
+        func textFieldDidEndEditing(_ field: UITextField) {
+            if isFocused?.wrappedValue != false { isFocused?.wrappedValue = false }
+        }
 
         private func updateBinding(from field: UITextField) {
             guard field.markedTextRange == nil else { return }
@@ -93,7 +162,7 @@ struct FlightNumberTextField: UIViewRepresentable {
         let field = UITextField()
         context.coordinator.textField = field
         field.placeholder = placeholder
-        field.keyboardType = .asciiCapable
+        field.keyboardType = .numbersAndPunctuation
         field.autocapitalizationType = .allCharacters
         field.autocorrectionType = .no
         field.spellCheckingType = .no
@@ -228,7 +297,7 @@ private struct KeyboardDoneToolbarModifier: ViewModifier {
 
 private enum KeyboardDoneAccessory {
     private static var doneTitle: String {
-        let language = (UserDefaults.standard.string(forKey: "appLanguage") ?? "zh-Hans").lowercased()
+        let language = AppLanguageSettings.effectiveIdentifier.lowercased()
         if language.hasPrefix("en") { return "Done" }
         if language.hasPrefix("es") { return "Listo" }
         if language.hasPrefix("ja") { return "完了" }
@@ -257,6 +326,15 @@ struct LimitedIMETextEditor: UIViewRepresentable {
 
     func makeCoordinator() -> Coordinator {
         Coordinator(text: $text, maxLength: maxLength, isFocused: isFocused)
+    }
+
+    func sizeThatFits(_ proposal: ProposedViewSize, uiView: UITextView, context: Context) -> CGSize? {
+        // Constrain the representable to its parent's width; UITextView's
+        // intrinsic content size must not make a containing form scroll sideways.
+        CGSize(
+            width: proposal.width ?? 0,
+            height: proposal.height ?? max(uiView.font?.lineHeight ?? 20, 1)
+        )
     }
 
     func makeUIView(context: Context) -> UITextView {
