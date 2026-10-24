@@ -584,6 +584,8 @@ private struct WalletPaymentMethodRow: View {
                 TextField(localized("例如：微信、Venmo", "e.g. PayPal, Venmo", "p. ej., PayPal, Venmo", "例：PayPay", "예: PayPal, Venmo"), text: $method.name)
                     .font(.system(size: 15, weight: .medium))
                     .textFieldStyle(.roundedBorder)
+                    .frame(minWidth: 0)
+                    .layoutPriority(1)
                     .focused($isNameFieldFocused)
                     .submitLabel(.done)
                     .onSubmit { isNameFieldFocused = false }

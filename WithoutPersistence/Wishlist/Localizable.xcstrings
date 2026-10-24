@@ -4127,6 +4127,9 @@
         }
       }
     },
+    "刷新航班信息" : {
+
+    },
     "办公地址" : {
       "localizations" : {
         "en" : {
@@ -11066,6 +11069,9 @@
         }
       }
     },
+    "无法加载云端行程" : {
+
+    },
     "无法加载行程资料" : {
 
     },
@@ -14659,6 +14665,9 @@
     "正在准备行程表单…" : {
 
     },
+    "正在加载云端行程…" : {
+
+    },
     "正在双向同步…" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -16796,6 +16805,24 @@
             "value" : "確定要刪除此旅行社嗎？"
           }
         }
+      }
+    },
+    "确认完成行程？" : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Mark trip as complete?" } },
+        "es" : { "stringUnit" : { "state" : "translated", "value" : "¿Marcar el viaje como completado?" } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "行程を完了にしますか？" } },
+        "ko" : { "stringUnit" : { "state" : "translated", "value" : "일정을 완료로 표시할까요?" } },
+        "zh-Hant" : { "stringUnit" : { "state" : "translated", "value" : "確定完成行程嗎？" } }
+      }
+    },
+    "确认后，该行程将标记为已完成。" : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "This trip will be marked as complete." } },
+        "es" : { "stringUnit" : { "state" : "translated", "value" : "Este viaje se marcará como completado." } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "この行程は完了としてマークされます。" } },
+        "ko" : { "stringUnit" : { "state" : "translated", "value" : "이 일정은 완료로 표시됩니다." } },
+        "zh-Hant" : { "stringUnit" : { "state" : "translated", "value" : "確認後，此行程將標記為已完成。" } }
       }
     },
     "确定删除该行程？" : {
@@ -22205,6 +22232,9 @@
         }
       }
     },
+    "选择航段" : {
+
+    },
     "选择起始地址" : {
       "extractionState" : "stale",
       "localizations" : {
@@ -22854,6 +22884,40 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "飛友 API 金鑰無效，請檢查設定。"
+          }
+        }
+      }
+    },
+    "飞友 API 密钥已停用，请在飞友控制台启用或更换。" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "The VariFlight API key is disabled. Enable or replace it in the provider console."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "La clave API de VariFlight está desactivada. Actívala o sustitúyela en la consola del proveedor."
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "VariFlight APIキーが無効になっています。プロバイダーのコンソールで有効にするか、新しいキーに置き換えてください。"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "VariFlight API 키가 비활성화되었습니다. 제공업체 콘솔에서 다시 활성화하거나 교체하세요."
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "飛友 API 金鑰已停用，請在飛友主控台啟用或更換。"
           }
         }
       }

@@ -591,6 +591,34 @@ enum CloudOnlineRepository {
         }
     }
 
+    /// Applies a narrow patch to a trip so status or flight refreshes cannot
+    /// overwrite unrelated fields from a stale copy held by another screen/device.
+    static func updateTripFields(
+        id: String,
+        fields: [String: Any],
+        account: Account,
+        accessToken: String
+    ) async throws {
+        try await withVerifiedAccount(account, token: accessToken) { verifiedAccount in
+            let query = [
+                URLQueryItem(name: "id", value: "eq.\(id)"),
+                URLQueryItem(name: "owner_id", value: "eq.\(verifiedAccount.id)"),
+                URLQueryItem(name: "deleted_at", value: "is.null"),
+                URLQueryItem(name: "select", value: "id")
+            ]
+            var request = URLRequest(url: SupabaseAuthClient.endpoint(path: "/rest/v1/trips", queryItems: query))
+            request.httpMethod = "PATCH"
+            setAuthHeaders(on: &request, accessToken: accessToken)
+            request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+            request.setValue("return=representation", forHTTPHeaderField: "Prefer")
+            request.httpBody = try JSONSerialization.data(withJSONObject: fields, options: [.fragmentsAllowed])
+            let data = try await perform(request, table: .trips)
+            guard let rows = try JSONSerialization.jsonObject(with: data) as? [[String: Any]], !rows.isEmpty else {
+                throw RepositoryError.invalidRows
+            }
+        }
+    }
+
     static func deleteTrip(id: String, account: Account, accessToken: String) async throws {
         try await withVerifiedAccount(account, token: accessToken) { _ in
             var request = URLRequest(url: SupabaseAuthClient.endpoint(path: "/rest/v1/rpc/delete_online_trip"))

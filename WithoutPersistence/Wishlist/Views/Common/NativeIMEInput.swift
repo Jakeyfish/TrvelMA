@@ -61,16 +61,19 @@ struct SystemIMETextField: UIViewRepresentable {
         context.coordinator.isFocused = isFocused
         context.coordinator.selectsOrClearsOnFocus = keyboardType == .numberPad || keyboardType == .decimalPad || keyboardType == .phonePad
         context.coordinator.clearsZeroOnFocus = clearsZeroOnFocus && (keyboardType == .numberPad || keyboardType == .decimalPad)
-        field.placeholder = placeholder
-        field.keyboardType = keyboardType
-        field.autocapitalizationType = capitalization
-        field.autocorrectionType = autocorrection
-        field.textContentType = textContentType
-        field.textAlignment = textAlignment == .trailing ? .right : .left
-        field.font = .systemFont(ofSize: fontSize)
+        if field.placeholder != placeholder { field.placeholder = placeholder }
+        if field.keyboardType != keyboardType { field.keyboardType = keyboardType }
+        if field.autocapitalizationType != capitalization { field.autocapitalizationType = capitalization }
+        if field.autocorrectionType != autocorrection { field.autocorrectionType = autocorrection }
+        if field.textContentType != textContentType { field.textContentType = textContentType }
+        let alignment: NSTextAlignment = textAlignment == .trailing ? .right : .left
+        if field.textAlignment != alignment { field.textAlignment = alignment }
+        if field.font?.pointSize != fontSize { field.font = .systemFont(ofSize: fontSize) }
         if isFocused?.wrappedValue == true, !field.isFirstResponder {
             field.becomeFirstResponder()
-        } else if isFocused?.wrappedValue == false, field.isFirstResponder {
+        } else if isFocused?.wrappedValue == false,
+                  context.coordinator.hasObservedFocus,
+                  field.isFirstResponder {
             field.resignFirstResponder()
         }
         // Never replace the text while iOS is composing a pinyin/Wubi candidate.
@@ -83,6 +86,7 @@ struct SystemIMETextField: UIViewRepresentable {
         var selectsOrClearsOnFocus: Bool
         var clearsZeroOnFocus: Bool
         var isFocused: Binding<Bool>?
+        var hasObservedFocus = false
         weak var textField: UITextField?
 
         init(text: Binding<String>, selectsOrClearsOnFocus: Bool = false, clearsZeroOnFocus: Bool = true, isFocused: Binding<Bool>? = nil) {
@@ -103,6 +107,7 @@ struct SystemIMETextField: UIViewRepresentable {
         @objc func dismissKeyboard() { textField?.resignFirstResponder() }
 
         func textFieldDidBeginEditing(_ field: UITextField) {
+            hasObservedFocus = true
             if isFocused?.wrappedValue != true { isFocused?.wrappedValue = true }
             guard selectsOrClearsOnFocus,
                   let currentValue = field.text?.trimmingCharacters(in: .whitespacesAndNewlines),
@@ -125,6 +130,7 @@ struct SystemIMETextField: UIViewRepresentable {
         }
 
         func textFieldDidEndEditing(_ field: UITextField) {
+            hasObservedFocus = false
             if isFocused?.wrappedValue != false { isFocused?.wrappedValue = false }
         }
 

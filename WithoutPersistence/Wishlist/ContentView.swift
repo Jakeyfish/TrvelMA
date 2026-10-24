@@ -1209,6 +1209,7 @@ private struct AddressDraft: Identifiable {
 struct AddressSuggestionField: View {
     @Binding var text: String
     @ObservedObject var searcher: AddressAutocompleteSearcher
+    @FocusState private var isFocused: Bool
     var placeholder = "输入地址，可搜索地点"
     let isActive: Bool
     let onFocus: () -> Void
@@ -1232,7 +1233,11 @@ struct AddressSuggestionField: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
-            SystemIMETextField(text: $text, placeholder: placeholder)
+            TextField(placeholder, text: $text)
+                .textInputAutocapitalization(.sentences)
+                .autocorrectionDisabled(false)
+                .focused($isFocused)
+                .keyboardDoneToolbar()
                 .frame(minWidth: 0, maxWidth: .infinity, alignment: .leading)
                 .onChange(of: text) { _, value in
                     searcher.searchQuery = value

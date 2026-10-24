@@ -148,50 +148,35 @@ final class CloudTripDirectoryModel {
         flightSelectionSnapshot: SavedFlightSelection? = nil,
         using auth: AuthViewModel
     ) async -> Bool {
-        let row: [String: Any] = [
-            "id": trip.id,
-            "service_type": trip.serviceType,
-            "order_source": trip.orderSource,
-            "travel_agency_code": trip.travelAgencyCode,
-            "travel_agency_name": trip.travelAgencyName,
-            "customer_id": trip.customerID.map { $0 as Any } ?? NSNull(),
-            "customer_name": trip.customerName,
-            "customer_contact": trip.customerContact,
-            "customer_count": trip.customerCount,
-            "customer_stuff": trip.customerStuff,
-            "appointment_date": trip.appointmentDate,
-            "appointment_time": trip.appointmentTime,
-            "location_start": trip.locationStart,
-            "location_end": trip.locationEnd,
-            "flight_info": trip.flightInfo,
-            "flight_date": trip.flightDate,
-            "flight_departure_time": trip.flightDepartureTime.map { $0 as Any } ?? NSNull(),
-            "flight_estimated_arrival_time": trip.flightEstimatedArrivalTime.map { $0 as Any } ?? NSNull(),
-            "flight_arrival_terminal": trip.flightArrivalTerminal.map { $0 as Any } ?? NSNull(),
-            "flight_baggage_carousel": trip.flightBaggageCarousel.map { $0 as Any } ?? NSNull(),
-            "flight_selection_snapshot": (flightSelectionSnapshot ?? trip.flightSelectionSnapshot).map { snapshot in
-                (try? JSONSerialization.jsonObject(with: JSONEncoder().encode(snapshot))) ?? NSNull()
-            } ?? NSNull(),
-            "memo": trip.memo,
-            "price": trip.price,
-            "tip": trip.tip,
-            "is_paid": isPaid ?? trip.isPaid,
-            "is_completed": isCompleted ?? trip.isCompleted,
-            "is_cancelled": isCancelled ?? trip.isCancelled,
-            "reminder_enabled": trip.reminderEnabled,
-            "reminder_at": trip.reminderAt.map { $0 as Any } ?? NSNull(),
-            "has_second_reminder": trip.hasSecondReminder,
-            "second_reminder_at": trip.secondReminderAt.map { $0 as Any } ?? NSNull(),
-            "currency_code": trip.currencyCode,
-            "created_at": trip.createdAt,
-            "updated_at": ISO8601DateFormatter().string(from: .now),
-            "deleted_at": NSNull()
-        ]
-        let stops = trip.stops.map { ["id": $0.id, "position": $0.position, "address": $0.address] as [String: Any] }
-        let expenses = trip.expenses.map {
-            ["id": $0.id, "position": $0.position, "is_addition": $0.isAddition, "title": $0.title, "amount": $0.amount] as [String: Any]
+        do {
+            let (account, token) = try await session(using: auth)
+            guard loadedAccountID == account.id else { throw CloudOnlineRepository.RepositoryError.accountChanged }
+
+            var fields: [String: Any] = ["updated_at": ISO8601DateFormatter().string(from: .now)]
+            if let isCompleted { fields["is_completed"] = isCompleted }
+            if let isCancelled { fields["is_cancelled"] = isCancelled }
+            if let isPaid { fields["is_paid"] = isPaid }
+            if let flightSelectionSnapshot {
+                let selected = flightSelectionSnapshot.selected
+                fields["flight_departure_time"] = selected.departureTime.map { $0 as Any } ?? NSNull()
+                fields["flight_estimated_arrival_time"] = selected.estimatedArrivalTime.map { $0 as Any } ?? NSNull()
+                fields["flight_arrival_terminal"] = selected.arrivalTerminal.map { $0 as Any } ?? NSNull()
+                fields["flight_baggage_carousel"] = selected.baggageCarousel.map { $0 as Any } ?? NSNull()
+                fields["flight_selection_snapshot"] =
+                    (try? JSONSerialization.jsonObject(with: JSONEncoder().encode(flightSelectionSnapshot))) ?? NSNull()
+            }
+
+            try await CloudOnlineRepository.updateTripFields(
+                id: trip.id, fields: fields, account: account, accessToken: token
+            )
+            try ensureSameAccount(account, auth: auth)
+            await reload(using: auth)
+            NotificationCenter.default.post(name: .cloudTripsDidChange, object: nil)
+            return true
+        } catch {
+            errorMessage = error.localizedDescription
+            return false
         }
-        return await save(trip: row, stops: stops, expenses: expenses, using: auth)
     }
 
     private func session(using auth: AuthViewModel) async throws -> (CloudOnlineRepository.Account, String) {

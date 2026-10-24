@@ -23,6 +23,7 @@ Deno.serve(async (request) => {
   const supabaseUrl = Deno.env.get("SUPABASE_URL");
   const publishableKey = Deno.env.get("SUPABASE_ANON_KEY") ?? Deno.env.get("SUPABASE_PUBLISHABLE_KEY");
   const variflightKey = Deno.env.get("VARIFLIGHT_API_KEY");
+  const serviceRoleKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
   if (!supabaseUrl || !publishableKey || !variflightKey) {
     console.error("VariFlight proxy is missing required server configuration");
     return jsonError(503, "航班查询服务尚未完成配置。");
@@ -52,7 +53,7 @@ Deno.serve(async (request) => {
     return jsonError(403, "此账号当前没有有效的云端航班查询权限。");
   }
 
-  let body: { flightNumber?: unknown; flightDate?: unknown; departureAirport?: unknown; arrivalAirport?: unknown };
+  let body: { flightNumber?: unknown; flightDate?: unknown; departureAirport?: unknown; arrivalAirport?: unknown; forceRefresh?: unknown };
   try {
     body = await request.json();
   } catch {
@@ -63,6 +64,7 @@ Deno.serve(async (request) => {
   const flightDate = typeof body.flightDate === "string" ? body.flightDate : "";
   const departureAirport = typeof body.departureAirport === "string" ? body.departureAirport.trim().toUpperCase() : "";
   const arrivalAirport = typeof body.arrivalAirport === "string" ? body.arrivalAirport.trim().toUpperCase() : "";
+  const forceRefresh = body.forceRefresh === true;
   if (!/^[A-Z0-9]{2,10}$/.test(flightNumber)) return jsonError(400, "请输入有效的航班号。");
   if ((departureAirport && !/^[A-Z]{3}$/.test(departureAirport)) || (arrivalAirport && !/^[A-Z]{3}$/.test(arrivalAirport))) {
     return jsonError(400, "机场代码格式无效。");
@@ -71,6 +73,30 @@ Deno.serve(async (request) => {
     ? new Date(`${flightDate}T00:00:00.000Z`) : null;
   if (!parsedDate || Number.isNaN(parsedDate.getTime()) || parsedDate.toISOString().slice(0, 10) !== flightDate) {
     return jsonError(400, "航班日期格式无效。");
+  }
+
+  const queryKey = JSON.stringify([flightNumber, flightDate, departureAirport, arrivalAirport]);
+  const queryDigest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(queryKey));
+  const queryHash = Array.from(new Uint8Array(queryDigest), (byte) => byte.toString(16).padStart(2, "0")).join("");
+  const cache = serviceRoleKey
+    ? createClient(supabaseUrl, serviceRoleKey, { auth: { persistSession: false, autoRefreshToken: false } })
+    : null;
+
+  if (!forceRefresh && cache) {
+    const { data: cached, error: cacheError } = await cache
+      .from("variflight_response_cache")
+      .select("response_text,content_type")
+      .eq("query_hash", queryHash)
+      .gt("expires_at", new Date().toISOString())
+      .maybeSingle();
+    if (cacheError) {
+      console.error("Unable to read VariFlight response cache", cacheError.message);
+    } else if (cached) {
+      return new Response(cached.response_text, {
+        status: 200,
+        headers: { ...corsHeaders, "Cache-Control": "no-store", "Content-Type": cached.content_type },
+      });
+    }
   }
 
   const { data: allowed, error: quotaError } = await supabase.rpc("consume_variflight_quota");
@@ -113,7 +139,8 @@ Deno.serve(async (request) => {
 
   const headers = new Headers(corsHeaders);
   headers.set("Cache-Control", "no-store");
-  headers.set("Content-Type", upstream.headers.get("Content-Type") ?? "application/json; charset=utf-8");
+  const contentType = upstream.headers.get("Content-Type") ?? "application/json; charset=utf-8";
+  headers.set("Content-Type", contentType);
   if (!upstream.ok) {
     // Do not pass upstream diagnostics through; they can contain provider details.
     console.error("VariFlight upstream returned HTTP", upstream.status);
@@ -122,5 +149,22 @@ Deno.serve(async (request) => {
       ? "航班查询服务暂不可用，请联系管理员检查服务额度。"
       : "飞友航班查询失败，请稍后重试。");
   }
-  return new Response(upstream.body, { status: 200, headers });
+  const responseText = await upstream.text();
+  const ttlMilliseconds = flightDate > new Date().toISOString().slice(0, 10)
+    ? 6 * 60 * 60 * 1000
+    : 2 * 60 * 1000;
+  const expiresAt = new Date(Date.now() + ttlMilliseconds).toISOString();
+  if (cache) {
+    const { error: cacheWriteError } = await cache
+      .from("variflight_response_cache")
+      .upsert({
+        query_hash: queryHash,
+        response_text: responseText,
+        content_type: contentType,
+        expires_at: expiresAt,
+      }, { onConflict: "query_hash" });
+    if (cacheWriteError) console.error("Unable to write VariFlight response cache", cacheWriteError.message);
+    await cache.from("variflight_response_cache").delete().lt("expires_at", new Date().toISOString());
+  }
+  return new Response(responseText, { status: 200, headers });
 });

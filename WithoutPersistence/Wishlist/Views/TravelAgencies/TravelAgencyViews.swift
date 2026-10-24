@@ -333,6 +333,8 @@ private struct TravelAgencyEditView: View {
             Section("联系信息") {
                 HStack(spacing: 12) {
                     TextField("联系人", text: $contactPerson)
+                        .frame(minWidth: 0)
+                        .layoutPriority(1)
                     SystemIMETextField(
                         text: $phone,
                         placeholder: "联系电话",

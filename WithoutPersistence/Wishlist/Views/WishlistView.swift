@@ -405,6 +405,9 @@ struct TripListDashboardView: View {
     @AppStorage("tripList.selectedDateTimestamp") private var selectedDateTimestamp = Date.now.timeIntervalSince1970
     @State private var dateMode: TripDateMode = .sevenDays
     @State private var isShowingAllDates = true
+    @State private var completionBooking: TripBookingRecord?
+    @State private var pendingCompletionBooking: TripBookingRecord?
+    @State private var settlementBooking: TripBookingRecord?
 
     init(showsDateControls: Bool = true) {
         self.showsDateControls = showsDateControls
@@ -567,7 +570,11 @@ struct TripListDashboardView: View {
                 } else {
                     LazyVStack(spacing: 12) {
                         ForEach(visibleBookings, id: \.id) { booking in
-                            TripManagementCard(booking: booking, showsFlightActions: !booking.isCompleted && !booking.isCancelled)
+                            TripManagementCard(
+                                booking: booking,
+                                showsFlightActions: !booking.isCompleted && !booking.isCancelled,
+                                onComplete: { pendingCompletionBooking = $0 }
+                            )
                         }
                     }
                     .padding(.bottom, 30)
@@ -594,6 +601,40 @@ struct TripListDashboardView: View {
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .frame(maxHeight: .infinity, alignment: .top)
+        .tripCompletionConfirmationPrompt(isPresented: Binding(
+            get: { pendingCompletionBooking != nil },
+            set: { if !$0 { pendingCompletionBooking = nil } }
+        ), onConfirm: {
+            guard let booking = pendingCompletionBooking else { return }
+            pendingCompletionBooking = nil
+            requestCompletion(for: booking)
+        })
+        .completionSettlementPrompt(isPresented: Binding(
+            get: { completionBooking != nil },
+            set: { if !$0 { completionBooking = nil } }
+        ), onSettle: { finishCompletion(shouldSettle: true) }, onSkip: { finishCompletion(shouldSettle: false) })
+        .adaptiveFormPresentation(isPresented: Binding(
+            get: { settlementBooking != nil },
+            set: { if !$0 { settlementBooking = nil } }
+        )) {
+            if let settlementBooking {
+                NavigationStack { FinancialSettlementView(booking: settlementBooking) }
+            }
+        }
+    }
+
+    private func finishCompletion(shouldSettle: Bool) {
+        guard let booking = completionBooking else { return }
+        completionBooking = nil
+        if shouldSettle { settlementBooking = booking }
+    }
+
+    private func requestCompletion(for booking: TripBookingRecord) {
+        booking.isCompleted = true
+        booking.isCancelled = false
+        booking.updatedAt = .now
+        try? modelContext.save()
+        completionBooking = booking
     }
 
     private var allPendingDatesButton: some View {
@@ -952,8 +993,8 @@ private struct TripManagementCard: View {
     @AppStorage(NavigationProvider.defaultsKey) private var defaultNavigationProvider = NavigationProvider.appleMaps.rawValue
     @Bindable var booking: TripBookingRecord
     var showsFlightActions = true
+    var onComplete: (TripBookingRecord) -> Void
     @State private var isShowingFinancialSettlement = false
-    @State private var isShowingCompletionSettlementPrompt = false
     @State private var isShowingCancellationPrompt = false
     @State private var isFlightExpanded = false
     @State private var isLookingUpFlight = false
@@ -1042,7 +1083,8 @@ private struct TripManagementCard: View {
                         .buttonStyle(.plain)
                         .accessibilityHint("查询并显示航班信息")
                         Button {
-                            lookupFlight()
+                            withAnimation(.easeInOut(duration: 0.2)) { isFlightExpanded = true }
+                            lookupFlight(forceRefresh: true)
                         } label: {
                             Image(systemName: "arrow.clockwise")
                                 .font(.caption.weight(.semibold))
@@ -1078,8 +1120,7 @@ private struct TripManagementCard: View {
                     Spacer(minLength: 0)
                     if !booking.isCompleted && !booking.isCancelled {
                         Button("已完成") {
-                            updateBooking(completed: true)
-                            isShowingCompletionSettlementPrompt = true
+                            onComplete(booking)
                         }
                         .font(.caption.weight(.semibold))
                         .foregroundStyle(Color.accentColor)
@@ -1114,20 +1155,12 @@ private struct TripManagementCard: View {
             Button("是，取消行程", role: .destructive) { setCancelled(true) }
             Button("否", role: .cancel) { }
         }
-        .alert("行程已结束", isPresented: $isShowingCompletionSettlementPrompt) {
-            Button("否", role: .cancel) { }
-            Button("是") {
-                isShowingFinancialSettlement = true
-            }
-        } message: {
-            Text("是否财务结算？")
-        }
         .adaptiveFormPresentation(isPresented: $isShowingFinancialSettlement) {
             NavigationStack {
                 FinancialSettlementView(booking: booking)
             }
         }
-        .adaptiveFormPresentation(isPresented: $isChoosingFlight) {
+        .sheet(isPresented: $isChoosingFlight) {
             FlightCandidatePicker(candidates: flightCandidates, onSelect: selectFlight)
         }
         .padding(13)
@@ -1176,9 +1209,11 @@ private struct TripManagementCard: View {
         )
     }
 
-    private func lookupFlight() {
+    private func lookupFlight(forceRefresh: Bool = false) {
         isLookingUpFlight = true
         flightLookupError = nil
+        flightLookupResult = nil
+        flightCandidates = []
         Task {
             do {
                 let cloudAccessToken: String?
@@ -1194,11 +1229,16 @@ private struct TripManagementCard: View {
                     serviceType: booking.serviceType,
                     locationStart: booking.locationStart,
                     locationEnd: booking.locationEnd,
-                    cloudAccessToken: cloudAccessToken
+                    cloudAccessToken: cloudAccessToken,
+                    forceRefresh: forceRefresh
                 )
                 flightCandidates = candidates
-                // Always keep leg selection explicit; the first candidate can be the wrong leg.
-                isChoosingFlight = true
+                if candidates.count == 1, let candidate = candidates.first {
+                    selectFlight(candidate)
+                } else {
+                    // Multiple legs must remain an explicit choice; the first result may be the wrong leg.
+                    isChoosingFlight = candidates.count > 1
+                }
             } catch {
                 flightLookupError = error.localizedDescription
             }
@@ -1211,6 +1251,10 @@ private struct TripManagementCard: View {
            let saved = try? JSONDecoder().decode(SavedFlightSelection.self, from: json),
            saved.matches(flightNumber: booking.flightInfo, flightDate: booking.flightDate) {
             flightLookupResult = saved.selected
+            Task {
+                departureTimeZoneLabel = await FlightTimeZoneResolver.label(for: saved.selected.departureAirport, date: booking.flightDate) ?? ""
+                arrivalTimeZoneLabel = await FlightTimeZoneResolver.label(for: saved.selected.arrivalAirport, date: booking.flightDate) ?? ""
+            }
             return
         }
         lookupFlight()
@@ -1230,19 +1274,6 @@ private struct TripManagementCard: View {
             departureTimeZoneLabel = await FlightTimeZoneResolver.label(for: result.departureAirport, date: booking.flightDate) ?? ""
             arrivalTimeZoneLabel = await FlightTimeZoneResolver.label(for: result.arrivalAirport, date: booking.flightDate) ?? ""
         }
-    }
-
-    private func updateBooking(completed: Bool) {
-        let bookingID = booking.id
-        let scope = DataOwnership.activeScope
-        let descriptor = FetchDescriptor<TripBookingRecord>(
-            predicate: #Predicate { $0.id == bookingID && $0.ownerScope == scope }
-        )
-        guard let record = try? modelContext.fetch(descriptor).first else { return }
-        record.isCompleted = completed
-        record.isCancelled = false
-        record.updatedAt = .now
-        try? modelContext.save()
     }
 
     private func setCancelled(_ cancelled: Bool) {
@@ -1299,19 +1330,21 @@ private struct TripManagementCard: View {
             }
             .buttonStyle(.plain)
 
-            Button {
-                let provider = NavigationProvider(rawValue: defaultNavigationProvider) ?? .appleMaps
-                if let url = provider.directionsURL(for: value) { openURL(url) }
-            } label: {
-                Image(systemName: "arrow.triangle.turn.up.right.diamond.fill")
-                    .font(.system(size: 17, weight: .semibold))
-                    .foregroundStyle(value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? Color.secondary.opacity(0.35) : Color.accentColor)
-                    .frame(width: 34, height: 34)
-                    .contentShape(Rectangle())
+            if !booking.isCompleted && !booking.isCancelled {
+                Button {
+                    let provider = NavigationProvider(rawValue: defaultNavigationProvider) ?? .appleMaps
+                    if let url = provider.directionsURL(for: value) { openURL(url) }
+                } label: {
+                    Image(systemName: "arrow.triangle.turn.up.right.diamond.fill")
+                        .font(.system(size: 17, weight: .semibold))
+                        .foregroundStyle(value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? Color.secondary.opacity(0.35) : Color.accentColor)
+                        .frame(width: 34, height: 34)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .disabled(value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                .accessibilityLabel("导航至\(title)")
             }
-            .buttonStyle(.plain)
-            .disabled(value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-            .accessibilityLabel("导航至\(title)")
         }
     }
 
@@ -1632,6 +1665,7 @@ private struct TripBrowseView: View {
     @State private var isConfirmingDelete = false
     @State private var isConfirmingCancellation = false
     @State private var isShowingCompletionSettlementPrompt = false
+    @State private var isConfirmingCompletion = false
     @State private var isShowingFinancialSettlement = false
     @State private var isFlightExpanded = false
     @State private var isLookingUpFlight = false
@@ -1726,39 +1760,43 @@ private struct TripBrowseView: View {
 
             if !booking.flightInfo.isEmpty {
                 Section("航班信息") {
-                    Button {
-                        let shouldExpand = !isFlightExpanded
-                        withAnimation(.easeInOut(duration: 0.2)) { isFlightExpanded = shouldExpand }
-                        if shouldExpand && flightLookupResult == nil && !isLookingUpFlight { lookupFlight() }
-                    } label: {
-                        HStack(spacing: 8) {
-                            Image(systemName: "airplane").foregroundStyle(Color.accentColor)
-                            Text(booking.flightInfo).font(.subheadline.weight(.semibold))
-                            Text(booking.flightDate, format: .dateTime.month(.abbreviated).day())
-                                .font(.caption).foregroundStyle(.secondary)
-                            Spacer(minLength: 0)
-                            if isLookingUpFlight { ProgressView().controlSize(.mini) }
-                            else { Image(systemName: isFlightExpanded ? "chevron.up" : "chevron.down").font(.caption).foregroundStyle(.tertiary) }
+                    if booking.isCompleted || booking.isCancelled {
+                        LabeledContent("航班", value: booking.flightInfo)
+                    } else {
+                        Button {
+                            let shouldExpand = !isFlightExpanded
+                            withAnimation(.easeInOut(duration: 0.2)) { isFlightExpanded = shouldExpand }
+                            if shouldExpand && flightLookupResult == nil && !isLookingUpFlight { lookupFlight() }
+                        } label: {
+                            HStack(spacing: 8) {
+                                Image(systemName: "airplane").foregroundStyle(Color.accentColor)
+                                Text(booking.flightInfo).font(.subheadline.weight(.semibold))
+                                Text(booking.flightDate, format: .dateTime.month(.abbreviated).day())
+                                    .font(.caption).foregroundStyle(.secondary)
+                                Spacer(minLength: 0)
+                                if isLookingUpFlight { ProgressView().controlSize(.mini) }
+                                else { Image(systemName: isFlightExpanded ? "chevron.up" : "chevron.down").font(.caption).foregroundStyle(.tertiary) }
+                            }
+                            .contentShape(Rectangle())
                         }
-                        .contentShape(Rectangle())
-                    }
-                    .buttonStyle(.plain)
-                    if isFlightExpanded {
-                        FlightInformationPanel(
-                            flightNumber: booking.flightInfo,
-                            flightDate: booking.flightDate,
-                            result: flightLookupResult,
-                            isLoading: isLookingUpFlight,
-                            error: flightLookupError,
-                            departureFallback: booking.flightDepartureTime ?? "",
-                            arrivalFallback: booking.flightEstimatedArrivalTime ?? "",
-                            departureTimeZone: departureTimeZoneLabel,
-                            arrivalTimeZone: arrivalTimeZoneLabel
-                        )
-                        .padding(12)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .background(Color(.secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 13, style: .continuous))
-                        .transition(.opacity.combined(with: .move(edge: .top)))
+                        .buttonStyle(.plain)
+                        if isFlightExpanded {
+                            FlightInformationPanel(
+                                flightNumber: booking.flightInfo,
+                                flightDate: booking.flightDate,
+                                result: flightLookupResult,
+                                isLoading: isLookingUpFlight,
+                                error: flightLookupError,
+                                departureFallback: booking.flightDepartureTime ?? "",
+                                arrivalFallback: booking.flightEstimatedArrivalTime ?? "",
+                                departureTimeZone: departureTimeZoneLabel,
+                                arrivalTimeZone: arrivalTimeZoneLabel
+                            )
+                            .padding(12)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .background(Color(.secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 13, style: .continuous))
+                            .transition(.opacity.combined(with: .move(edge: .top)))
+                        }
                     }
                 }
             }
@@ -1835,10 +1873,7 @@ private struct TripBrowseView: View {
                             .tint(.accentColor)
                         } else if !booking.isCompleted {
                             Button("已完成") {
-                                booking.isCompleted = true
-                                booking.isCancelled = false
-                                saveChanges()
-                                isShowingCompletionSettlementPrompt = true
+                                isConfirmingCompletion = true
                             }
                             .buttonStyle(.borderedProminent)
                             .tint(.accentColor)
@@ -1895,11 +1930,15 @@ private struct TripBrowseView: View {
                 copying: presentation == .copy
             )
         }
-        .alert("行程已结束", isPresented: $isShowingCompletionSettlementPrompt) {
-            Button("否", role: .cancel) { }
-            Button("是") { isShowingFinancialSettlement = true }
-        } message: {
-            Text("是否财务结算？")
+        .completionSettlementPrompt(
+            isPresented: $isShowingCompletionSettlementPrompt,
+            onSettle: { isShowingFinancialSettlement = true }
+        )
+        .tripCompletionConfirmationPrompt(isPresented: $isConfirmingCompletion) {
+            booking.isCompleted = true
+            booking.isCancelled = false
+            saveChanges()
+            isShowingCompletionSettlementPrompt = true
         }
         .adaptiveFormPresentation(isPresented: $isShowingFinancialSettlement) {
             NavigationStack {
@@ -1962,7 +2001,7 @@ private struct TripBrowseView: View {
             if address.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                 Text("未填写")
                     .foregroundStyle(.secondary)
-            } else if booking.isCompleted {
+            } else if booking.isCompleted || booking.isCancelled {
                 Text(address)
                     .foregroundStyle(.primary)
                     .frame(maxWidth: .infinity, alignment: .leading)

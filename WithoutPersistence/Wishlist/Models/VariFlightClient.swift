@@ -24,10 +24,16 @@ struct VariFlightLookupResult: Codable, Hashable, Identifiable {
 }
 
 struct SavedFlightSelection: Codable, Hashable {
+    static let currentFormatVersion = 2
+
     let flightNumber: String
     let flightDate: String
     let selected: VariFlightLookupResult
     let fetchedAt: Date
+    /// Missing on snapshots saved by the older terminal parser. Those cached
+    /// results must be queried again so a departure terminal is not reused as
+    /// the arrival terminal.
+    let formatVersion: Int?
 
     init(flightNumber: String, flightDate: Date, selected: VariFlightLookupResult, fetchedAt: Date = .now) {
         self.flightNumber = flightNumber.trimmingCharacters(in: .whitespacesAndNewlines).uppercased()
@@ -39,11 +45,14 @@ struct SavedFlightSelection: Codable, Hashable {
         self.flightDate = formatter.string(from: flightDate)
         self.selected = selected
         self.fetchedAt = fetchedAt
+        self.formatVersion = Self.currentFormatVersion
     }
 
     func matches(flightNumber: String, flightDate: Date) -> Bool {
         let current = SavedFlightSelection(flightNumber: flightNumber, flightDate: flightDate, selected: selected, fetchedAt: fetchedAt)
-        return self.flightNumber == current.flightNumber && self.flightDate == current.flightDate
+        return formatVersion == Self.currentFormatVersion
+            && self.flightNumber == current.flightNumber
+            && self.flightDate == current.flightDate
     }
 }
 
@@ -52,6 +61,10 @@ struct FlightCandidatePicker: View {
     @Environment(\.locale) private var locale
     let candidates: [VariFlightLookupResult]
     let onSelect: (VariFlightLookupResult) -> Void
+
+    private var preferredHeight: CGFloat {
+        min(184 + CGFloat(candidates.count) * 112, 660)
+    }
 
     var body: some View {
         NavigationStack {
@@ -91,6 +104,8 @@ struct FlightCandidatePicker: View {
                     Button("取消") { dismiss() }
                 }
             }
+            .presentationDetents([.height(preferredHeight)])
+            .presentationDragIndicator(.visible)
         }
     }
 }
@@ -181,6 +196,7 @@ struct VariFlightClient {
         flightNumber: String,
         flightDate: Date,
         cloudAccessToken: String? = nil,
+        forceRefresh: Bool = false,
         departureAirport: String? = nil,
         arrivalAirport: String? = nil
     ) async throws -> [VariFlightLookupResult] {
@@ -214,7 +230,8 @@ struct VariFlightClient {
             ],
             apiKey: apiKey,
             cloudAccessToken: cloudAccessToken,
-            sessionID: nil
+            sessionID: nil,
+            forceRefresh: forceRefresh
         )
 
         return try parseLookupResults(from: response.body)
@@ -226,7 +243,8 @@ struct VariFlightClient {
         params: [String: Any],
         apiKey: String?,
         cloudAccessToken: String?,
-        sessionID: String?
+        sessionID: String?,
+        forceRefresh: Bool
     ) async throws -> (body: Any, sessionID: String?) {
         let endpoint = cloudAccessToken == nil
             ? variFlightEndpoint
@@ -247,9 +265,10 @@ struct VariFlightClient {
         if let sessionID { request.setValue(sessionID, forHTTPHeaderField: "Mcp-Session-Id") }
         if cloudAccessToken != nil {
             let arguments = params["arguments"] as? [String: String] ?? [:]
-            var body: [String: String] = [
+            var body: [String: Any] = [
                 "flightNumber": arguments["fnum"] ?? "",
-                "flightDate": arguments["date"] ?? ""
+                "flightDate": arguments["date"] ?? "",
+                "forceRefresh": forceRefresh
             ]
             if let departureAirport = arguments["dep"] { body["departureAirport"] = departureAirport }
             if let arrivalAirport = arguments["arr"] { body["arrivalAirport"] = arrivalAirport }
@@ -295,7 +314,8 @@ struct VariFlightClient {
         serviceType: String,
         locationStart: String,
         locationEnd: String,
-        cloudAccessToken: String? = nil
+        cloudAccessToken: String? = nil,
+        forceRefresh: Bool = false
     ) async throws -> [VariFlightLookupResult] {
         let airportHint: (code: String, isArrival: Bool)?
         if serviceType == "接机", let code = Self.explicitAirportCode(in: locationStart) {
@@ -309,21 +329,46 @@ struct VariFlightClient {
         let initial = try await lookupCandidates(
             flightNumber: flightNumber,
             flightDate: flightDate,
-            cloudAccessToken: cloudAccessToken
+            cloudAccessToken: cloudAccessToken,
+            forceRefresh: forceRefresh
         )
-        guard let airportHint,
-              !initial.contains(where: { Self.airportCode(in: airportHint.isArrival ? $0.arrivalAirport : $0.departureAirport) == airportHint.code }) else {
-            return initial
-        }
+        guard let airportHint else { return initial }
 
-        // Keep the broad results if a provider does not support or return the filtered search.
-        let supplemental = (try? await lookupCandidates(
+        var supplemental: [VariFlightLookupResult] = []
+        // Always issue an airport-filtered search when the trip contains an
+        // explicit airport. A broad result can describe the full itinerary and
+        // end at that airport while omitting an independently selectable later
+        // leg to the same airport.
+        supplemental += (try? await lookupCandidates(
             flightNumber: flightNumber,
             flightDate: flightDate,
             cloudAccessToken: cloudAccessToken,
+            forceRefresh: forceRefresh,
             departureAirport: airportHint.isArrival ? nil : airportHint.code,
             arrivalAirport: airportHint.isArrival ? airportHint.code : nil
         )) ?? []
+
+        // Some provider responses contain a first leg to a connecting city and a
+        // separate full-itinerary summary. Query each detected connection airport
+        // to the requested arrival airport so the actual later leg can be selected.
+        if airportHint.isArrival {
+            let connectionCodes = Set((initial + supplemental).flatMap { candidate in
+                Self.airportCodes(in: candidate.arrivalAirport).filter { $0 != airportHint.code }
+            })
+            for connectionCode in connectionCodes.sorted() {
+                supplemental += (try? await lookupCandidates(
+                    flightNumber: flightNumber,
+                    flightDate: flightDate,
+                    cloudAccessToken: cloudAccessToken,
+                    forceRefresh: forceRefresh,
+                    // Search by the connection airport alone. The provider's
+                    // combined dep+arr filter can omit a selectable leg even
+                    // when the unfiltered flight-number result contains it.
+                    departureAirport: connectionCode
+                )) ?? []
+            }
+        }
+
         var seen = Set<String>()
         return (initial + supplemental).filter { seen.insert($0.id).inserted }
     }
@@ -335,18 +380,119 @@ struct VariFlightClient {
     }
 
     private static func explicitAirportCode(in location: String) -> String? {
-        let normalized = location.uppercased()
+        let trimmed = location.trimmingCharacters(in: .whitespacesAndNewlines)
+        let normalized = trimmed.uppercased()
+        // In pickup/drop-off route fields, a bare IATA code is already an explicit airport choice.
+        if normalized.range(of: #"^[A-Z]{3}$"#, options: .regularExpression) != nil {
+            return normalized
+        }
+        if normalized.range(of: #"\b(?:AIRPORT|TERMINAL)\b|机场|航站楼|航站"#, options: .regularExpression) != nil {
+            let codes = knownAirportCodes(for: trimmed)
+            if codes.count == 1 { return codes.first }
+        }
         // Require airport context so ordinary three-letter words in addresses are not treated as IATA codes.
         guard normalized.range(of: #"\b[A-Z]{3}\b.{0,24}\b(?:AIRPORT|TERMINAL|机场)\b|\b(?:AIRPORT|机场).{0,24}\b[A-Z]{3}\b"#, options: .regularExpression) != nil,
-              let match = normalized.range(of: #"\b[A-Z]{3}\b"#, options: .regularExpression) else { return nil }
-        return String(normalized[match])
+              let match = trimmed.range(of: #"\b[A-Z]{3}\b"#, options: .regularExpression) else { return nil }
+        return String(trimmed[match])
     }
 
     private static func airportCode(in value: String?) -> String? {
-        guard let value else { return nil }
-        let normalized = value.uppercased()
-        guard let match = normalized.range(of: #"\b[A-Z]{3}\b"#, options: .regularExpression) else { return nil }
-        return String(normalized[match])
+        let codes = airportCodes(in: value)
+        return codes.count == 1 ? codes.first : nil
+    }
+
+    private static func airportCodes(in value: String?) -> Set<String> {
+        guard let value else { return [] }
+        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        if trimmed.range(of: #"^[A-Za-z]{3}$"#, options: .regularExpression) != nil {
+            return [trimmed.uppercased()]
+        }
+        // Only accept uppercase tokens as IATA codes. Uppercasing the whole label first
+        // turns the ordinary word “Los” into a false code (“LOS”).
+        let patterns = [#"\(([A-Z]{3})\)"#, #"(?<![A-Za-z])([A-Z]{3})(?![A-Za-z])"#]
+        for pattern in patterns {
+            guard let match = trimmed.range(of: pattern, options: .regularExpression) else { continue }
+            let code = String(trimmed[match]).filter(\.isLetter)
+            if code.count == 3 { return [code] }
+        }
+        return knownAirportCodes(for: trimmed)
+    }
+
+    /// Maps airport labels and city-only labels to IATA codes. City aliases can
+    /// intentionally map to more than one code (for example, Houston has IAH
+    /// and HOU), so connection supplementation searches each plausible airport.
+    private static func knownAirportCodes(for value: String) -> Set<String> {
+        let normalized = value.folding(options: [.diacriticInsensitive, .caseInsensitive], locale: .current)
+        let aliases: [(names: [String], codes: Set<String>)] = [
+            (["george bush intercontinental", "george bush", "乔治布什", "乔治布什洲际机场", "iah"], ["IAH"]),
+            (["houston hobby", "hobby airport", "william p. hobby", "霍比机场", "霍比"], ["HOU"]),
+            (["houston", "休斯敦", "休士顿"], ["IAH", "HOU"]),
+            (["los angeles international", "los angeles airport", "洛杉矶国际机场", "洛杉矶机场", "洛杉矶"], ["LAX"]),
+            (["john f. kennedy", "john f kennedy", "kennedy airport", "肯尼迪机场", "jfk"], ["JFK"]),
+            (["la guardia", "拉瓜迪亚机场", "lga"], ["LGA"]),
+            (["newark liberty", "newark airport", "纽瓦克机场", "ewr"], ["EWR"]),
+            (["new york", "纽约"], ["JFK", "LGA", "EWR"]),
+            (["heathrow", "希思罗机场", "lhr"], ["LHR"]),
+            (["gatwick", "盖特威克机场", "lgw"], ["LGW"]),
+            (["stansted", "斯坦斯特德机场", "stn"], ["STN"]),
+            (["london", "伦敦"], ["LHR", "LGW", "STN", "LTN", "LCY"]),
+            (["tokyo haneda", "haneda", "羽田机场", "hnd"], ["HND"]),
+            (["narita", "成田机场", "nrt"], ["NRT"]),
+            (["tokyo", "东京"], ["HND", "NRT"]),
+            (["charles de gaulle", "戴高乐机场", "cdg"], ["CDG"]),
+            (["orly", "奥利机场", "ory"], ["ORY"]),
+            (["paris", "巴黎"], ["CDG", "ORY"]),
+            (["dulles", "杜勒斯机场", "iad"], ["IAD"]),
+            (["reagan national", "里根国家机场", "dca"], ["DCA"]),
+            (["washington", "华盛顿"], ["IAD", "DCA", "BWI"]),
+            (["o'hare", "ohare", "奥黑尔机场", "ord"], ["ORD"]),
+            (["midway", "中途机场", "mdw"], ["MDW"]),
+            (["chicago", "芝加哥"], ["ORD", "MDW"]),
+            (["san francisco international", "旧金山国际机场", "sfo"], ["SFO"]),
+            (["oakland international", "奥克兰国际机场", "oak"], ["OAK"]),
+            (["san jose international", "圣何塞国际机场", "sjc"], ["SJC"]),
+            (["san francisco bay area", "san francisco", "旧金山"], ["SFO", "OAK", "SJC"]),
+            (["dallas fort worth", "达拉斯沃斯堡", "dfw"], ["DFW"]),
+            (["love field", "达拉斯爱田", "dal"], ["DAL"]),
+            (["dallas", "达拉斯"], ["DFW", "DAL"]),
+            (["incheon", "仁川机场", "icn"], ["ICN"]),
+            (["gimpo", "金浦机场", "gmp"], ["GMP"]),
+            (["seoul", "首尔"], ["ICN", "GMP"]),
+            (["kansai international", "关西国际机场", "kix"], ["KIX"]),
+            (["osaka international", "伊丹机场", "itm"], ["ITM"]),
+            (["osaka", "大阪"], ["KIX", "ITM"]),
+            (["malpensa", "马尔彭萨机场", "mxp"], ["MXP"]),
+            (["linate", "利纳特机场", "lin"], ["LIN"]),
+            (["milan", "米兰"], ["MXP", "LIN"]),
+            (["fiumicino", "菲乌米奇诺机场", "fco"], ["FCO"]),
+            (["ciampino", "钱皮诺机场", "cia"], ["CIA"]),
+            (["rome", "罗马"], ["FCO", "CIA"]),
+            (["istanbul airport", "伊斯坦布尔机场", "ist"], ["IST"]),
+            (["sabiha gokcen", "萨比哈格克琴机场", "saw"], ["SAW"]),
+            (["istanbul", "伊斯坦布尔"], ["IST", "SAW"]),
+            (["taoyuan", "桃园机场", "tpe"], ["TPE"]),
+            (["songshan", "松山机场", "tsa"], ["TSA"]),
+            (["taipei", "台北"], ["TPE", "TSA"]),
+            (["pearson", "皮尔逊机场", "yyz"], ["YYZ"]),
+            (["billy bishop", "比利毕晓普机场", "ytz"], ["YTZ"]),
+            (["toronto", "多伦多"], ["YYZ", "YTZ"]),
+            (["beijing capital", "首都机场", "pek"], ["PEK"]),
+            (["beijing daxing", "大兴机场", "pkx"], ["PKX"]),
+            (["beijing", "北京"], ["PEK", "PKX"]),
+            (["pudong", "浦东机场", "pvg"], ["PVG"]),
+            (["hongqiao", "虹桥机场", "sha"], ["SHA"]),
+            (["shanghai", "上海"], ["PVG", "SHA"]),
+        ]
+        let matches = aliases.compactMap { entry -> (length: Int, codes: Set<String>)? in
+            let matchedName = entry.names
+                .filter { normalized.contains($0.folding(options: [.diacriticInsensitive, .caseInsensitive], locale: .current)) }
+                .map(\.count)
+                .max()
+            guard let matchedName else { return nil }
+            return (matchedName, entry.codes)
+        }
+        guard let longest = matches.map(\.length).max() else { return [] }
+        return matches.filter { $0.length == longest }.reduce(into: Set<String>()) { $0.formUnion($1.codes) }
     }
 
     private func decodeMCPBody(_ data: Data) throws -> Any {
@@ -397,7 +543,7 @@ struct VariFlightClient {
         guard let envelope = response as? [String: Any] else { throw VariFlightClientError.invalidResponse }
         if let error = envelope["error"] as? [String: Any] {
             let message = error["message"] as? String ?? String(localized: "飞友航班查询失败。", locale: AppLanguageSettings.currentLocale)
-            throw VariFlightClientError.requestFailed(message)
+            throw VariFlightClientError.requestFailed(localizedProviderError(message))
         }
         guard let result = envelope["result"] as? [String: Any] else {
             let excerpt = String(String(describing: envelope).prefix(400))
@@ -407,7 +553,7 @@ struct VariFlightClient {
         if (result["isError"] as? Bool) == true {
             let message = (result["content"] as? [[String: Any]])?.compactMap { $0["text"] as? String }.first
                 ?? String(localized: "飞友航班查询失败。", locale: AppLanguageSettings.currentLocale)
-            throw VariFlightClientError.requestFailed(message)
+            throw VariFlightClientError.requestFailed(localizedProviderError(message))
         }
 
         var candidates: [Any] = []
@@ -431,6 +577,14 @@ struct VariFlightClient {
         }
         let format = String(localized: "飞友接口已返回结果，但应用暂未识别其字段格式。响应片段：%@", locale: AppLanguageSettings.currentLocale)
         throw VariFlightClientError.requestFailed(String(format: format, locale: AppLanguageSettings.currentLocale, arguments: [excerpt]))
+    }
+
+    private func localizedProviderError(_ message: String) -> String {
+        let normalized = message.folding(options: [.diacriticInsensitive, .caseInsensitive], locale: .current)
+        if normalized.contains("api key is disabled") || normalized.contains("api key 已停用") {
+            return String(localized: "飞友 API 密钥已停用，请在飞友控制台启用或更换。", locale: AppLanguageSettings.currentLocale)
+        }
+        return message
     }
 
     private func extractFlights(from value: Any) -> [VariFlightLookupResult] {
@@ -526,9 +680,12 @@ struct VariFlightClient {
                 if result[.departure] == nil { result[.departure] = string }
             case "flightarrtimeplandate", "estimatedarrivaltime", "estimatedarrivedtime", "arrivalestimatedtime", "arrivaldatetime", "arrivaltime", "scheduledarrival", "scheduledarrivaltime", "plantimearrival", "arrtime", "arrdatetime", "arrivetime", "sta", "eta", "flightarrtimereadydate":
                 if result[.arrival] == nil { result[.arrival] = string }
-            case "flightdeptterminal", "flightdeptterminalname", "departureterminal", "depterminal", "terminaldeparture", "deptterminal":
+            // VariFlight's unqualified `terminal` field describes the origin terminal.
+            // Do not put it in the arrival slot: for UA1743 this is IAH Terminal C,
+            // while LAX's arrival terminal is reported separately as Terminal 7.
+            case "flightdeptterminal", "flightdeptterminalname", "departureterminal", "departureterminalname", "depterminal", "terminaldeparture", "deptterminal", "terminal":
                 if result[.departureTerminal] == nil { result[.departureTerminal] = string }
-            case "flightarrterminal", "flightarrterminalname", "arrivalterminal", "arrterminal", "terminalarrival", "terminalarr", "arriveterminal", "terminal":
+            case "flightarrterminal", "flightarrterminalname", "arrivalterminal", "arrivalterminalname", "arrterminal", "arrterminalname", "terminalarrival", "terminalarr", "arriveterminal":
                 if result[.arrivalTerminal] == nil { result[.arrivalTerminal] = string }
             case "baggagecarousel", "baggagecarouselnumber", "carousel", "carouselnumber", "baggageclaim", "baggageclaimbelt", "baggagebelt", "arrbaggagecarousel", "luggagecarousel":
                 if result[.baggage] == nil { result[.baggage] = string }
@@ -545,8 +702,8 @@ struct VariFlightClient {
             (.arrivalAirport, #"(?:FlightArr|arrivalAirport|arrivalAirportName|arrAirport|arrAirportName|arrivalStation|到达机场|目的机场|到达地|arrival\s*airport|destination|to)[\"']?\s*[:：]\s*[\"']?([^\"'\n,，;；}]+)"#),
             (.departure, #"(?:FlightDeptimePlanDate|FlightDeptimeReadyDate|起飞时间|计划起飞|预计起飞|departure(?:\s*time)?|scheduled\s*departure|estimated\s*departure|STD)[\"']?\s*[:：]\s*[\"']?([^\"'\n,，;；}]+)"#),
             (.arrival, #"(?:FlightArrtimePlanDate|FlightArrtimeReadyDate|预计到达时间|到达时间|计划到达|预计到达|arrival(?:\s*time)?|estimated\s*arrival|scheduled\s*arrival|ETA|STA)[\"']?\s*[:：]\s*[\"']?([^\"'\n,，;；}]+)"#),
-            (.departureTerminal, #"(?:FlightDeptTerminal(?:Name)?|出发航站楼|出发航站|departure\s*terminal|dep\s*terminal)\s*[\"']?\s*[:：]\s*[\"']?([^\"'\n,，;；}]+)"#),
-            (.arrivalTerminal, #"(?:FlightArrTerminal(?:Name)?|到达航站楼|到达航站|到达航站区|arrival\s*terminal|arr\s*terminal|terminal)\s*[\"']?\s*[:：]\s*[\"']?([^\"'\n,，;；}]+)"#),
+            (.departureTerminal, #"(?:FlightDeptTerminal(?:Name)?|departureTerminalName|depTerminalName|出发航站楼|出发航站|departure\s*terminal|dep\s*terminal|(?<!arrival )(?<!arr )(?<!到达)(?<![A-Za-z])terminal)\s*[\"']?\s*[:：]\s*[\"']?([^\"'\n,，;；}]+)"#),
+            (.arrivalTerminal, #"(?:FlightArrTerminal(?:Name)?|arrivalTerminalName|arrTerminalName|到达航站楼|到达航站|到达航站区|arrival\s*terminal|arr\s*terminal)\s*[\"']?\s*[:：]\s*[\"']?([^\"'\n,，;；}]+)"#),
             (.baggage, #"(?:行李转盘|行李提取转盘|baggage\s*carousel|baggage\s*claim|carousel)\s*[:：]\s*[\"']?([^\"'\n,，;；}]+)"#)
         ]
         var result: [FlightField: String] = [:]

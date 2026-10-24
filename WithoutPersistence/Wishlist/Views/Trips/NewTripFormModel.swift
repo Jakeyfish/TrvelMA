@@ -384,7 +384,10 @@ struct AddTripFormView: View {
                     .frame(maxWidth: 900)
                     .frame(maxWidth: .infinity)
                 }
-                .scrollDismissesKeyboard(.interactively)
+                // Address autocomplete inserts results while the user is typing.
+                // Keep that layout update from being treated as an interactive scroll
+                // gesture that dismisses the keyboard after the first character.
+                .scrollDismissesKeyboard(.never)
                 .background(Color.primary.opacity(0.015))
                 .onAppear { formData.updateDefaultReminderDateTimes() }
                 .onChange(of: formData.appointmentDate) { _, _ in formData.adjustRemindersForAppointmentChange() }
@@ -838,6 +841,11 @@ struct TripDeteilSection: View {
               let customer = customers.first(where: { $0.uuid == customerID }) else { return [] }
         return customer.addresses.sorted { $0.isDefault && !$1.isDefault }
     }
+
+    private var flightLookupContextKey: String {
+        [formData.flightInfo, String(formData.flightdate.timeIntervalSince1970), formData.serviceType, formData.locationStart, formData.locationEnd]
+            .joined(separator: "\u{1F}")
+    }
     
     
     var body: some View {
@@ -999,7 +1007,7 @@ struct TripDeteilSection: View {
         .sheet(item: $addressPickerTarget) {
             addressPicker(for: $0)
         }
-        .adaptiveFormPresentation(isPresented: $isChoosingFlight) {
+        .sheet(isPresented: $isChoosingFlight) {
             FlightCandidatePicker(candidates: flightCandidates, onSelect: selectFlight)
         }
         .onChange(of: focusedAddressField) { _, target in
@@ -1027,6 +1035,7 @@ struct TripDeteilSection: View {
             guard let location else { return }
             searcher.updateRegion(center: location.coordinate)
         }
+        .onChange(of: flightLookupContextKey) { _, _ in invalidateFlightSelection() }
         .alert("无法获取当前位置", isPresented: Binding(
             get: { locationManager.errorMessage != nil },
             set: { if !$0 { locationManager.errorMessage = nil } }
@@ -1046,12 +1055,12 @@ struct TripDeteilSection: View {
         navigationLabel: String
     ) -> some View {
         VStack(spacing: 4) {
-            SystemIMETextField(
-                text: address,
-                placeholder: placeholder,
-                fontSize: 14,
-                isFocused: addressFocusBinding(for: target)
-            )
+            TextField(placeholder, text: address)
+                .font(.system(size: 14))
+                .textInputAutocapitalization(.sentences)
+                .autocorrectionDisabled(false)
+                .focused($focusedAddressField, equals: target)
+                .keyboardDoneToolbar()
             .frame(minWidth: 0, maxWidth: .infinity, minHeight: 38)
 
             HStack(spacing: 8) {
@@ -1130,19 +1139,6 @@ struct TripDeteilSection: View {
                 addressSuggestions(for: target)
             }
         }
-    }
-
-    private func addressFocusBinding(for target: AddressPickerTarget) -> Binding<Bool> {
-        Binding(
-            get: { focusedAddressField == target },
-            set: { isFocused in
-                if isFocused {
-                    focusedAddressField = target
-                } else if focusedAddressField == target {
-                    focusedAddressField = nil
-                }
-            }
-        )
     }
 
     private func removeStop(at index: Int) {
@@ -1330,11 +1326,35 @@ struct TripDeteilSection: View {
                     cloudAccessToken: cloudAccessToken
                 )
                 flightCandidates = candidates
-                isChoosingFlight = true
+                if candidates.count == 1, let candidate = candidates.first {
+                    selectFlight(candidate)
+                } else {
+                    isChoosingFlight = candidates.count > 1
+                }
             } catch {
                 flightLookupError = error.localizedDescription
             }
         }
+    }
+
+    private func invalidateFlightSelection() {
+        guard !formData.flightSelectionSnapshotJSON.isEmpty ||
+              flightLookupResult != nil ||
+              !formData.flightDepartureTime.isEmpty ||
+              !formData.flightEstimatedArrivalTime.isEmpty ||
+              !formData.flightArrivalTerminal.isEmpty ||
+              !formData.flightBaggageCarousel.isEmpty ||
+              !departureTimeZoneLabel.isEmpty ||
+              !arrivalTimeZoneLabel.isEmpty else { return }
+        formData.flightSelectionSnapshotJSON = ""
+        flightLookupResult = nil
+        flightLookupError = nil
+        departureTimeZoneLabel = ""
+        arrivalTimeZoneLabel = ""
+        formData.flightDepartureTime = ""
+        formData.flightEstimatedArrivalTime = ""
+        formData.flightArrivalTerminal = ""
+        formData.flightBaggageCarousel = ""
     }
 
     private func selectFlight(_ result: VariFlightLookupResult) {
@@ -1725,6 +1745,7 @@ final class TripCurrentLocationManager: NSObject, ObservableObject, CLLocationMa
 
     private let manager = CLLocationManager()
     private var reverseGeocodingRequest: MKReverseGeocodingRequest?
+    private var isWaitingForExplicitAuthorization = false
 
     override init() {
         super.init()
@@ -1738,10 +1759,13 @@ final class TripCurrentLocationManager: NSObject, ObservableObject, CLLocationMa
 
         switch manager.authorizationStatus {
         case .notDetermined:
+            isWaitingForExplicitAuthorization = true
             manager.requestWhenInUseAuthorization()
         case .authorizedAlways, .authorizedWhenInUse:
+            isWaitingForExplicitAuthorization = false
             manager.requestLocation()
         case .denied, .restricted:
+            isWaitingForExplicitAuthorization = false
             errorMessage = String(localized: "请在 iPhone 设置中允许行程管家使用定位服务。", locale: AppLanguageSettings.currentLocale)
         @unknown default:
             errorMessage = String(localized: "当前无法使用定位服务。", locale: AppLanguageSettings.currentLocale)
@@ -1751,8 +1775,14 @@ final class TripCurrentLocationManager: NSObject, ObservableObject, CLLocationMa
     func locationManagerDidChangeAuthorization(_ manager: CLLocationManager) {
         switch manager.authorizationStatus {
         case .authorizedAlways, .authorizedWhenInUse:
+            // CLLocationManager can notify us just because the editor opened.
+            // Only fetch a location when the user explicitly tapped the location button.
+            guard isWaitingForExplicitAuthorization else { return }
+            isWaitingForExplicitAuthorization = false
             manager.requestLocation()
         case .denied, .restricted:
+            guard isWaitingForExplicitAuthorization else { return }
+            isWaitingForExplicitAuthorization = false
             errorMessage = String(localized: "请在 iPhone 设置中允许行程管家使用定位服务。", locale: AppLanguageSettings.currentLocale)
         default:
             break

@@ -400,6 +400,8 @@ private struct BusinessCardQRRow: View {
                 TextField(localized("例如：微信"), text: $item.name)
                     .keyboardDoneToolbar()
                     .textFieldStyle(.roundedBorder)
+                    .frame(minWidth: 0)
+                    .layoutPriority(1)
             }
             Button(role: .destructive, action: onDelete) {
                 Image(systemName: "trash")

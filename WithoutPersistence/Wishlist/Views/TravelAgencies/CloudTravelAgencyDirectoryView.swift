@@ -78,6 +78,7 @@ struct CloudTravelAgencyDirectoryView: View {
                             .foregroundStyle(.white).frame(width: 34, height: 34).background(Color.accentColor, in: Circle())
                     }
                     .buttonStyle(.plain)
+                    .accessibilityLabel("新增旅行社")
                         .disabled(directory.isLoading)
                 }
             }
@@ -242,6 +243,8 @@ private struct CloudTravelAgencyEditor: View {
             Section("联系信息") {
                 HStack(spacing: 12) {
                     TextField("联系人", text: $contact)
+                        .frame(minWidth: 0)
+                        .layoutPriority(1)
                     SystemIMETextField(
                         text: $phone,
                         placeholder: "联系电话",

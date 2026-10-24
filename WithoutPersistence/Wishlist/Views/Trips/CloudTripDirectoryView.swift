@@ -10,7 +10,25 @@ struct CloudHomeDashboardView: View {
     @State private var hasLoadedAccount = false
 
     var body: some View {
-        CloudTripScheduleView(directory: directory, showsDateControls: false)
+        Group {
+            if directory.isLoading && directory.trips.isEmpty {
+                ProgressView("正在加载云端行程…")
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+            } else if let error = directory.errorMessage, directory.trips.isEmpty {
+                ContentUnavailableView {
+                    Label("无法加载云端行程", systemImage: "icloud.slash")
+                } description: {
+                    Text(error)
+                } actions: {
+                    Button("重试") {
+                        Task { await directory.reloadTrips(using: auth) }
+                    }
+                }
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+            } else {
+                CloudTripScheduleView(directory: directory, showsDateControls: false)
+            }
+        }
         .task(id: "\(auth.isCloudAccount)|\(auth.currentEmail)") {
             hasLoadedAccount = false
             directory.clearForAccountChange()
@@ -77,7 +95,7 @@ struct CloudTripDirectoryView: View {
                 Task { await directory.reload(using: auth) }
             }
             .alert("无法更新行程", isPresented: Binding(
-                get: { directory.errorMessage != nil && !directory.trips.isEmpty },
+            get: { directory.errorMessage != nil },
                 set: { if !$0 { directory.clearError() } }
             )) {
                 Button("确定", role: .cancel) { directory.clearError() }
@@ -140,6 +158,9 @@ private struct CloudTripScheduleView: View {
     @AppStorage("tripList.selectedDateTimestamp") private var selectedDateTimestamp = Date.now.timeIntervalSince1970
     @State private var dateMode: TripDateMode = .sevenDays
     @State private var isShowingAllDates = true
+    @State private var completionTrip: CloudOnlineRepository.CloudTripRecord?
+    @State private var pendingCompletionTrip: CloudOnlineRepository.CloudTripRecord?
+    @State private var settlementTrip: CloudOnlineRepository.CloudTripRecord?
 
     private var dateNavigationAnchor: Date {
         selectedDate ?? Date(timeIntervalSince1970: selectedDateTimestamp)
@@ -298,7 +319,8 @@ private struct CloudTripScheduleView: View {
                             CloudTripManagementCard(
                                 trip: trip,
                                 directory: directory,
-                                showsFlightActions: !trip.isCompleted && !trip.isCancelled
+                                showsFlightActions: !trip.isCompleted && !trip.isCancelled,
+                                onComplete: { pendingCompletionTrip = $0 }
                             )
                         }
                     }
@@ -317,6 +339,37 @@ private struct CloudTripScheduleView: View {
             else { return }
             selectedDate = firstDate
         }
+        .tripCompletionConfirmationPrompt(isPresented: Binding(
+            get: { pendingCompletionTrip != nil },
+            set: { if !$0 { pendingCompletionTrip = nil } }
+        ), onConfirm: {
+            guard let trip = pendingCompletionTrip else { return }
+            pendingCompletionTrip = nil
+            Task { await requestCompletion(for: trip) }
+        })
+        .completionSettlementPrompt(isPresented: Binding(
+            get: { completionTrip != nil },
+            set: { if !$0 { completionTrip = nil } }
+        ), onSettle: { finishCompletion(shouldSettle: true) }, onSkip: { finishCompletion(shouldSettle: false) })
+        .adaptiveFormPresentation(isPresented: Binding(
+            get: { settlementTrip != nil },
+            set: { if !$0 { settlementTrip = nil } }
+        )) {
+            if let settlementTrip {
+                NavigationStack { CloudTripEditor(directory: directory, trip: settlementTrip, settlementOnly: true) }
+            }
+        }
+    }
+
+    private func finishCompletion(shouldSettle: Bool) {
+        guard let trip = completionTrip else { return }
+        completionTrip = nil
+        if shouldSettle { settlementTrip = trip }
+    }
+
+    private func requestCompletion(for trip: CloudOnlineRepository.CloudTripRecord) async {
+        guard await directory.updateStatus(for: trip, isCompleted: true, isCancelled: false, using: auth) else { return }
+        completionTrip = trip
     }
 
     private var allTripsButton: some View {
@@ -405,6 +458,7 @@ private struct CloudTripManagementCard: View {
     let trip: CloudOnlineRepository.CloudTripRecord
     let directory: CloudTripDirectoryModel
     var showsFlightActions = true
+    var onComplete: (CloudOnlineRepository.CloudTripRecord) -> Void
     @State private var isFlightExpanded = false
     @State private var isLookingUpFlight = false
     @State private var flightLookupResult: VariFlightLookupResult?
@@ -414,7 +468,6 @@ private struct CloudTripManagementCard: View {
     @State private var departureTimeZoneLabel = ""
     @State private var arrivalTimeZoneLabel = ""
     @State private var isConfirmingCancellation = false
-    @State private var isShowingCompletionPrompt = false
     @State private var isShowingSettlement = false
 
     private var appointmentDateTime: Date {
@@ -487,11 +540,7 @@ private struct CloudTripManagementCard: View {
                     Spacer(minLength: 0)
                     if !trip.isCompleted && !trip.isCancelled {
                         Button("已完成") {
-                            Task {
-                                if await directory.updateStatus(for: trip, isCompleted: true, isCancelled: false, using: auth) {
-                                    isShowingCompletionPrompt = true
-                                }
-                            }
+                            onComplete(trip)
                         }
                         .font(.caption.weight(.semibold)).foregroundStyle(Color.accentColor)
                         .padding(.horizontal, 10).padding(.vertical, 6)
@@ -521,16 +570,10 @@ private struct CloudTripManagementCard: View {
             }
             Button("否", role: .cancel) {}
         }
-        .alert("行程已结束", isPresented: $isShowingCompletionPrompt) {
-            Button("否", role: .cancel) {}
-            Button("是") { isShowingSettlement = true }
-        } message: {
-            Text("是否财务结算？")
-        }
         .adaptiveFormPresentation(isPresented: $isShowingSettlement) {
             NavigationStack { CloudTripEditor(directory: directory, trip: trip, settlementOnly: true) }
         }
-        .adaptiveFormPresentation(isPresented: $isChoosingFlight) {
+        .sheet(isPresented: $isChoosingFlight) {
             FlightCandidatePicker(candidates: flightCandidates, onSelect: selectFlight)
         }
         .alert("无法更新行程", isPresented: Binding(
@@ -589,7 +632,10 @@ private struct CloudTripManagementCard: View {
                             .font(.system(size: 10, weight: .semibold)).foregroundStyle(.tertiary)
                     }
                 }.buttonStyle(.plain)
-                Button { lookupFlight() } label: {
+                Button {
+                    withAnimation(.easeInOut(duration: 0.2)) { isFlightExpanded = true }
+                    lookupFlight(forceRefresh: true)
+                } label: {
                     Image(systemName: "arrow.clockwise").font(.caption.weight(.semibold)).foregroundStyle(Color.accentColor)
                 }
                 .buttonStyle(.plain).disabled(isLookingUpFlight).accessibilityLabel("刷新航班信息")
@@ -621,10 +667,12 @@ private struct CloudTripManagementCard: View {
         .background(Color(.secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 13, style: .continuous))
     }
 
-    private func lookupFlight() {
+    private func lookupFlight(forceRefresh: Bool = false) {
         guard !trip.flightInfo.isEmpty else { return }
         isLookingUpFlight = true
         flightLookupError = nil
+        flightLookupResult = nil
+        flightCandidates = []
         Task {
             do {
                 let date = trip.flightDate.cloudDate
@@ -636,10 +684,15 @@ private struct CloudTripManagementCard: View {
                     serviceType: trip.serviceType,
                     locationStart: trip.locationStart,
                     locationEnd: trip.locationEnd,
-                    cloudAccessToken: accessToken
+                    cloudAccessToken: accessToken,
+                    forceRefresh: forceRefresh
                 )
                 flightCandidates = candidates
-                isChoosingFlight = true
+                if candidates.count == 1, let candidate = candidates.first {
+                    selectFlight(candidate)
+                } else {
+                    isChoosingFlight = candidates.count > 1
+                }
             } catch {
                 flightLookupError = error.localizedDescription
             }
@@ -651,6 +704,10 @@ private struct CloudTripManagementCard: View {
         if let saved = trip.flightSelectionSnapshot,
            saved.matches(flightNumber: trip.flightInfo, flightDate: trip.flightDate.cloudDate) {
             flightLookupResult = saved.selected
+            Task {
+                departureTimeZoneLabel = await FlightTimeZoneResolver.label(for: saved.selected.departureAirport, date: trip.flightDate.cloudDate) ?? ""
+                arrivalTimeZoneLabel = await FlightTimeZoneResolver.label(for: saved.selected.arrivalAirport, date: trip.flightDate.cloudDate) ?? ""
+            }
             return
         }
         lookupFlight()
@@ -693,19 +750,21 @@ private struct CloudTripManagementCard: View {
             }
             .buttonStyle(.plain)
 
-            Button {
-                let provider = NavigationProvider(rawValue: defaultNavigationProvider) ?? .appleMaps
-                if let url = provider.directionsURL(for: value) { openURL(url) }
-            } label: {
-                Image(systemName: "arrow.triangle.turn.up.right.diamond.fill")
-                    .font(.system(size: 17, weight: .semibold))
-                    .foregroundStyle(value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? Color.secondary.opacity(0.35) : Color.accentColor)
-                    .frame(width: 34, height: 34)
-                    .contentShape(Rectangle())
+            if !trip.isCompleted && !trip.isCancelled {
+                Button {
+                    let provider = NavigationProvider(rawValue: defaultNavigationProvider) ?? .appleMaps
+                    if let url = provider.directionsURL(for: value) { openURL(url) }
+                } label: {
+                    Image(systemName: "arrow.triangle.turn.up.right.diamond.fill")
+                        .font(.system(size: 17, weight: .semibold))
+                        .foregroundStyle(value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? Color.secondary.opacity(0.35) : Color.accentColor)
+                        .frame(width: 34, height: 34)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .disabled(value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                .accessibilityLabel("导航至\(title)")
             }
-            .buttonStyle(.plain)
-            .disabled(value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-            .accessibilityLabel("导航至\(title)")
         }
     }
 
@@ -757,12 +816,19 @@ private struct CloudTripDetailView: View {
     let trip: CloudOnlineRepository.CloudTripRecord
     let directory: CloudTripDirectoryModel
     @State private var isEditing = false
+    @State private var editPresentationID = UUID()
     @State private var isCopying = false
     @State private var isConfirmingDelete = false
     @State private var isConfirmingCancellation = false
+    @State private var isConfirmingCompletion = false
     @State private var isShowingCompletionPrompt = false
     @State private var isShowingSettlement = false
     @State private var isFlightExpanded = false
+    @State private var completedOverride: Bool?
+    @State private var cancelledOverride: Bool?
+
+    private var isCompleted: Bool { completedOverride ?? trip.isCompleted }
+    private var isCancelled: Bool { cancelledOverride ?? trip.isCancelled }
 
     private var netIncome: Double {
         trip.price + trip.tip + trip.expenses.reduce(0) { $0 + ($1.isAddition ? abs($1.amount) : -abs($1.amount)) }
@@ -780,7 +846,7 @@ private struct CloudTripDetailView: View {
         Section("状态") {
             HStack(spacing: 8) {
                 Text("行程状态")
-                detailStatusBadge(title: tripStatusTitle, isOn: trip.isCompleted || trip.isCancelled, tint: trip.isCancelled ? .red : .accentColor)
+                detailStatusBadge(title: tripStatusTitle, isOn: isCompleted || isCancelled, tint: isCancelled ? .red : .accentColor)
                 Spacer(minLength: 4)
                 Text("结算状态")
                 detailStatusBadge(title: trip.isPaid ? "已结清" : "未结款", isOn: trip.isPaid, tint: .green)
@@ -789,26 +855,27 @@ private struct CloudTripDetailView: View {
     }
 
     private var tripStatusTitle: String {
-        if trip.isCancelled { return "已取消" }
-        return trip.isCompleted ? "已完成" : "待执行"
+        if isCancelled { return "已取消" }
+        return isCompleted ? "已完成" : "待执行"
     }
 
     @ViewBuilder
     private var tripActionsSection: some View {
-        if trip.isCancelled || !trip.isCompleted || !trip.isPaid {
+        if isCancelled || !isCompleted || !trip.isPaid {
             Section("操作") {
                 HStack(spacing: 12) {
-                    if trip.isCancelled {
+                    if isCancelled {
                         Button("恢复行程") {
-                            Task { _ = await directory.updateStatus(for: trip, isCompleted: false, isCancelled: false, using: auth) }
-                        }.buttonStyle(.borderedProminent)
-                    } else if !trip.isCompleted {
-                        Button("已完成") {
                             Task {
-                                if await directory.updateStatus(for: trip, isCompleted: true, isCancelled: false, using: auth) {
-                                    isShowingCompletionPrompt = true
+                                if await directory.updateStatus(for: trip, isCompleted: false, isCancelled: false, using: auth) {
+                                    completedOverride = false
+                                    cancelledOverride = false
                                 }
                             }
+                        }.buttonStyle(.borderedProminent)
+                    } else if !isCompleted {
+                        Button("已完成") {
+                            isConfirmingCompletion = true
                         }.buttonStyle(.borderedProminent)
                         Button("取消行程") { isConfirmingCancellation = true }
                             .buttonStyle(.bordered).tint(.red)
@@ -855,36 +922,40 @@ private struct CloudTripDetailView: View {
             }
             if !trip.flightInfo.isEmpty {
                 Section("航班信息") {
-                    Button {
-                        let shouldExpand = !isFlightExpanded
-                        withAnimation(.easeInOut(duration: 0.2)) { isFlightExpanded = shouldExpand }
-                        if shouldExpand && flightLookupResult == nil && !isLookingUpFlight { lookupFlight() }
-                    } label: {
-                        HStack(spacing: 8) {
-                            Image(systemName: "airplane").foregroundStyle(Color.accentColor)
-                            Text(trip.flightInfo).font(.subheadline.weight(.semibold))
-                            Text(trip.flightDate.cloudDate.formatted(.dateTime.month(.abbreviated).day().locale(locale)))
-                                .font(.caption).foregroundStyle(.secondary)
-                            Spacer(minLength: 0)
-                            if isLookingUpFlight { ProgressView().controlSize(.mini) }
-                            else { Image(systemName: isFlightExpanded ? "chevron.up" : "chevron.down").font(.caption).foregroundStyle(.tertiary) }
-                        }.contentShape(Rectangle())
-                    }.buttonStyle(.plain)
-                    if isFlightExpanded {
-                        FlightInformationPanel(
-                            flightNumber: trip.flightInfo,
-                            flightDate: trip.flightDate.cloudDate,
-                            result: flightLookupResult,
-                            isLoading: isLookingUpFlight,
-                            error: flightLookupError,
-                            departureFallback: trip.flightDepartureTime ?? "",
-                            arrivalFallback: trip.flightEstimatedArrivalTime ?? "",
-                            departureTimeZone: departureTimeZoneLabel,
-                            arrivalTimeZone: arrivalTimeZoneLabel
-                        )
-                        .padding(12)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .background(Color(.secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 13, style: .continuous))
+                    if isCompleted || isCancelled {
+                        LabeledContent("航班", value: trip.flightInfo)
+                    } else {
+                        Button {
+                            let shouldExpand = !isFlightExpanded
+                            withAnimation(.easeInOut(duration: 0.2)) { isFlightExpanded = shouldExpand }
+                            if shouldExpand && flightLookupResult == nil && !isLookingUpFlight { lookupFlight() }
+                        } label: {
+                            HStack(spacing: 8) {
+                                Image(systemName: "airplane").foregroundStyle(Color.accentColor)
+                                Text(trip.flightInfo).font(.subheadline.weight(.semibold))
+                                Text(trip.flightDate.cloudDate.formatted(.dateTime.month(.abbreviated).day().locale(locale)))
+                                    .font(.caption).foregroundStyle(.secondary)
+                                Spacer(minLength: 0)
+                                if isLookingUpFlight { ProgressView().controlSize(.mini) }
+                                else { Image(systemName: isFlightExpanded ? "chevron.up" : "chevron.down").font(.caption).foregroundStyle(.tertiary) }
+                            }.contentShape(Rectangle())
+                        }.buttonStyle(.plain)
+                        if isFlightExpanded {
+                            FlightInformationPanel(
+                                flightNumber: trip.flightInfo,
+                                flightDate: trip.flightDate.cloudDate,
+                                result: flightLookupResult,
+                                isLoading: isLookingUpFlight,
+                                error: flightLookupError,
+                                departureFallback: trip.flightDepartureTime ?? "",
+                                arrivalFallback: trip.flightEstimatedArrivalTime ?? "",
+                                departureTimeZone: departureTimeZoneLabel,
+                                arrivalTimeZone: arrivalTimeZoneLabel
+                            )
+                            .padding(12)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .background(Color(.secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 13, style: .continuous))
+                        }
                     }
                 }
             }
@@ -928,14 +999,18 @@ private struct CloudTripDetailView: View {
         .toolbar {
             ToolbarItemGroup(placement: .topBarTrailing) {
                 Button { isCopying = true } label: { Image(systemName: "doc.on.doc") }.accessibilityLabel("复制行程")
-                if !trip.isCompleted && !trip.isCancelled {
-                    Button { isEditing = true } label: { Image(systemName: "pencil") }.accessibilityLabel("编辑行程")
+                if !isCompleted && !isCancelled {
+                    Button {
+                        editPresentationID = UUID()
+                        isEditing = true
+                    } label: { Image(systemName: "pencil") }.accessibilityLabel("编辑行程")
                     Button(role: .destructive) { isConfirmingDelete = true } label: { Image(systemName: "trash") }.accessibilityLabel("删除行程")
                 }
             }
         }
         .adaptiveFormPresentation(isPresented: $isEditing) {
             NavigationStack { CloudTripEditor(directory: directory, trip: trip) }
+                .id(editPresentationID)
         }
         .adaptiveFormPresentation(isPresented: $isCopying) {
             NavigationStack { CloudTripEditor(directory: directory, trip: trip, copyAsNew: true) }
@@ -960,13 +1035,29 @@ private struct CloudTripDetailView: View {
             Button("取消", role: .cancel) {}
         }
         .confirmationDialog("是否需要取消行程？", isPresented: $isConfirmingCancellation, titleVisibility: .visible) {
-            Button("是，取消行程", role: .destructive) { Task { _ = await directory.updateStatus(for: trip, isCompleted: false, isCancelled: true, using: auth) } }
+            Button("是，取消行程", role: .destructive) {
+                Task {
+                    if await directory.updateStatus(for: trip, isCompleted: false, isCancelled: true, using: auth) {
+                        completedOverride = false
+                        cancelledOverride = true
+                    }
+                }
+            }
             Button("否", role: .cancel) {}
         }
-        .alert("行程已结束", isPresented: $isShowingCompletionPrompt) {
-            Button("否", role: .cancel) {}
-            Button("是") { isShowingSettlement = true }
-        } message: { Text("是否财务结算？") }
+        .completionSettlementPrompt(
+            isPresented: $isShowingCompletionPrompt,
+            onSettle: { isShowingSettlement = true }
+        )
+        .tripCompletionConfirmationPrompt(isPresented: $isConfirmingCompletion) {
+            Task {
+                if await directory.updateStatus(for: trip, isCompleted: true, isCancelled: false, using: auth) {
+                    completedOverride = true
+                    cancelledOverride = false
+                    isShowingCompletionPrompt = true
+                }
+            }
+        }
         .adaptiveFormPresentation(isPresented: $isShowingSettlement) {
             NavigationStack { CloudTripEditor(directory: directory, trip: trip, settlementOnly: true) }
         }
@@ -990,7 +1081,7 @@ private struct CloudTripDetailView: View {
             Text(LocalizedStringKey(title)).font(.caption).foregroundStyle(.secondary)
             if address.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                 Text("未填写").foregroundStyle(.secondary)
-            } else if trip.isCompleted {
+            } else if isCompleted || isCancelled {
                 Text(address).foregroundStyle(.primary).frame(maxWidth: .infinity, alignment: .leading)
             } else {
                 Button {
@@ -1074,6 +1165,7 @@ private struct CloudTripEditor: View {
     @State private var flightCandidates: [VariFlightLookupResult] = []
     @State private var isChoosingFlight = false
     @State private var flightSelectionSnapshot: SavedFlightSelection?
+    @State private var didClearFlightSelection = false
     @State private var departureTimeZoneLabel = ""
     @State private var arrivalTimeZoneLabel = ""
     @StateObject private var locationManager = TripCurrentLocationManager()
@@ -1123,6 +1215,11 @@ private struct CloudTripEditor: View {
 
     private var moneySymbol: String {
         BaseCurrencyCatalog.options.first { $0.currencyCode == directory.currencyCode }?.symbol ?? "$"
+    }
+
+    private var flightLookupContextKey: String {
+        [flightNumber, String(flightDate.timeIntervalSince1970), serviceType, start, destination]
+            .joined(separator: "\u{1F}")
     }
 
     private func serviceIcon(for type: String) -> String {
@@ -1307,7 +1404,11 @@ private struct CloudTripEditor: View {
                     cloudAccessToken: accessToken
                 )
                 flightCandidates = candidates
-                isChoosingFlight = true
+                if candidates.count == 1, let candidate = candidates.first {
+                    selectFlight(candidate)
+                } else {
+                    isChoosingFlight = candidates.count > 1
+                }
             } catch {
                 flightLookupError = error.localizedDescription
             }
@@ -1321,10 +1422,32 @@ private struct CloudTripEditor: View {
         terminal = result.arrivalTerminal ?? ""
         baggageCarousel = result.baggageCarousel ?? ""
         flightSelectionSnapshot = SavedFlightSelection(flightNumber: flightNumber, flightDate: flightDate, selected: result)
+        didClearFlightSelection = false
         Task {
             departureTimeZoneLabel = await FlightTimeZoneResolver.label(for: result.departureAirport, date: flightDate) ?? ""
             arrivalTimeZoneLabel = await FlightTimeZoneResolver.label(for: result.arrivalAirport, date: flightDate) ?? ""
         }
+    }
+
+    private func invalidateFlightSelection() {
+        guard flightSelectionSnapshot != nil ||
+              flightLookupResult != nil ||
+              !departureTime.isEmpty ||
+              !estimatedArrivalTime.isEmpty ||
+              !terminal.isEmpty ||
+              !baggageCarousel.isEmpty ||
+              !departureTimeZoneLabel.isEmpty ||
+              !arrivalTimeZoneLabel.isEmpty else { return }
+        flightSelectionSnapshot = nil
+        didClearFlightSelection = true
+        flightLookupResult = nil
+        flightLookupError = nil
+        departureTimeZoneLabel = ""
+        arrivalTimeZoneLabel = ""
+        departureTime = ""
+        estimatedArrivalTime = ""
+        terminal = ""
+        baggageCarousel = ""
     }
 
     init(directory: CloudTripDirectoryModel, trip: CloudOnlineRepository.CloudTripRecord?, settlementOnly: Bool = false, copyAsNew: Bool = false) {
@@ -1431,9 +1554,10 @@ private struct CloudTripEditor: View {
                                 Text("客户").font(.caption.weight(.medium)).foregroundStyle(.secondary)
                                 HStack(spacing: 8) {
                                     TextField("请输入客户姓名", text: $customerName)
-                                        .padding(12).frame(minHeight: 44)
+                                        .padding(12).frame(minWidth: 0, maxWidth: .infinity, minHeight: 44)
                                         .background(Color.primary.opacity(0.025), in: RoundedRectangle(cornerRadius: 10))
                                         .overlay(RoundedRectangle(cornerRadius: 10).stroke(Color.primary.opacity(0.12), lineWidth: 1))
+                                        .layoutPriority(1)
                                     Button { isShowingCustomerPicker = true } label: { Image(systemName: "person.crop.rectangle.badge.plus.fill") }
                                         .buttonStyle(.bordered).tint(.accentColor).accessibilityLabel("选择客户")
                                 }
@@ -1586,11 +1710,11 @@ private struct CloudTripEditor: View {
                     .frame(maxWidth: 900)
                     .frame(maxWidth: .infinity)
                 }
-                .scrollDismissesKeyboard(.interactively)
+                .scrollDismissesKeyboard(.never)
                 .background(Color.primary.opacity(0.015))
             }
         }
-        .scrollDismissesKeyboard(.interactively)
+        .scrollDismissesKeyboard(.never)
         .navigationTitle(trip == nil || copyAsNew ? "新增行程" : "编辑行程")
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
@@ -1631,6 +1755,7 @@ private struct CloudTripEditor: View {
         }
         .onChange(of: appointmentDate) { _, _ in updateReminderDefaults(copyDefault: false) }
         .onChange(of: appointmentTime) { _, _ in updateReminderDefaults(copyDefault: false) }
+        .onChange(of: flightLookupContextKey) { _, _ in invalidateFlightSelection() }
         .onChange(of: locationManager.resolvedAddress) { _, address in
             guard let address, let target = addressSearchTarget else { return }
             switch target {
@@ -1664,7 +1789,7 @@ private struct CloudTripEditor: View {
                 agencyName = agency.name
             }
         }
-        .adaptiveFormPresentation(isPresented: $isChoosingFlight) {
+        .sheet(isPresented: $isChoosingFlight) {
             FlightCandidatePicker(candidates: flightCandidates, onSelect: selectFlight)
         }
         .presentationDetents([.large])
@@ -1692,6 +1817,8 @@ private struct CloudTripEditor: View {
                             .background((expense.isAddition ? Color.green : Color.red).opacity(0.12), in: Circle())
                     }.buttonStyle(.plain)
                     TextField("费用项目", text: $expense.title)
+                        .frame(minWidth: 0)
+                        .layoutPriority(1)
                     SystemIMETextField(text: $expense.amount, placeholder: "金额", keyboardType: .decimalPad)
                         .frame(width: 78)
                     Button(role: .destructive) { expenses.removeAll { $0.id == expense.id } } label: { Image(systemName: "minus.circle.fill") }
@@ -1833,6 +1960,7 @@ private struct CloudTripEditor: View {
         }
         let linkedCustomer = directory.customers.first(where: { $0.id == customerID })
         let id = copyAsNew ? UUID().uuidString.lowercased() : (trip?.id ?? UUID().uuidString.lowercased())
+        let snapshotToSave = didClearFlightSelection ? nil : (flightSelectionSnapshot ?? (copyAsNew ? nil : trip?.flightSelectionSnapshot))
         let row: [String: Any] = [
             "id": id,
             "service_type": serviceType,
@@ -1854,7 +1982,7 @@ private struct CloudTripEditor: View {
             "flight_estimated_arrival_time": estimatedArrivalTime.isEmpty ? NSNull() : estimatedArrivalTime,
             "flight_arrival_terminal": terminal.isEmpty ? NSNull() : terminal,
             "flight_baggage_carousel": baggageCarousel.isEmpty ? NSNull() : baggageCarousel,
-            "flight_selection_snapshot": (!copyAsNew ? flightSelectionSnapshot ?? trip?.flightSelectionSnapshot : nil).map { snapshot in
+            "flight_selection_snapshot": snapshotToSave.map { snapshot in
                 (try? JSONSerialization.jsonObject(with: JSONEncoder().encode(snapshot))) ?? NSNull()
             } ?? NSNull(),
             "memo": String(memo.prefix(2048)),
