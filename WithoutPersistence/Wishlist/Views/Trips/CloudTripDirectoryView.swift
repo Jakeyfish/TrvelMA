@@ -480,6 +480,24 @@ private struct CloudTripManagementCard: View {
         return Calendar.current.date(from: components) ?? date
     }
 
+    private var hasReusableFlightSnapshot: Bool {
+        guard showsFlightActions, !trip.isCompleted, !trip.isCancelled,
+              let saved = trip.flightSelectionSnapshot,
+              saved.matches(flightNumber: trip.flightInfo, flightDate: trip.flightDate.cloudDate) else { return false }
+        return VariFlightClient.candidateMatchesTripRoute(
+            saved.selected,
+            serviceType: trip.serviceType,
+            locationStart: trip.locationStart,
+            locationEnd: trip.locationEnd
+        )
+    }
+
+    private func showReusableFlightSnapshot() {
+        guard hasReusableFlightSnapshot else { return }
+        isFlightExpanded = true
+        loadSavedFlightOrLookup()
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             NavigationLink {
@@ -519,11 +537,12 @@ private struct CloudTripManagementCard: View {
             .buttonStyle(.plain)
 
             VStack(alignment: .leading, spacing: 7) {
-                routeRow(title: "起始点", value: trip.locationStart, color: .teal, isLast: false, icon: "mappin.and.ellipse")
+                routeRow(title: "起始点", value: trip.locationStart, color: .teal, isLast: false, canNavigate: !trip.isCompleted && !trip.isCancelled, icon: "mappin.and.ellipse")
                 ForEach(Array(trip.stops.enumerated()), id: \.element.id) { index, stop in
-                routeRow(title: String(format: String(localized: "停靠点 %lld", locale: locale), locale: locale, index + 1), value: stop.address, color: .orange, isLast: false)
+                    let titleFormat = String(localized: "停靠点 %lld", locale: locale)
+                    routeRow(title: String(format: titleFormat, locale: locale, arguments: [index + 1]), value: stop.address, color: .orange, isLast: false, canNavigate: !trip.isCompleted && !trip.isCancelled)
                 }
-                routeRow(title: "目的地", value: trip.locationEnd, color: .orange, isLast: true, icon: "flag.checkered")
+                routeRow(title: "目的地", value: trip.locationEnd, color: .orange, isLast: true, canNavigate: !trip.isCompleted && !trip.isCancelled, icon: "flag.checkered")
             }
 
             if !trip.flightInfo.isEmpty && showsFlightActions { flightPanel }
@@ -584,6 +603,7 @@ private struct CloudTripManagementCard: View {
         } message: {
             Text(directory.errorMessage ?? "")
         }
+        .onAppear(perform: showReusableFlightSnapshot)
     }
 
     private func cloudInfoPill(count rawCount: String, singular: String, plural: String, icon: String, isBag: Bool) -> some View {
@@ -671,7 +691,6 @@ private struct CloudTripManagementCard: View {
         guard !trip.flightInfo.isEmpty else { return }
         isLookingUpFlight = true
         flightLookupError = nil
-        flightLookupResult = nil
         flightCandidates = []
         Task {
             do {
@@ -688,10 +707,15 @@ private struct CloudTripManagementCard: View {
                     forceRefresh: forceRefresh
                 )
                 flightCandidates = candidates
-                if candidates.count == 1, let candidate = candidates.first {
+                if candidates.count == 1, let candidate = candidates.first,
+                   !VariFlightClient.requiresExplicitFlightChoice(
+                    serviceType: trip.serviceType,
+                    locationStart: trip.locationStart,
+                    locationEnd: trip.locationEnd
+                   ) {
                     selectFlight(candidate)
                 } else {
-                    isChoosingFlight = candidates.count > 1
+                    isChoosingFlight = !candidates.isEmpty
                 }
             } catch {
                 flightLookupError = error.localizedDescription
@@ -702,7 +726,13 @@ private struct CloudTripManagementCard: View {
 
     private func loadSavedFlightOrLookup() {
         if let saved = trip.flightSelectionSnapshot,
-           saved.matches(flightNumber: trip.flightInfo, flightDate: trip.flightDate.cloudDate) {
+           saved.matches(flightNumber: trip.flightInfo, flightDate: trip.flightDate.cloudDate),
+           VariFlightClient.candidateMatchesTripRoute(
+            saved.selected,
+            serviceType: trip.serviceType,
+            locationStart: trip.locationStart,
+            locationEnd: trip.locationEnd
+           ) {
             flightLookupResult = saved.selected
             Task {
                 departureTimeZoneLabel = await FlightTimeZoneResolver.label(for: saved.selected.departureAirport, date: trip.flightDate.cloudDate) ?? ""
@@ -727,7 +757,7 @@ private struct CloudTripManagementCard: View {
         }
     }
 
-    private func routeRow(title: String, value: String, color: Color, isLast: Bool, icon: String? = nil) -> some View {
+    private func routeRow(title: String, value: String, color: Color, isLast: Bool, canNavigate: Bool, icon: String? = nil) -> some View {
         HStack(alignment: .top, spacing: 10) {
             VStack(spacing: 0) {
                 if let icon {
@@ -750,7 +780,7 @@ private struct CloudTripManagementCard: View {
             }
             .buttonStyle(.plain)
 
-            if !trip.isCompleted && !trip.isCancelled {
+            if canNavigate {
                 Button {
                     let provider = NavigationProvider(rawValue: defaultNavigationProvider) ?? .appleMaps
                     if let url = provider.directionsURL(for: value) { openURL(url) }
@@ -810,6 +840,8 @@ private struct CloudTripDetailView: View {
     @AppStorage(NavigationProvider.defaultsKey) private var defaultNavigationProvider = NavigationProvider.appleMaps.rawValue
     @State private var isLookingUpFlight = false
     @State private var flightLookupResult: VariFlightLookupResult?
+    @State private var flightCandidates: [VariFlightLookupResult] = []
+    @State private var isChoosingFlight = false
     @State private var flightLookupError: String?
     @State private var departureTimeZoneLabel = ""
     @State private var arrivalTimeZoneLabel = ""
@@ -829,6 +861,24 @@ private struct CloudTripDetailView: View {
 
     private var isCompleted: Bool { completedOverride ?? trip.isCompleted }
     private var isCancelled: Bool { cancelledOverride ?? trip.isCancelled }
+
+    private var hasReusableFlightSnapshot: Bool {
+        guard !isCompleted, !isCancelled,
+              let saved = trip.flightSelectionSnapshot,
+              saved.matches(flightNumber: trip.flightInfo, flightDate: trip.flightDate.cloudDate) else { return false }
+        return VariFlightClient.candidateMatchesTripRoute(
+            saved.selected,
+            serviceType: trip.serviceType,
+            locationStart: trip.locationStart,
+            locationEnd: trip.locationEnd
+        )
+    }
+
+    private func showReusableFlightSnapshot() {
+        guard hasReusableFlightSnapshot else { return }
+        isFlightExpanded = true
+        loadSavedFlightOrLookup()
+    }
 
     private var netIncome: Double {
         trip.price + trip.tip + trip.expenses.reduce(0) { $0 + ($1.isAddition ? abs($1.amount) : -abs($1.amount)) }
@@ -925,36 +975,49 @@ private struct CloudTripDetailView: View {
                     if isCompleted || isCancelled {
                         LabeledContent("航班", value: trip.flightInfo)
                     } else {
-                        Button {
-                            let shouldExpand = !isFlightExpanded
-                            withAnimation(.easeInOut(duration: 0.2)) { isFlightExpanded = shouldExpand }
-                            if shouldExpand && flightLookupResult == nil && !isLookingUpFlight { lookupFlight() }
-                        } label: {
+                        VStack(alignment: .leading, spacing: 10) {
                             HStack(spacing: 8) {
-                                Image(systemName: "airplane").foregroundStyle(Color.accentColor)
-                                Text(trip.flightInfo).font(.subheadline.weight(.semibold))
-                                Text(trip.flightDate.cloudDate.formatted(.dateTime.month(.abbreviated).day().locale(locale)))
-                                    .font(.caption).foregroundStyle(.secondary)
-                                Spacer(minLength: 0)
-                                if isLookingUpFlight { ProgressView().controlSize(.mini) }
-                                else { Image(systemName: isFlightExpanded ? "chevron.up" : "chevron.down").font(.caption).foregroundStyle(.tertiary) }
-                            }.contentShape(Rectangle())
-                        }.buttonStyle(.plain)
-                        if isFlightExpanded {
-                            FlightInformationPanel(
-                                flightNumber: trip.flightInfo,
-                                flightDate: trip.flightDate.cloudDate,
-                                result: flightLookupResult,
-                                isLoading: isLookingUpFlight,
-                                error: flightLookupError,
-                                departureFallback: trip.flightDepartureTime ?? "",
-                                arrivalFallback: trip.flightEstimatedArrivalTime ?? "",
-                                departureTimeZone: departureTimeZoneLabel,
-                                arrivalTimeZone: arrivalTimeZoneLabel
-                            )
-                            .padding(12)
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                            .background(Color(.secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 13, style: .continuous))
+                                Button {
+                                    let shouldExpand = !isFlightExpanded
+                                    withAnimation(.easeInOut(duration: 0.2)) { isFlightExpanded = shouldExpand }
+                                    if shouldExpand && flightLookupResult == nil && !isLookingUpFlight { loadSavedFlightOrLookup() }
+                                } label: {
+                                    HStack(spacing: 8) {
+                                        Image(systemName: "airplane").foregroundStyle(Color.accentColor)
+                                        Text(trip.flightInfo).font(.subheadline.weight(.semibold))
+                                        Text(trip.flightDate.cloudDate.formatted(.dateTime.month(.abbreviated).day().locale(locale)))
+                                            .font(.caption).foregroundStyle(.secondary)
+                                        Spacer(minLength: 0)
+                                        if isLookingUpFlight { ProgressView().controlSize(.mini) }
+                                        else { Image(systemName: isFlightExpanded ? "chevron.up" : "chevron.down").font(.caption).foregroundStyle(.tertiary) }
+                                    }.contentShape(Rectangle())
+                                }.buttonStyle(.plain)
+                                Button {
+                                    withAnimation(.easeInOut(duration: 0.2)) { isFlightExpanded = true }
+                                    lookupFlight(forceRefresh: true)
+                                } label: {
+                                    Image(systemName: "arrow.clockwise").font(.caption.weight(.semibold)).foregroundStyle(Color.accentColor)
+                                }
+                                .buttonStyle(.plain)
+                                .disabled(isLookingUpFlight)
+                                .accessibilityLabel("刷新航班信息")
+                            }
+                            if isFlightExpanded {
+                                FlightInformationPanel(
+                                    flightNumber: trip.flightInfo,
+                                    flightDate: trip.flightDate.cloudDate,
+                                    result: flightLookupResult,
+                                    isLoading: isLookingUpFlight,
+                                    error: flightLookupError,
+                                    departureFallback: trip.flightDepartureTime ?? "",
+                                    arrivalFallback: trip.flightEstimatedArrivalTime ?? "",
+                                    departureTimeZone: departureTimeZoneLabel,
+                                    arrivalTimeZone: arrivalTimeZoneLabel
+                                )
+                                .padding(12)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                                .background(Color(.secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 13, style: .continuous))
+                            }
                         }
                     }
                 }
@@ -1015,6 +1078,9 @@ private struct CloudTripDetailView: View {
         .adaptiveFormPresentation(isPresented: $isCopying) {
             NavigationStack { CloudTripEditor(directory: directory, trip: trip, copyAsNew: true) }
         }
+        .sheet(isPresented: $isChoosingFlight) {
+            FlightCandidatePicker(candidates: flightCandidates, onSelect: selectFlight)
+        }
         .confirmationDialog("确定删除该行程？", isPresented: $isConfirmingDelete, titleVisibility: .visible) {
             Button("删除", role: .destructive) {
                 Task {
@@ -1069,6 +1135,7 @@ private struct CloudTripDetailView: View {
         } message: {
             Text(directory.errorMessage ?? "")
         }
+        .onAppear(perform: showReusableFlightSnapshot)
     }
 
     private func detailStatusBadge(title: String, isOn: Bool, tint: Color) -> some View {
@@ -1141,13 +1208,72 @@ private struct CloudTripDetailView: View {
         }
     }
 
-    private func lookupFlight() {
+    private func lookupFlight(forceRefresh: Bool = false) {
+        guard !trip.flightInfo.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
+        isLookingUpFlight = true
+        flightLookupError = nil
+        flightCandidates = []
+        Task {
+            do {
+                let accessToken = await auth.refreshCloudAccessToken() ?? auth.cloudAccessToken
+                guard let accessToken else { throw VariFlightClientError.missingCloudSession }
+                let candidates = try await VariFlightClient().lookupCandidatesForTrip(
+                    flightNumber: trip.flightInfo,
+                    flightDate: trip.flightDate.cloudDate,
+                    serviceType: trip.serviceType,
+                    locationStart: trip.locationStart,
+                    locationEnd: trip.locationEnd,
+                    cloudAccessToken: accessToken,
+                    forceRefresh: forceRefresh
+                )
+                flightCandidates = candidates
+                if candidates.count == 1, let candidate = candidates.first,
+                   !VariFlightClient.requiresExplicitFlightChoice(
+                    serviceType: trip.serviceType,
+                    locationStart: trip.locationStart,
+                    locationEnd: trip.locationEnd
+                   ) {
+                    selectFlight(candidate)
+                } else {
+                    isChoosingFlight = !candidates.isEmpty
+                }
+            } catch {
+                flightLookupError = error.localizedDescription
+            }
+            isLookingUpFlight = false
+        }
+    }
+
+    private func loadSavedFlightOrLookup() {
         guard let saved = trip.flightSelectionSnapshot,
-              saved.matches(flightNumber: trip.flightInfo, flightDate: trip.flightDate.cloudDate) else { return }
+              saved.matches(flightNumber: trip.flightInfo, flightDate: trip.flightDate.cloudDate),
+              VariFlightClient.candidateMatchesTripRoute(
+                saved.selected,
+                serviceType: trip.serviceType,
+                locationStart: trip.locationStart,
+                locationEnd: trip.locationEnd
+              ) else {
+            lookupFlight()
+            return
+        }
         flightLookupResult = saved.selected
         Task {
             departureTimeZoneLabel = await FlightTimeZoneResolver.label(for: saved.selected.departureAirport, date: trip.flightDate.cloudDate) ?? ""
             arrivalTimeZoneLabel = await FlightTimeZoneResolver.label(for: saved.selected.arrivalAirport, date: trip.flightDate.cloudDate) ?? ""
+        }
+    }
+
+    private func selectFlight(_ result: VariFlightLookupResult) {
+        flightLookupResult = result
+        flightLookupError = nil
+        let saved = SavedFlightSelection(flightNumber: trip.flightInfo, flightDate: trip.flightDate.cloudDate, selected: result)
+        isLookingUpFlight = true
+        Task {
+            departureTimeZoneLabel = await FlightTimeZoneResolver.label(for: result.departureAirport, date: trip.flightDate.cloudDate) ?? ""
+            arrivalTimeZoneLabel = await FlightTimeZoneResolver.label(for: result.arrivalAirport, date: trip.flightDate.cloudDate) ?? ""
+            let didSave = await directory.updateStatus(for: trip, flightSelectionSnapshot: saved, using: auth)
+            if !didSave { flightLookupError = directory.errorMessage ?? String(localized: "无法保存行程", locale: locale) }
+            isLookingUpFlight = false
         }
     }
 }
@@ -1404,10 +1530,15 @@ private struct CloudTripEditor: View {
                     cloudAccessToken: accessToken
                 )
                 flightCandidates = candidates
-                if candidates.count == 1, let candidate = candidates.first {
+                if candidates.count == 1, let candidate = candidates.first,
+                   !VariFlightClient.requiresExplicitFlightChoice(
+                    serviceType: serviceType,
+                    locationStart: start,
+                    locationEnd: destination
+                   ) {
                     selectFlight(candidate)
                 } else {
-                    isChoosingFlight = candidates.count > 1
+                    isChoosingFlight = !candidates.isEmpty
                 }
             } catch {
                 flightLookupError = error.localizedDescription

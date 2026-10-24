@@ -56,6 +56,17 @@ struct SavedFlightSelection: Codable, Hashable {
     }
 }
 
+private struct AirportCodeCrosswalkFile: Decodable {
+    let airports: [AirportCodeCrosswalkAirport]
+}
+
+private struct AirportCodeCrosswalkAirport: Decodable {
+    let iataCode: String
+    let name: String
+    let municipality: String
+    let keywords: [String]
+}
+
 struct FlightCandidatePicker: View {
     @Environment(\.dismiss) private var dismiss
     @Environment(\.locale) private var locale
@@ -183,6 +194,16 @@ enum VariFlightAPIKeyStore {
 }
 
 struct VariFlightClient {
+    // OurAirports public-domain scheduled-service airport data, bundled locally
+    // so route matching works offline and does not add provider API requests.
+    private static let airportCodeCrosswalk: [AirportCodeCrosswalkAirport] = {
+        guard let url = Bundle.main.url(forResource: "AirportCodeCrosswalk", withExtension: "json"),
+              let data = try? Data(contentsOf: url) else { return [] }
+        let decoder = JSONDecoder()
+        decoder.keyDecodingStrategy = .convertFromSnakeCase
+        return (try? decoder.decode(AirportCodeCrosswalkFile.self, from: data).airports) ?? []
+    }()
+
     private let variFlightEndpoint = URL(string: "https://ai.variflight.com/servers/aviation/mcp")!
 
     func lookup(flightNumber: String, flightDate: Date, cloudAccessToken: String? = nil) async throws -> VariFlightLookupResult {
@@ -335,18 +356,23 @@ struct VariFlightClient {
         guard let airportHint else { return initial }
 
         var supplemental: [VariFlightLookupResult] = []
-        // Always issue an airport-filtered search when the trip contains an
-        // explicit airport. A broad result can describe the full itinerary and
-        // end at that airport while omitting an independently selectable later
-        // leg to the same airport.
-        supplemental += (try? await lookupCandidates(
-            flightNumber: flightNumber,
-            flightDate: flightDate,
-            cloudAccessToken: cloudAccessToken,
-            forceRefresh: forceRefresh,
-            departureAirport: airportHint.isArrival ? nil : airportHint.code,
-            arrivalAirport: airportHint.isArrival ? airportHint.code : nil
-        )) ?? []
+        // Avoid spending an extra provider lookup when the broad response already
+        // contains a leg touching the trip's explicit airport. Keep the filtered
+        // fallback for providers that omit that endpoint from broad searches.
+        let initialContainsRequestedAirport = initial.contains { candidate in
+            let airport = airportHint.isArrival ? candidate.arrivalAirport : candidate.departureAirport
+            return Self.airportCodes(in: airport).contains(airportHint.code)
+        }
+        if !initialContainsRequestedAirport {
+            supplemental += (try? await lookupCandidates(
+                flightNumber: flightNumber,
+                flightDate: flightDate,
+                cloudAccessToken: cloudAccessToken,
+                forceRefresh: forceRefresh,
+                departureAirport: airportHint.isArrival ? nil : airportHint.code,
+                arrivalAirport: airportHint.isArrival ? airportHint.code : nil
+            )) ?? []
+        }
 
         // Some provider responses contain a first leg to a connecting city and a
         // separate full-itinerary summary. Query each detected connection airport
@@ -370,7 +396,47 @@ struct VariFlightClient {
         }
 
         var seen = Set<String>()
-        return (initial + supplemental).filter { seen.insert($0.id).inserted }
+        let candidates = (initial + supplemental).filter { seen.insert($0.id).inserted }
+
+        // A one-result response is not necessarily the trip's flight leg: some
+        // provider responses return only the first leg of a multi-leg itinerary.
+        // Keep only candidates that match the explicit airport in the trip route
+        // so callers can never silently save an unrelated connecting leg.
+        let matchingCandidates = candidates.filter { candidate in
+            let airport = airportHint.isArrival ? candidate.arrivalAirport : candidate.departureAirport
+            return Self.airportCodes(in: airport).contains(airportHint.code)
+        }
+        guard !matchingCandidates.isEmpty else { throw VariFlightClientError.flightNotFound }
+        return matchingCandidates
+    }
+
+    static func candidateMatchesTripRoute(
+        _ candidate: VariFlightLookupResult,
+        serviceType: String,
+        locationStart: String,
+        locationEnd: String
+    ) -> Bool {
+        let airportHint: (code: String, isArrival: Bool)?
+        if serviceType == "接机", let code = explicitAirportCode(in: locationStart) {
+            airportHint = (code, true)
+        } else if serviceType == "送机", let code = explicitAirportCode(in: locationEnd) {
+            airportHint = (code, false)
+        } else {
+            airportHint = nil
+        }
+        guard let airportHint else { return true }
+        let airport = airportHint.isArrival ? candidate.arrivalAirport : candidate.departureAirport
+        return airportCodes(in: airport).contains(airportHint.code)
+    }
+
+    static func requiresExplicitFlightChoice(
+        serviceType: String,
+        locationStart: String,
+        locationEnd: String
+    ) -> Bool {
+        if serviceType == "接机" { return explicitAirportCode(in: locationStart) != nil }
+        if serviceType == "送机" { return explicitAirportCode(in: locationEnd) != nil }
+        return false
     }
 
     private static func normalizedAirportCode(_ value: String?) -> String? {
@@ -483,7 +549,7 @@ struct VariFlightClient {
             (["hongqiao", "虹桥机场", "sha"], ["SHA"]),
             (["shanghai", "上海"], ["PVG", "SHA"]),
         ]
-        let matches = aliases.compactMap { entry -> (length: Int, codes: Set<String>)? in
+        var matches = aliases.compactMap { entry -> (length: Int, codes: Set<String>)? in
             let matchedName = entry.names
                 .filter { normalized.contains($0.folding(options: [.diacriticInsensitive, .caseInsensitive], locale: .current)) }
                 .map(\.count)
@@ -491,6 +557,17 @@ struct VariFlightClient {
             guard let matchedName else { return nil }
             return (matchedName, entry.codes)
         }
+        let datasetMatches = airportCodeCrosswalk.compactMap { airport -> (length: Int, codes: Set<String>)? in
+            let aliases = [airport.name, airport.municipality] + airport.keywords
+            let matchedName = aliases
+                .map { $0.folding(options: [.diacriticInsensitive, .caseInsensitive], locale: .current) }
+                .filter { $0.count >= 4 && normalized.contains($0) }
+                .map(\.count)
+                .max()
+            guard let matchedName else { return nil }
+            return (matchedName, [airport.iataCode])
+        }
+        matches += datasetMatches
         guard let longest = matches.map(\.length).max() else { return [] }
         return matches.filter { $0.length == longest }.reduce(into: Set<String>()) { $0.formUnion($1.codes) }
     }

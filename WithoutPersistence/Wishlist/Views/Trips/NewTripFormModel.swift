@@ -1326,10 +1326,15 @@ struct TripDeteilSection: View {
                     cloudAccessToken: cloudAccessToken
                 )
                 flightCandidates = candidates
-                if candidates.count == 1, let candidate = candidates.first {
+                if candidates.count == 1, let candidate = candidates.first,
+                   !VariFlightClient.requiresExplicitFlightChoice(
+                    serviceType: formData.serviceType,
+                    locationStart: formData.locationStart,
+                    locationEnd: formData.locationEnd
+                   ) {
                     selectFlight(candidate)
                 } else {
-                    isChoosingFlight = candidates.count > 1
+                    isChoosingFlight = !candidates.isEmpty
                 }
             } catch {
                 flightLookupError = error.localizedDescription
