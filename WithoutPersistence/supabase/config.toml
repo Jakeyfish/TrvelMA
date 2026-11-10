@@ -1,2 +1,9 @@
 [functions.variflight-lookup]
 verify_jwt = true
+
+# 1.1 billing draft. Do not deploy until sandbox rollout is explicitly approved.
+[functions.storekit-verify]
+verify_jwt = true
+
+[functions.storekit-notifications]
+verify_jwt = false

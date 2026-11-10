@@ -86,3 +86,16 @@ final class AppLanguageSettings {
         identifier = language.rawValue
     }
 }
+
+/// Resolve runtime labels using the same explicit language as SwiftUI.
+enum AppLocalization {
+    static func text(_ key: String) -> String {
+        let code = AppLanguageSettings.effectiveIdentifier
+        let bundle = Bundle.main.path(forResource: code, ofType: "lproj")
+            .flatMap(Bundle.init(path:)) ?? Bundle.main
+        return bundle.localizedString(forKey: key, value: key == "statement.route" ? "行程" : key, table: nil)
+    }
+    static func format(_ key: String, _ arguments: CVarArg...) -> String {
+        String(format: text(key), locale: AppLanguageSettings.currentLocale, arguments: arguments)
+    }
+}

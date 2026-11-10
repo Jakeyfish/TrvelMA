@@ -20,6 +20,7 @@ private enum BusinessCardCopy {
     static func text(_ key: String, language: AppLanguage) -> String {
         switch key {
         case "名片页面标题": return value(language, "名片", "名片", "Business Card", "Tarjeta de presentación", "名刺", "명함")
+        case "名片资料格式无效，已保留当前内容。": return value(language, "名片资料格式无效，已保留当前内容。", "名片資料格式無效，已保留目前內容。", "Business card data is invalid. Your current content has been kept.", "Los datos de la tarjeta no son válidos. Se ha conservado el contenido actual.", "名刺データの形式が無効です。現在の内容は保持されています。", "명함 데이터 형식이 잘못되었습니다. 현재 내용은 유지되었습니다.")
         case "保存": return value(language, "保存", "儲存", "Save", "Guardar", "保存", "저장")
         case "头像": return value(language, "头像", "大頭貼", "Profile Photo", "Foto de perfil", "プロフィール写真", "프로필 사진")
         case "选择名片头像": return value(language, "选择名片头像", "選擇名片大頭貼", "Choose business card photo", "Elegir foto de tarjeta", "名刺の写真を選択", "명함 사진 선택")
@@ -69,7 +70,10 @@ struct BusinessCardView: View {
     @State private var draft = BusinessCardDraft()
     @State private var persistedDraft: BusinessCardDraft?
     @State private var portraitPicker: PhotosPickerItem?
+    @State private var portraitLoadTask: Task<Void, Never>?
+    @State private var loadedDraftAccountKey: String?
     @State private var hasLoaded = false
+    @State private var draftLoadGeneration = 0
     @State private var cloudAssetModel = CloudAccountAssetModel()
 
     private var account: LocalAccount? {
@@ -84,6 +88,10 @@ struct BusinessCardView: View {
     private var registeredPhone: String {
         let phone = (account?.phone ?? auth.currentPhone).trimmingCharacters(in: .whitespacesAndNewlines)
         return phone.isEmpty ? localized("未填写") : phone
+    }
+
+    private var draftAccountKey: String {
+        "\(auth.isCloudAccount ? "cloud" : "local")|\(auth.currentEmail.trimmingCharacters(in: .whitespacesAndNewlines).lowercased())"
     }
 
     private var assetNamespace: AccountAssetStore.Namespace { auth.isCloudAccount ? .cloud : .local }
@@ -112,6 +120,7 @@ struct BusinessCardView: View {
                     qrCodeSection
                 }
                 .padding(16)
+                .disabled(!hasLoaded)
             }
             .scrollDismissesKeyboard(.interactively)
             .background(Color(.systemGroupedBackground))
@@ -126,13 +135,19 @@ struct BusinessCardView: View {
             }
             .task(id: "\(auth.isCloudAccount)|\(auth.currentEmail)") {
                 cloudAssetModel.beginAccountChange()
+                portraitLoadTask?.cancel()
+                portraitLoadTask = nil
+                portraitPicker = nil
+                loadedDraftAccountKey = nil
                 hasLoaded = false
                 draft = BusinessCardDraft()
                 persistedDraft = nil
                 await loadDraft()
             }
             .onChange(of: portraitPicker) { _, item in
-                Task { await loadPortrait(item) }
+                portraitLoadTask?.cancel()
+                portraitLoadTask = nil
+                if item != nil { portraitLoadTask = Task { await loadPortrait(item) } }
             }
             .onChange(of: draft) { _, _ in
                 if !auth.isCloudAccount, hasLoaded, draft != persistedDraft { Task { await saveDraft() } }
@@ -142,9 +157,16 @@ struct BusinessCardView: View {
             }
             .onReceive(NotificationCenter.default.publisher(for: .accountScopedLocalDataDidClear)) { notification in
                 guard (notification.object as? String) == DataOwnership.activeScope else { return }
+                portraitLoadTask?.cancel()
+                portraitLoadTask = nil
+                portraitPicker = nil
+                loadedDraftAccountKey = nil
+                hasLoaded = false
+                draft = BusinessCardDraft()
+                persistedDraft = nil
                 Task { await loadDraft() }
             }
-            .alert(localized("无法保存"), isPresented: Binding(
+            .alert(localized("名片页面标题"), isPresented: Binding(
                 get: { cloudAssetModel.errorMessage != nil },
                 set: { if !$0 { cloudAssetModel.clearError() } }
             )) {
@@ -229,9 +251,11 @@ struct BusinessCardView: View {
         VStack(alignment: .leading, spacing: 8) {
             Text(localized("昵称"))
                 .font(.headline)
-            TextField(localized("输入名片上显示的昵称"), text: $draft.nickname)
-                .keyboardDoneToolbar()
-                .textInputAutocapitalization(.words)
+            SystemIMETextField(
+                text: $draft.nickname,
+                placeholder: localized("输入名片上显示的昵称"),
+                capitalization: .words
+            )
                 .padding(14)
                 .background(Color(.secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
         }
@@ -286,9 +310,13 @@ struct BusinessCardView: View {
                 .buttonStyle(.bordered)
             }
             ForEach($draft.qrCodes) { $item in
-                BusinessCardQRRow(item: $item) {
-                    draft.qrCodes.removeAll { $0.id == item.id }
-                }
+                let rowID = item.id
+                let accountKey = draftAccountKey
+                BusinessCardQRRow(item: $item, onDelete: {
+                    draft.qrCodes.removeAll { $0.id == rowID }
+                }, onImageLoaded: { data in
+                    applyQRCodeImage(data, to: rowID, accountKey: accountKey)
+                })
             }
             if draft.qrCodes.isEmpty {
                 ContentUnavailableView {
@@ -307,55 +335,79 @@ struct BusinessCardView: View {
 
     @MainActor
     private func loadPortrait(_ item: PhotosPickerItem?) async {
-        guard let item, let data = try? await item.loadTransferable(type: Data.self),
+        let accountKey = draftAccountKey
+        guard hasLoaded, loadedDraftAccountKey == accountKey, let item, portraitPicker == item,
+              let data = try? await item.loadTransferable(type: Data.self),
+              !Task.isCancelled, portraitPicker == item,
+              loadedDraftAccountKey == accountKey, draftAccountKey == accountKey,
               let image = UIImage(data: data), let jpeg = image.jpegData(compressionQuality: 0.86) else { return }
         draft.portraitData = jpeg
     }
 
+    private func applyQRCodeImage(_ data: Data, to rowID: UUID, accountKey: String) {
+        guard hasLoaded, loadedDraftAccountKey == accountKey, draftAccountKey == accountKey,
+              let index = draft.qrCodes.firstIndex(where: { $0.id == rowID }) else { return }
+        draft.qrCodes[index].imageData = data
+    }
+
     private func loadDraft() async {
-        guard !auth.currentEmail.isEmpty else { return }
+        guard !auth.currentEmail.isEmpty, !hasLoaded || draft == persistedDraft else { return }
+        draftLoadGeneration += 1
+        let generation = draftLoadGeneration
+        let startingDraft = draft
+        let startingPersistedDraft = persistedDraft
         let email = auth.currentEmail
         let wasCloudAccount = auth.isCloudAccount
+        cloudAssetModel.clearError()
+        let data: Data?
         if auth.serverEntitlement?.edition == .cloud {
-            let data = await cloudAssetModel.load(.businessCard, using: auth)
+            data = await cloudAssetModel.load(.businessCard, using: auth)
             guard !Task.isCancelled, auth.currentEmail.caseInsensitiveCompare(email) == .orderedSame,
                   auth.isCloudAccount == wasCloudAccount,
-                  auth.serverEntitlement?.edition == .cloud else { return }
-            if let data, let saved = try? JSONDecoder().decode(BusinessCardDraft.self, from: data) {
-                draft = saved
-            } else {
-                draft = BusinessCardDraft()
-            }
-        } else if !auth.isCloudAccount {
-            AccountAssetStore.migrateLegacyAssetsToLocal(email: auth.currentEmail)
+                  auth.serverEntitlement?.edition == .cloud,
+                  draftLoadGeneration == generation,
+                  draft == startingDraft, persistedDraft == startingPersistedDraft,
+                  cloudAssetModel.errorMessage == nil else { return }
         } else {
-            if let data = AccountAssetStore.data(for: .businessCard, email: auth.currentEmail, namespace: assetNamespace),
-               let saved = try? JSONDecoder().decode(BusinessCardDraft.self, from: data) {
-                draft = saved
-            } else {
-                draft = BusinessCardDraft()
+            if !auth.isCloudAccount {
+                AccountAssetStore.migrateLegacyAssetsToLocal(email: email)
             }
+            data = AccountAssetStore.data(for: .businessCard, email: email, namespace: assetNamespace)
         }
-        persistedDraft = draft
-        hasLoaded = auth.serverEntitlement?.edition == .cloud
-            ? cloudAssetModel.errorMessage == nil
-            : true
+
+        let loadedDraft: BusinessCardDraft
+        if let data {
+            guard let saved = try? JSONDecoder().decode(BusinessCardDraft.self, from: data) else {
+                cloudAssetModel.setLoadError(localized("名片资料格式无效，已保留当前内容。"))
+                return
+            }
+            loadedDraft = saved
+        } else {
+            loadedDraft = BusinessCardDraft()
+        }
+        draft = loadedDraft
+        persistedDraft = loadedDraft
+        loadedDraftAccountKey = draftAccountKey
+        hasLoaded = true
     }
 
     private func saveDraft() async {
-        guard hasLoaded, !auth.currentEmail.isEmpty,
-              let data = try? JSONEncoder().encode(draft) else { return }
+        let draftToSave = draft
+        let accountKey = draftAccountKey
+        guard hasLoaded, loadedDraftAccountKey == accountKey, !auth.currentEmail.isEmpty,
+              let data = try? JSONEncoder().encode(draftToSave) else { return }
         if auth.serverEntitlement?.edition == .cloud {
             let email = auth.currentEmail
             if await cloudAssetModel.save(data, as: .businessCard, using: auth),
                auth.currentEmail.caseInsensitiveCompare(email) == .orderedSame,
-               auth.serverEntitlement?.edition == .cloud {
-                persistedDraft = draft
+               auth.serverEntitlement?.edition == .cloud,
+               draftAccountKey == accountKey, loadedDraftAccountKey == accountKey {
+                persistedDraft = draftToSave
             }
             return
         }
         AccountAssetStore.set(data, for: .businessCard, email: auth.currentEmail, namespace: assetNamespace)
-        persistedDraft = draft
+        persistedDraft = draftToSave
         NotificationCenter.default.post(name: .accountAssetsDidChange, object: nil)
     }
 }
@@ -364,7 +416,9 @@ private struct BusinessCardQRRow: View {
     @Environment(AppLanguageSettings.self) private var languageSettings
     @Binding var item: BusinessCardQR
     var onDelete: () -> Void
+    var onImageLoaded: (Data) -> Void
     @State private var pickerItem: PhotosPickerItem?
+    @State private var imageLoadTask: Task<Void, Never>?
     @State private var isShowingPreview = false
 
     private func localized(_ key: String) -> String {
@@ -397,9 +451,10 @@ private struct BusinessCardQRRow: View {
                 Text(localized("二维码名称"))
                     .font(.caption)
                     .foregroundStyle(.secondary)
-                TextField(localized("例如：微信"), text: $item.name)
-                    .keyboardDoneToolbar()
-                    .textFieldStyle(.roundedBorder)
+                SystemIMETextField(text: $item.name, placeholder: localized("例如：微信"))
+                    .padding(6)
+                    .background(Color(.secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 5))
+                    .overlay(RoundedRectangle(cornerRadius: 5).stroke(Color.primary.opacity(0.12), lineWidth: 1))
                     .frame(minWidth: 0)
                     .layoutPriority(1)
             }
@@ -444,13 +499,16 @@ private struct BusinessCardQRRow: View {
             .presentationDetents([.medium, .large])
         }
         .onChange(of: pickerItem) { _, newValue in
+            imageLoadTask?.cancel()
+            imageLoadTask = nil
             guard let newValue else { return }
-            Task {
-                if let data = try? await newValue.loadTransferable(type: Data.self), UIImage(data: data) != nil {
-                    item.imageData = data
-                }
+            imageLoadTask = Task {
+                guard let data = try? await newValue.loadTransferable(type: Data.self),
+                      !Task.isCancelled, pickerItem == newValue, UIImage(data: data) != nil else { return }
+                onImageLoaded(data)
             }
         }
+        .onDisappear { imageLoadTask?.cancel() }
     }
 }
 

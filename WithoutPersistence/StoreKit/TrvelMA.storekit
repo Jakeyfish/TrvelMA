@@ -1,0 +1,89 @@
+{
+  "identifier": "2857cd19-ef9c-4b78-b7cc-14b44fbd22c4",
+  "nonRenewingSubscriptions": [],
+  "products": [
+    {
+      "displayPrice": "29.99",
+      "familyShareable": false,
+      "internalID": "55d5331e-aec2-4cb0-ab54-a7a0b599893b",
+      "localizations": [
+        {
+          "description": "本地行程管理买断，不含云同步或在线航班查询。",
+          "displayName": "本地版买断",
+          "locale": "zh_Hans"
+        },
+        {
+          "description": "Local trip management. Cloud sync and online flight lookup are not included.",
+          "displayName": "Local Lifetime",
+          "locale": "en_US"
+        }
+      ],
+      "productID": "com.yunshengtech.travelmanager.local.lifetime",
+      "referenceName": "Local Lifetime",
+      "type": "NonConsumable"
+    }
+  ],
+  "settings": {
+    "_failTransactionsEnabled": false,
+    "_locale": "en_US",
+    "_storefront": "USA",
+    "_storeKitErrors": []
+  },
+  "subscriptionGroups": [
+    {
+      "id": "031c77ea-e087-4789-8b4b-eabe2ac4e858",
+      "localizations": [],
+      "name": "TrvelMA Cloud",
+      "subscriptions": [
+        {
+          "adHocOffers": [],
+          "codeOffers": [],
+          "displayPrice": "9.99",
+          "familyShareable": false,
+          "groupNumber": 1,
+          "internalID": "a1cf35de-e917-4716-9b8b-203672ca3a97",
+          "introductoryOffer": null,
+          "localizations": [
+            {
+              "description": "云端服务，最多4台设备。",
+              "displayName": "云端月付",
+              "locale": "zh_Hans"
+            }
+          ],
+          "productID": "com.yunshengtech.travelmanager.cloud.monthly",
+          "recurringSubscriptionPeriod": "P1M",
+          "referenceName": "云端月付",
+          "subscriptionGroupID": "031c77ea-e087-4789-8b4b-eabe2ac4e858",
+          "type": "RecurringSubscription",
+          "winBackOffers": []
+        },
+        {
+          "adHocOffers": [],
+          "codeOffers": [],
+          "displayPrice": "99.99",
+          "familyShareable": false,
+          "groupNumber": 1,
+          "internalID": "afe7cefa-b750-4c25-9b6c-3890f7a2d080",
+          "introductoryOffer": null,
+          "localizations": [
+            {
+              "description": "云端服务，最多4台设备。",
+              "displayName": "云端年付",
+              "locale": "zh_Hans"
+            }
+          ],
+          "productID": "com.yunshengtech.travelmanager.cloud.yearly",
+          "recurringSubscriptionPeriod": "P1Y",
+          "referenceName": "云端年付",
+          "subscriptionGroupID": "031c77ea-e087-4789-8b4b-eabe2ac4e858",
+          "type": "RecurringSubscription",
+          "winBackOffers": []
+        }
+      ]
+    }
+  ],
+  "version": {
+    "major": 3,
+    "minor": 0
+  }
+}

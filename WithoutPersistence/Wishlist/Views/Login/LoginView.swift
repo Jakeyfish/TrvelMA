@@ -7,7 +7,7 @@ struct LoginView: View {
     @Environment(\.colorScheme) private var colorScheme
     @AppStorage("auth.rememberEmail") private var rememberEmail = false
     @AppStorage("auth.rememberedEmail") private var rememberedEmail = ""
-    @AppStorage("auth.accountMode.cloud") private var useCloudAccount = false
+    @AppStorage("auth.accountMode.cloud") private var useCloudAccount = true
     @State private var email = ""
     @State private var password = ""
     @State private var isPasswordVisible = false

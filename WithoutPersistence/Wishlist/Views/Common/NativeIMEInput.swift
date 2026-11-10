@@ -168,7 +168,8 @@ struct FlightNumberTextField: UIViewRepresentable {
         let field = UITextField()
         context.coordinator.textField = field
         field.placeholder = placeholder
-        field.keyboardType = .numbersAndPunctuation
+        field.keyboardType = .asciiCapable
+        field.inputView = Self.makeFlightKeyboard(target: context.coordinator)
         field.autocapitalizationType = .allCharacters
         field.autocorrectionType = .no
         field.spellCheckingType = .no
@@ -178,6 +179,42 @@ struct FlightNumberTextField: UIViewRepresentable {
         field.text = Self.normalized(text)
         field.accessibilityLabel = placeholder
         return field
+    }
+
+    static func makeFlightKeyboard(target: Coordinator) -> UIInputView {
+        let keyboard = UIInputView(frame: CGRect(x: 0, y: 0, width: 390, height: 260), inputViewStyle: .keyboard)
+        let rows = UIStackView()
+        rows.axis = .vertical
+        rows.spacing = 8
+        rows.translatesAutoresizingMaskIntoConstraints = false
+        keyboard.addSubview(rows)
+        NSLayoutConstraint.activate([
+            rows.leadingAnchor.constraint(equalTo: keyboard.safeAreaLayoutGuide.leadingAnchor, constant: 6),
+            rows.trailingAnchor.constraint(equalTo: keyboard.safeAreaLayoutGuide.trailingAnchor, constant: -6),
+            rows.topAnchor.constraint(equalTo: keyboard.topAnchor, constant: 8),
+            rows.bottomAnchor.constraint(equalTo: keyboard.safeAreaLayoutGuide.bottomAnchor, constant: -8)
+        ])
+        rows.distribution = .fillEqually
+        let keyRows = ["1234567890", "QWERTYUIOP", "ASDFGHJKL", "⌄ZXCVBNM⌫"]
+        for characters in keyRows {
+            let keys = characters.map { String($0) }
+            let row = UIStackView()
+            row.spacing = 5
+            row.distribution = .fillEqually
+            for key in keys {
+                let button = UIButton(type: .system)
+                button.setTitle(key, for: .normal)
+                button.setTitleColor(.label, for: .normal)
+                button.titleLabel?.font = .systemFont(ofSize: 22)
+                button.backgroundColor = .secondarySystemGroupedBackground
+                button.layer.cornerRadius = 6
+                button.accessibilityLabel = key == "⌫" ? String(localized: "删除") : key == "⌄" ? String(localized: "收起键盘") : key
+                button.addTarget(target, action: #selector(Coordinator.pressFlightKey(_:)), for: .touchUpInside)
+                row.addArrangedSubview(button)
+            }
+            rows.addArrangedSubview(row)
+        }
+        return keyboard
     }
 
     private static func makeAccessory(target: Coordinator, doneTitle: String) -> UIToolbar {
@@ -218,6 +255,20 @@ struct FlightNumberTextField: UIViewRepresentable {
         }
 
         @objc func dismissKeyboard() { textField?.resignFirstResponder() }
+
+        @objc func pressFlightKey(_ sender: UIButton) {
+            guard let key = sender.title(for: .normal), let field = textField else { return }
+            if key == "⌄" { dismissKeyboard(); return }
+            if key == "⌫" {
+                var range = selectedRange(in: field)
+                if range.length == 0 {
+                    guard range.location > 0 else { return }
+                    range.location -= 1
+                    range.length = 1
+                }
+                replace(range, in: field.text ?? "", with: "")
+            } else { replaceSelection(with: key) }
+        }
 
         func textField(_ textField: UITextField, shouldChangeCharactersIn range: NSRange, replacementString replacement: String) -> Bool {
             replace(range, in: textField.text ?? "", with: replacement)
@@ -427,10 +478,44 @@ struct LimitedIMETextEditor: UIViewRepresentable {
 }
 
 /// Numeric amount entry that selects the current value on focus, or clears zero.
+/// Parses a complete locale-formatted amount, rejecting trailing junk and malformed grouping.
+enum SettlementAmountInput {
+    static func parse(_ text: String, locale: Locale = .current) -> Double? {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        if trimmed.isEmpty { return 0 }
+        let value = trimmed.map { character -> String in
+            if character.unicodeScalars.allSatisfy({ CharacterSet.decimalDigits.contains($0) }),
+               let digit = character.wholeNumberValue { return String(digit) }
+            return String(character)
+        }.joined()
+        let formatter = NumberFormatter()
+        formatter.locale = locale
+        formatter.numberStyle = .decimal
+        let decimal = formatter.decimalSeparator ?? "."
+        let grouping = formatter.groupingSeparator ?? ""
+        let primary = max(1, formatter.groupingSize)
+        let secondary = formatter.secondaryGroupingSize > 0 ? formatter.secondaryGroupingSize : primary
+        let escapedDecimal = NSRegularExpression.escapedPattern(for: decimal)
+        var integer = "[0-9]+"
+        if !grouping.isEmpty && grouping != decimal {
+            let separator = NSRegularExpression.escapedPattern(for: grouping)
+            integer = "(?:[0-9]+|[0-9]{1,\(secondary)}(?:\(separator)[0-9]{\(secondary)})*\(separator)[0-9]{\(primary)})"
+        }
+        let pattern = "^[+-]?(?:\(integer)(?:\(escapedDecimal)[0-9]*)?|\(escapedDecimal)[0-9]+)$"
+        guard value.range(of: pattern, options: .regularExpression) != nil else { return nil }
+        var normalized = value
+        if !grouping.isEmpty { normalized = normalized.replacingOccurrences(of: grouping, with: "") }
+        normalized = normalized.replacingOccurrences(of: decimal, with: ".")
+        guard let amount = Double(normalized), amount.isFinite else { return nil }
+        return amount
+    }
+}
+
 struct AmountTextField: UIViewRepresentable {
     var placeholder: String
     @Binding var value: Double
     var fontSize: CGFloat = 17
+    var onValidityChange: ((Bool) -> Void)? = nil
 
     func makeCoordinator() -> Coordinator {
         Coordinator(self)
@@ -454,7 +539,7 @@ struct AmountTextField: UIViewRepresentable {
         context.coordinator.parent = self
         field.placeholder = placeholder
         field.font = .systemFont(ofSize: fontSize)
-        guard !field.isFirstResponder else { return }
+        guard !field.isFirstResponder, !context.coordinator.hasInvalidText else { return }
         let formattedValue = Self.displayValue(value)
         if field.text != formattedValue { field.text = formattedValue }
     }
@@ -471,6 +556,7 @@ struct AmountTextField: UIViewRepresentable {
     final class Coordinator: NSObject, UITextFieldDelegate {
         var parent: AmountTextField
         weak var textField: UITextField?
+        var hasInvalidText = false
 
         init(_ parent: AmountTextField) {
             self.parent = parent
@@ -479,7 +565,7 @@ struct AmountTextField: UIViewRepresentable {
         @objc func dismissKeyboard() { textField?.resignFirstResponder() }
 
         func textFieldDidBeginEditing(_ textField: UITextField) {
-            if abs(parent.value) < 0.000_000_1 {
+            if !hasInvalidText && abs(parent.value) < 0.000_000_1 {
                 textField.text = ""
             } else {
                 DispatchQueue.main.async { [weak textField] in
@@ -492,6 +578,17 @@ struct AmountTextField: UIViewRepresentable {
         }
 
         @objc func valueChanged(_ textField: UITextField) {
+            if let onValidityChange = parent.onValidityChange {
+                guard let amount = SettlementAmountInput.parse(textField.text ?? "") else {
+                    hasInvalidText = true
+                    onValidityChange(false)
+                    return
+                }
+                hasInvalidText = false
+                parent.value = amount
+                onValidityChange(true)
+                return
+            }
             guard let text = textField.text, !text.isEmpty else {
                 parent.value = 0
                 return
@@ -508,10 +605,6 @@ struct AmountTextField: UIViewRepresentable {
         }
 
         func textFieldDidEndEditing(_ textField: UITextField) {
-            guard let text = textField.text, !text.isEmpty else {
-                parent.value = 0
-                return
-            }
             valueChanged(textField)
         }
     }

@@ -157,7 +157,7 @@ button:disabled { cursor: not-allowed; opacity: .55; }
 .trip-title strong { font-size: 18px; }
 .trip-title .trip-service { color: #f0c49f; background: #49362a; border-radius: 999px; padding: 5px 9px; font-size: 12px; font-weight: 650; }
 .trip-facts { display: flex; flex-wrap: wrap; gap: 7px; margin-top: 9px; }
-.trip-facts span { padding: 5px 9px; border-radius: 999px; background: #202b3a; color: #b6c2d2; font-size: 11px; }
+.trip-facts > span { padding: 5px 9px; border-radius: 999px; background: #202b3a; color: #b6c2d2; font-size: 11px; }
 .trip-route-full { display: grid; grid-template-columns: minmax(0, 1fr); gap: 9px; margin-top: 17px; min-width: 0; width: 100%; }
 .route-point { display: grid; grid-template-columns: 23px 74px minmax(0, 1fr); gap: 8px; align-items: baseline; position: relative; min-width: 0; width: 100%; }
 .route-icon { color: var(--mint); font-size: 18px; line-height: 1; }
@@ -403,7 +403,7 @@ button:disabled { cursor: not-allowed; opacity: .55; }
   .trip-title strong { font-size: 16px; }
   .trip-heading .trip-price { font-size: 16px; }
   .trip-facts { gap: 5px; }
-  .trip-facts span { padding: 5px 7px; font-size: 10px; }
+  .trip-facts > span { padding: 5px 7px; font-size: 10px; }
   .route-point { grid-template-columns: 19px 62px minmax(0, 1fr); gap: 5px; }
   .route-point .trip-route-value { font-size: 12px; }
   .route-point .trip-route-label { font-size: 10px; }
@@ -489,7 +489,7 @@ body { background: var(--bg); color: var(--text); }
 .trip-card-full, .trip-date-card, .trip-calendar { background: linear-gradient(145deg, #fffdf9, #f7f2e9); }
 .trip-date-card.active, .trip-mode-switch button.active { color: #8e542f; background: #f2e4d7; border-color: #d6b89b; }
 .trip-title .trip-service, .pill.accent { color: #8e542f; background: #f2e4d7; }
-.trip-facts span, .trip-expense-summary span, .pill, .trip-status { color: #655d53; background: #eee8de; }
+.trip-facts > span, .trip-expense-summary span, .pill, .trip-status { color: #655d53; background: #eee8de; }
 .trip-actions .complete-action { color: #8e542f; border-color: #d6b89b; background: #f2e4d7; }
 .trip-actions .settle-action, .pill.green { color: #39744d; border-color: #c9dfcb; background: #e6f1e7; }
 .wallet-total { color: #fff8ef; background: linear-gradient(135deg, #a9673d, #7e7657); border-color: #c49a70; }
@@ -645,3 +645,335 @@ body { background: var(--bg); color: var(--text); }
   .asset-row > .button { padding-inline: 8px; }
   .customer-editor-modal .modal-head { top: -18px; margin: -18px -18px 13px; padding: 15px 18px 12px; }
 }
+
+/* Shared iOS/Web smart order draft: keep the text input and preview readable. */
+.smart-input-section { display: grid; gap: 10px; }
+.smart-input-section textarea { width: 100%; min-height: 110px; resize: vertical; padding: 12px; border: 1px solid var(--line); border-radius: 12px; color: var(--text); background: var(--panel, #fff); }
+.smart-input-section small, .smart-input-section p { color: var(--muted); }
+.smart-input-section button { justify-self: start; }
+/* Match text contrast to the existing light theme. */
+.trip-heading .trip-price { color: var(--text); }
+.trip-money-summary .trip-net { color: var(--green); }
+.trip-date-card.active span, .trip-date-card.active small { color: #8e542f; }
+.trip-date-card.active { box-shadow: 0 5px 16px #8e542f18; }
+
+.finance-snapshot-entry { margin-top: 16px; }
+.finance-snapshot-list { display: grid; gap: 12px; }
+.finance-trip-snapshot { background: var(--panel, #fff); border: 1px solid #e8e5ee; border-radius: 20px; padding: 16px; }
+.finance-trip-snapshot summary { display: flex; align-items: center; gap: 12px; cursor: pointer; list-style: none; }
+.finance-trip-snapshot summary::-webkit-details-marker { display: none; }
+.finance-snapshot-date { display: grid; gap: 4px; padding: 10px; border-radius: 12px; background: #f3f2f7; text-align: center; }
+.finance-snapshot-date small { font-size: 11px; color: #777; }
+.finance-snapshot-guest { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+.finance-snapshot-arrow { color: #6950ec; font-size: 24px; }
+.finance-trip-snapshot[open] .finance-snapshot-arrow { transform: rotate(90deg); }
+.finance-trip-snapshot .detail-grid { padding-top: 18px; }
+@media(max-width: 480px) { .finance-trip-snapshot { padding: 10px; } .finance-trip-snapshot summary { gap: 8px; } }
+
+.finance-snapshot-count { display: flex; flex-direction: column; align-items: flex-end; gap: 6px; }
+.finance-snapshot-record { margin-top: 14px; }
+.finance-snapshot-record .trip-card { cursor: default; box-shadow: none; }
+
+.finance-snapshot-backdrop { animation: finance-backdrop-in 420ms ease-out both; }
+.finance-snapshot-modal { animation: finance-panel-in 460ms cubic-bezier(.22,.61,.36,1) both; }
+.finance-snapshot-arrow { transition: transform 440ms cubic-bezier(.22,.61,.36,1); }
+@keyframes finance-backdrop-in { from { opacity: 0; } to { opacity: 1; } }
+@keyframes finance-panel-in { from { opacity: 0; transform: translateY(14px); } to { opacity: 1; transform: translateY(0); } }
+@media (prefers-reduced-motion: reduce) {
+  .finance-snapshot-backdrop, .finance-snapshot-modal { animation: none; }
+  .finance-snapshot-arrow { transition: none; }
+}
+.finance-snapshot-modal { overflow-x: hidden; }
+
+/* Finance follows the App: one compact chart/legend card, breakdown, payment methods. */
+.finance-page { --finance-accent: #6851ed; --finance-muted: #8c8b93; --finance-surface: #fff; display: grid; gap: 16px; width: 100%; max-width: 900px; margin: 0 auto; padding: 16px; border-radius: 22px; background: #f2f2f7; color: #17171a; }
+.finance-page *, .finance-page *::before, .finance-page *::after { box-sizing: border-box; }
+.finance-period-picker { display: flex; gap: 5px; padding: 5px; border-radius: 16px; background: #fff; }
+.finance-period-option { flex: 1; min-width: 0; min-height: 40px; border: 0; border-radius: 12px; background: transparent; color: #77767f; font-size: 14px; font-weight: 600; cursor: pointer; }
+.finance-period-option.active { background: #efecff; color: var(--finance-accent); }
+.finance-page .wallet-date-navigator { width: 100%; max-width: none; margin: 0; gap: 14px; }
+.finance-date-navigator .button { width: 38px; height: 38px; min-height: 38px; padding: 0; border: 0; border-radius: 50%; background: #fff; color: #17171a; font-size: 23px; box-shadow: none; }
+.finance-page .wallet-date-navigator > strong { font-size: 16px; color: #17171a; }
+.finance-page .panel { margin: 0; border: 0; border-radius: 20px; background: #fff; box-shadow: none; }
+.finance-summary { display: flex; align-items: center; gap: 12px; padding: 14px; min-width: 0; }
+.finance-summary .wallet-chart-shell { width: 190px; height: 204px; flex: 0 0 190px; margin: 0; }
+.finance-summary .wallet-chart, .finance-summary .wallet-chart-depth { inset: 7px 0; width: 190px; height: 190px; }
+.finance-summary .wallet-chart-depth { transform: translateY(8px); filter: opacity(.48); }
+.finance-summary .wallet-chart { filter: none; }
+.finance-summary .wallet-chart-center { background: #fff; box-shadow: none; }
+.finance-summary .wallet-chart-center small { font-size: 9px; color: #85848d; }
+.finance-summary .wallet-chart-center strong { font-size: 11px; color: #17171a; overflow-wrap: anywhere; }
+.finance-summary .wallet-chart-divider { margin: 4px 0 2px; background: #dddde3; }
+.finance-category-list { display: grid; align-content: start; gap: 11px; flex: 1; min-width: 0; max-height: 184px; overflow-y: auto; scrollbar-width: thin; }
+.finance-category { min-width: 0; }
+.finance-category-heading { display: flex; align-items: center; gap: 6px; font-size: 12px; font-weight: 500; }
+.finance-category-heading i { flex: 0 0 8px; height: 8px; border-radius: 50%; background: var(--category-color); }
+.finance-category-heading > span { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.finance-category-heading small { font-size: 10px; color: #8c8b93; font-variant-numeric: tabular-nums; }
+.finance-category-amount { display: flex; flex-wrap:wrap; column-gap:8px; row-gap:2px; margin: 4px 0 0 14px; font-size: 11px; }
+.finance-category-amount strong { overflow-wrap: anywhere; }
+.finance-category-amount .income { color: #32a56a; }.finance-category-amount .expense { color: #e68d28; }
+.finance-empty { display: grid; gap: 8px; font-size: 13px; }.finance-empty small { color: #8c8b93; font-size: 11px; }
+.finance-page .section-heading { margin: 0 0 12px; align-items: center; }
+.finance-page .section-heading h2 { font-size: 15px; color: #17171a; }
+.finance-page .finance-snapshot-count { gap: 5px; color: #8c8b93; font-size: 11px; }
+.finance-page .finance-snapshot-count .button { min-height: 28px; padding: 2px 0; border: 0; color: var(--finance-accent); background: transparent; box-shadow: none; font-size: 12px; }
+.finance-breakdown, .finance-page .account-asset-panel { padding: 16px; }
+.finance-totals { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+.finance-total-tile { display: grid; gap: 8px; min-height: 88px; align-content: center; padding: 12px; border-radius: 15px; }
+.finance-total-tile small { font-size: 12px; }.finance-total-tile strong { font-size: 15px; color: #17171a; overflow-wrap: anywhere; }
+.finance-total-tile.income { background: #edf9f1; color: #319966; }.finance-total-tile.expense { background: #fff5e9; color: #dd8c24; }
+.finance-page .account-asset-panel .button { color: var(--finance-accent); background: #f0edff; border: 0; }
+.finance-page .asset-row { padding: 10px; gap: 12px; border: 0; background: #f5f5f9; border-radius: 16px; }
+.finance-page .asset-image-button { width: 82px; height: 82px; flex: 0 0 82px; background: #eeeef3; border: 0; border-radius: 14px; }
+.finance-page .asset-row-content input { background: #fff; color: #17171a; border-color: #e3e3e9; }
+.finance-page .asset-row-content label, .finance-page .empty-hint { color: #8c8b93; }
+.finance-page .asset-row > .danger { background: transparent; color: #de4f5f; }
+@media(max-width: 420px) {
+ .finance-page { padding: 12px; gap: 14px; }
+ .finance-summary { padding: 12px; gap: 10px; }
+ .finance-summary .wallet-chart-shell { width: 160px; height: 174px; flex-basis: 160px; }
+ .finance-summary .wallet-chart, .finance-summary .wallet-chart-depth { width: 160px; height: 160px; }
+ .finance-page .asset-row { flex-wrap: wrap; }
+ .finance-page .asset-row-content { flex: 1 1 120px; }
+}
+@media(max-width: 360px) {
+ .finance-summary .wallet-chart-shell { width: 132px; height: 146px; flex-basis: 132px; }
+ .finance-summary .wallet-chart, .finance-summary .wallet-chart-depth { width: 132px; height: 132px; }
+ .finance-category-heading { font-size: 11px; gap: 4px; }
+ .finance-category-heading small { font-size: 9px; }
+ .finance-category-amount { font-size: 10px; }
+}
+.finance-page .asset-image-button span { font-size: 11px; line-height: 1.4; }
+.finance-page .asset-row > .danger { flex: 0 0 28px; width: 28px; padding: 0; font-size: 0; }
+
+@media(max-width: 420px) {
+ .finance-page .asset-row { flex-wrap: nowrap; gap: 8px; }
+ .finance-page .asset-image-button { width: 64px; height: 64px; flex-basis: 64px; }
+ .finance-page .asset-row-content { flex: 1 1 0; }
+ .finance-page .asset-row-content > label:not(.button) { font-size: 10px; }
+ .finance-page .asset-row-content .button { padding: 6px; font-size: 10px; }
+}
+.finance-main { background: #f2f2f7; }
+@media(max-width: 600px) {
+ .finance-main .topbar { gap: 10px; align-items: center; }
+ .finance-main .topbar h1 { font-size: 20px; }
+ .finance-main .topbar p { display: none; }
+ .finance-main .top-actions { flex-shrink: 0; gap: 6px; }
+ .finance-main .top-actions .button { padding: 7px 9px; font-size: 11px; white-space: nowrap; }
+}
+/* Shared App-style flight result for lookup, saved snapshots and list expansion. */
+.app-flight-result { display: grid; gap: 14px; min-width: 0; padding: 14px; border-radius: 16px; background: #f2f1f8; color: #17171b; text-align: left; }
+.app-flight-airline { display: flex; align-items: center; gap: 8px; }
+.app-flight-logo { display: grid; place-items: center; width: 38px; height: 38px; flex: 0 0 38px; border-radius: 10px; color: #6851ed; background: #fff; font-size: 12px; font-weight: 700; }
+.app-flight-airline > div { display: grid; min-width: 0; gap: 2px; }
+.app-flight-airline strong { font-size: 17px; font-weight: 700; }
+.app-flight-airline small { font-size: 12px; color: #8b8a94; }
+.app-flight-schedule { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.app-flight-time { flex: 1; min-width: 0; display: grid; gap: 3px; }
+.app-flight-time > div { display: flex; gap: 3px; align-items: baseline; min-width: 0; }
+.app-flight-time strong { font-size: 26px; line-height: 1.15; font-weight: 500; font-variant-numeric: tabular-nums; }
+.app-flight-time small { color: #6851ed; font-size: 9px; white-space: nowrap; }
+.app-flight-time > span { font-size: 11px; color: #8b8a94; }
+.app-flight-time.arrival { text-align: right; }.app-flight-time.arrival > div { justify-content: flex-end; }
+.app-flight-direction { flex: 0 0 48px; color: #6851ed; text-align: center; }
+.app-flight-direction > div { display: flex; align-items: center; }
+.app-flight-direction i { height: 2px; flex: 1; background: #bcb1f6; border-radius: 2px; }
+.app-flight-direction span { font-size: 22px; line-height: 1; }
+.app-flight-direction small { font-size: 10px; font-weight: 600; }
+.app-flight-airports { display: grid; grid-template-columns: minmax(0,1fr) minmax(0,1fr); gap: 12px; }
+.app-flight-airports > div { display: grid; align-content: start; gap: 3px; min-width: 0; }
+.app-flight-airports > div:last-child { text-align: right; }
+.app-flight-airports small { color: #8b8a94; font-size: 10px; }
+.app-flight-airports strong { font-size: 12px; font-weight: 600; overflow-wrap: anywhere; }
+.app-flight-airports span { color: #8b8a94; font-size: 11px; }
+.flight-lookup-row { flex-wrap: wrap; }.flight-lookup-result { flex: 1 0 100%; width: 100%; }
+.trip-flight:has(.app-flight-result) { background: #f2f1f8; border-color: #e9e7f0; }
+.trip-flight:has(.app-flight-result) .flight-summary { color: #17171b; }
+.trip-flight:has(.app-flight-result) .flight-summary:hover { background: #ece9f7; }
+.app-flight-picker { background: #f2f2f7; color: #17171b; border: 0; border-radius: 22px; max-width: 620px; }
+.app-flight-picker .modal-head { align-items: center; border-color: #e4e4ea; }
+.app-flight-picker .modal-head h2 { flex: 1; text-align: center; font-size: 16px; }
+.app-flight-picker .modal-head button { order: -1; background: transparent; border: 0; color: #6851ed; }
+.app-flight-picker .modal-head::after { content: ''; width: 40px; }
+.app-flight-picker .picker-list { display: grid; gap: 10px; }
+.app-flight-choice { border: 0; background: #fff; color: #17171b; border-radius: 14px; padding: 14px; text-align: left; }
+.app-flight-choice:hover { background: #ece9fb; }
+.app-flight-choice-copy { display: grid; gap: 6px; width: 100%; min-width: 0; }
+.app-flight-choice-route { display: flex; align-items: center; gap: 10px; }
+.app-flight-choice-route strong { flex: 1; font-size: 16px; overflow-wrap: anywhere; }
+.app-flight-choice-route > span { color: #aaa8b0; }
+.app-flight-choice-copy > small { font-size: 13px; color: #8b8a94; }
+.app-flight-choice-times { display: flex; flex-wrap: wrap; gap: 12px; color: #8b8a94; }
+.app-flight-choice-times small { font-size: 11px; }
+.picker-backdrop:has(.app-flight-picker) { animation: finance-backdrop-in 420ms ease-out both; }
+.app-flight-picker { animation: finance-panel-in 460ms cubic-bezier(.22,.61,.36,1) both; }
+@media(max-width:360px) { .app-flight-result { padding: 12px; }.app-flight-time strong { font-size: 23px; }.app-flight-direction { flex-basis: 38px; }.app-flight-time small { font-size: 8px; } }
+@media(prefers-reduced-motion:reduce) { .picker-backdrop:has(.app-flight-picker), .app-flight-picker { animation: none; } }
+@media(max-width:360px) {
+ .app-flight-time > span { font-size: 9px; white-space: nowrap; }
+ .app-flight-time > div { flex-wrap: wrap; }
+}
+/* Read-only details are stacked sections, not the two-column form field grid. */
+.detail-modal .detail-section { margin-bottom: 14px; padding: 16px; }
+.detail-section-body { display: grid; grid-template-columns: minmax(0,1fr); gap: 12px; min-width: 0; }
+.detail-section .form-section-title { margin-bottom: 12px; }
+.detail-flight-actions { display: flex; justify-content: flex-end; align-items: center; }
+.detail-flight-actions .button { flex: 0 0 auto; min-height: 34px; }
+/* New/edit trip flight area follows the App rather than a manual data-entry grid. */
+.app-trip-flight-section { display: grid; gap: 12px; padding: 16px; border: 1px solid #e2e1e9; border-radius: 14px; background: #f6f5f9; }
+.app-trip-flight-inputs { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 12px; }
+.app-trip-flight-inputs .field { margin: 0; min-width: 0; }
+.app-trip-flight-inputs .field label { font-size: 12px; color: #8b8a94; }
+.app-trip-flight-inputs input { min-width: 0; width: 100%; min-height: 44px; padding: 10px; border: 1px solid #d9d8e0; border-radius: 10px; background: #f2f1f6; color: #17171b; font-size: 14px; }
+.app-trip-flight-query { width: 100%; min-height: 38px; padding: 9px 12px; border: 0; border-radius: 10px; background: #eae6fc; color: #6851ed; font-size: 14px; cursor: pointer; }
+.app-trip-flight-query:disabled { background: #eae9ee; color: #a7a5b0; cursor: default; }
+.app-trip-flight-feedback { padding: 12px; border-radius: 13px; background: #fff; color: #8b8a94; font-size: 12px; }
+.app-trip-flight-section .app-flight-result { background: #fff; border-radius: 13px; }
+/* Native trip editor hierarchy: cancel/title/save toolbar and ordered route. */
+.trip-editor-modal { background: #f2f2f7; border-color: #e3e2e9; color: #17171b; }
+.trip-editor-modal .modal-head { display: grid; grid-template-columns: 1fr auto 1fr; gap: 10px; background: #fafafced; border-color: #e3e2e9; }
+.trip-editor-modal .modal-head > :first-child { justify-self: start; }
+.trip-editor-modal .modal-head h2 { text-align: center; font-size: 18px; }
+.trip-editor-modal .modal-head > :last-child { justify-self: end; }
+.trip-editor-modal .modal-head .button { border-radius: 24px; background: #fff; border-color: #e1dfe8; color: #6851ed; white-space: nowrap; }
+.trip-editor-modal .modal-head > :first-child { color: #8b8a94; }
+.trip-editor-modal .form-section { background: #fff; border-color: #e4e3eb; border-radius: 16px; }
+.trip-editor-modal .form-section-title h3 { color: #17171b; }
+.trip-editor-modal .field label, .trip-editor-modal .form-section-title p { color: #8b8a94; }
+.trip-editor-modal .field input, .trip-editor-modal .field select, .trip-editor-modal .field textarea { color: #17171b; background: #f5f4f9; border-color: #dfdee7; }
+.trip-editor-modal .button, .trip-editor-modal .location-button { color: #6851ed; background: #efecff; border-color: #e2dcff; }
+.trip-editor-modal .readonly-status { color: #8b8a94; background: #f5f4f9; border-color: #dfdee7; }
+.app-trip-route .route-start-wrap { position: relative; min-width: 0; }
+.trip-form .app-trip-route .route-swap { position: absolute; top: -2px; right: 0; height: 25px; min-height: 25px; margin: 0; padding: 0 6px; border: 0; background: transparent; }
+.app-trip-route .app-add-stop { justify-self: start; border: 0; background: transparent; padding: 4px 0; }
+.app-trip-route .stops-list:empty { display: none; }
+.trip-editor-modal .app-trip-flight-query { color: #6851ed; background: #eae6fc; }
+.trip-editor-modal .app-trip-flight-query:disabled { color: #a7a5b0; background: #eae9ee; }
+.trip-editor-modal .service-type-option, .trip-editor-modal .order-source-option { color: #17171b; background: #f7f7fa; border-color: #dfdee7; }
+.trip-editor-modal .service-type-option.selected { color: #258853; background: #f2faf5; border-color: #62b98a; box-shadow: none; }
+.trip-editor-modal .service-type-option.selected .service-type-icon { color: #258853; }
+.trip-editor-modal .order-source-option.selected { color: #6851ed; background: #f0edff; border-color: #b5a8f2; }
+.trip-editor-modal .service-type-field > legend, .trip-editor-modal .order-source-field > legend { display: none; }
+.trip-editor-modal .smart-input-section { display: grid; gap: 10px; }
+.trip-editor-modal .smart-input-section textarea { min-height: 100px; border: 1px solid #dfdee7; border-radius: 12px; background: #f5f4f9; color: #17171b; padding: 10px; }
+.trip-editor-modal .smart-input-section > small { color: #8b8a94; }
+.trip-editor-modal .form-grid > .span-2 { min-width: 0; }
+.trip-editor-modal .trip-details-section > .form-grid { grid-template-columns: repeat(2,minmax(0,1fr)); }
+.trip-editor-modal .trip-details-section > .form-grid > .span-2 { grid-column: 1 / -1; }
+.trip-form .app-trip-route .address-input-row { display: grid; grid-template-columns: minmax(0,1fr) 40px 40px; gap: 8px; padding: 10px; border: 1px solid #dfdee7; border-radius: 13px; background: #f5f4f9; }
+.trip-form .app-trip-route .address-input-row input { grid-column: 1 / -1; min-height: 44px; padding: 4px 0; border: 0; box-shadow: none; background: transparent; }
+.trip-form .app-trip-route .address-pick-button { width: 40px; height: 32px; min-height: 32px; padding: 0; justify-self: end; border: 0; border-radius: 20px; }
+.trip-form .app-trip-route .address-pick-button > span:not(.app-symbol) { display: none; }
+.trip-form .app-trip-route .location-button { height: 32px; min-height: 32px; border: 0; border-radius: 20px; }
+.trip-form .app-trip-route .stop-field { position: relative; }
+.trip-form .app-trip-route .stop-remove-button { position: absolute; right: 0; top: -5px; width: 24px; height: 24px; min-height: 24px; padding: 0; border: 0; border-radius: 50%; color: #e35667; background: #ffedf0; }
+.visually-hidden { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; border: 0; }
+.app-trip-customer-input { display: flex; gap: 8px; align-items: center; }
+.app-trip-customer-input input { flex: 1; min-width: 0; }
+.app-trip-customer-input .button { flex: 0 0 36px; width: 36px; min-height: 40px; padding: 0; }
+.trip-editor-modal .trip-customer-section > .form-grid { grid-template-columns: repeat(2,minmax(0,1fr)); }
+.trip-editor-modal .trip-customer-section > .form-grid > .span-2 { grid-column: 1 / -1; }
+.trip-paid-field { min-width: 0; border: 0; padding: 0; }
+.trip-paid-field legend { color: #8b8a94; font-size: 12px; margin-bottom: 8px; }
+.trip-paid-picker { display: flex; padding: 4px; gap: 3px; border-radius: 10px; background: #ededf2; }
+.trip-paid-picker label { position: relative; flex: 1; margin: 0; padding: 8px 4px; text-align: center; border-radius: 7px; font-size: 12px; cursor: pointer; }
+.trip-paid-picker input { position: absolute; opacity: 0; inset: 0; width: 100%; height: 100%; cursor: pointer; }
+.trip-paid-picker label:has(input:checked) { color: #17171b; background: #fff; box-shadow: 0 1px 3px #0001; }
+.trip-editor-modal .form-section:has(.trip-paid-field) > .form-grid { grid-template-columns: repeat(2,minmax(0,1fr)); align-items: start; }
+.trip-editor-modal .form-section:has(.trip-paid-field) .readonly-status { display: inline-flex; min-height: 30px; width: fit-content; padding: 6px 10px; border: 0; border-radius: 20px; color: #cf8628; background: #fff3e4; font-size: 12px; }
+
+/* Same SF Symbols outlines as the native App; local alpha masks inherit UI color. */
+.app-symbol { display:inline-block; width:20px; height:20px; flex:0 0 auto; vertical-align:middle; background-color:currentColor; -webkit-mask-image:var(--app-symbol-image); mask-image:var(--app-symbol-image); -webkit-mask-size:contain; mask-size:contain; -webkit-mask-repeat:no-repeat; mask-repeat:no-repeat; -webkit-mask-position:center; mask-position:center; }
+.nav-icon .app-symbol { width:25px; height:25px; }
+.button .app-symbol, .trip-facts .app-symbol, .app-flight-choice-times .app-symbol { width:18px; height:18px; }
+.service-type-icon .app-symbol { width:24px; height:24px; }
+.service-type-option.selected .service-type-icon { color:#258853; }
+.app-flight-direction .app-symbol { width:36px; height:30px; }
+
+.service-type-icon, .order-source-icon, .route-swap, .location-button, .address-pick-button { color:#6550ec; }
+.trip-editor-modal .service-type-option.selected .service-type-icon { color:#258853; }
+.order-source-check .app-symbol { width:18px; height:18px; }
+
+.trip-title .trip-service { color:#6851ed; background:#eeebff; }
+.trip-facts .app-symbol { padding:0; border-radius:0; background-color:currentColor; color:#8b8996; }
+
+/* Route rows stay vertically stacked on narrow screens; only their inner label/value uses columns. */
+.trip-route.trip-route-full { grid-template-columns:minmax(0,1fr); }
+
+.completion-prompt-modal { width:min(340px,calc(100vw - 40px)); border-radius:24px; }
+.completion-prompt-modal .modal-head { justify-content:center; border:0; padding-bottom:0; }
+.completion-prompt-modal .modal-head h2 { text-align:center; font-size:18px; }
+.completion-prompt-modal .modal-head > button { display:none; }
+.completion-prompt-copy { text-align:center; padding:4px 22px 16px; color:#85818e; }
+.completion-prompt-modal .form-actions { display:flex; padding:0 22px 22px; border:0; background:transparent; gap:12px; }
+.completion-prompt-modal .form-actions .button { flex:1; border-radius:24px; min-height:44px; }
+.completion-prompt-modal .form-actions .primary { background:#6851ed; color:white; }
+
+/* Card-only amount privacy; buttons remain separate from trip navigation. */
+.trip-price-controls { display:flex; align-items:center; gap:4px; flex-shrink:0; }
+.trip-amount-visibility { display:inline-flex; align-items:center; justify-content:center; width:44px; height:44px; padding:0; border:0; background:transparent; color:var(--muted, #777); cursor:pointer; border-radius:50%; }
+.trip-amount-visibility:focus-visible { outline:2px solid currentColor; outline-offset:2px; }
+.trip-amount-visibility .app-symbol { width:18px; height:18px; }
+
+.account-validity{color:#c62828;margin:4px 0 4px 52px;font-size:12px;line-height:1.6;overflow-wrap:anywhere}.account-validity strong,.account-validity small{display:block}.account-validity small{font-size:11px}
+
+.auth-password-field{position:relative}.auth-password-field input{padding-right:52px;width:100%}.auth-password-eye{position:absolute;right:2px;top:50%;transform:translateY(-50%);width:44px;height:44px;border:0;background:transparent;color:var(--muted,#666);display:grid;place-items:center;cursor:pointer}.auth-password-eye .app-icon{width:19px;height:19px}
+
+.expired-archive{max-width:1000px;margin:auto;padding:24px;display:grid;gap:18px}.archive-record{padding:12px 0;border-bottom:1px solid #ddd}.archive-record summary{cursor:pointer}.archive-record pre{white-space:pre-wrap;overflow-wrap:anywhere;font-size:12px}
+
+.sidebar:has(.account-validity) .brand-lockup{padding-bottom:6px}.sidebar:has(.account-validity) .nav-label{padding-top:6px}
+
+/* Agency picker and trip selection */
+.statement-entry {padding:24px}
+.statement-entry-heading h2 {display:flex;align-items:center;gap:8px;margin:0;font-size:18px}
+.statement-entry-heading p {margin:6px 0 22px;color:#8b8594;font-size:13px}
+.statement-agency-field {display:grid;gap:8px;color:#77717f;font-size:12px;font-weight:500}
+.statement-agency-field select {width:100%;min-width:0;height:48px;padding:0 14px;border:1px solid #e7e4ec;border-radius:12px;background:#faf9fc;color:#29252f;font:inherit;font-size:14px;cursor:pointer}
+.statement-agency-field select:focus-visible {outline:2px solid #6651df;outline-offset:2px}
+.statement-selection-bar {display:flex;justify-content:space-between;align-items:center;gap:12px;margin:20px 0 10px;font-size:13px;color:#514b5a}
+.statement-selection-bar small {margin-left:10px;color:#918a99;font-size:12px}
+.statement-selection-actions {display:flex;gap:4px;flex-shrink:0}
+.statement-selection-actions .button {padding:7px 10px;min-height:32px;color:#6651df;border:0;background:transparent;box-shadow:none}
+.statement-choices {display:grid;gap:8px}
+.statement-choice {display:flex;align-items:center;justify-content:space-between;gap:18px;margin:0;padding:16px;border:1px solid #ece9f0;border-radius:12px;cursor:pointer;background:#fff;transition:background .2s,border-color .2s}
+.statement-choice.is-selected {background:#f7f5ff;border-color:#dcd5fa}
+.statement-choice-content {display:grid;gap:5px;min-width:0}
+.statement-choice strong {font-size:14px;font-weight:600;color:#29252f;overflow-wrap:anywhere}
+.statement-choice small {display:block;color:#8a8393;font-size:12px;overflow-wrap:anywhere;line-height:1.5}
+.statement-choice .statement-order {font-size:11px;color:#a09aa7}
+.statement-choice input {width:20px;height:20px;margin:0;flex-shrink:0;accent-color:#6651df;cursor:pointer}
+.statement-entry-footer {display:flex;justify-content:space-between;align-items:center;gap:16px;margin-top:18px;padding-top:16px;border-top:1px solid #efedf3}
+.statement-entry-footer p {margin:0;color:#9991a3;font-size:11px}
+.statement-entry-footer .button.primary {background:#6651df;color:#fff;border-color:#6651df;border-radius:12px;padding:12px 20px;white-space:nowrap}
+@media(max-width:600px) {.statement-entry{padding:18px}.statement-selection-bar small{display:block;margin:4px 0 0}.statement-entry-footer{align-items:stretch;flex-direction:column;gap:12px}.statement-entry-footer .button{width:100%}}
+
+/* Statement layout: route remains bounded; other columns follow content. */
+.agency-statement-modal {width:min(1240px,96vw);padding:24px;background:#fffdf9}
+.statement-table-scroll {overflow:auto;max-height:65vh;border:1px solid #e7e3dc;border-radius:12px;background:#fff}
+.statement-table {border-collapse:separate;border-spacing:0;font-size:13px;line-height:1.65;table-layout:auto;width:max-content;min-width:100%;max-width:none;color:#35332f}
+.statement-table th,.statement-table td {border:0;border-bottom:1px solid #ece9e3;padding:12px;vertical-align:top;white-space:pre;width:auto;text-align:left}
+.statement-table th {background:#f3f1ec;color:#716b61;font-size:12px;font-weight:600;position:sticky;top:0;z-index:1;border-bottom-color:#ddd8cf}
+.statement-table tbody tr:nth-child(even) td {background:#faf9f6}
+.statement-table tbody tr:last-child td {border-bottom:0}
+.statement-table th:nth-child(5),.statement-table td:nth-child(5) {width:260px;min-width:260px;max-width:260px;white-space:pre-wrap;overflow-wrap:anywhere}
+.statement-table th:nth-child(n+7),.statement-table td:nth-child(n+7) {text-align:right;font-variant-numeric:tabular-nums}
+.statement-table th:last-child,.statement-table td:last-child {font-weight:700;color:#775033;background:#f6efe6;position:sticky;right:0;box-shadow:-1px 0 #e7e3dc}
+.statement-summary {display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:12px;margin:18px 0 8px;padding:16px 18px;background:#f6efe6;border-radius:12px}
+.statement-summary small,.statement-footnote {font-size:12px;color:#847b70}
+.statement-summary strong {font-size:20px;font-variant-numeric:tabular-nums;color:#775033}
+.statement-summary p {margin:0}
+.statement-intro {margin:0 0 16px;color:#847b70;font-size:13px}
+
+.auth-language{display:flex;align-items:center;justify-content:flex-end;gap:10px;margin-bottom:24px}.auth-language label{margin:0;white-space:normal}.auth-language select{width:auto;max-width:55%;min-width:0}.login-card .form-actions{position:static;flex-wrap:wrap;margin:12px 0 0;padding:16px 0 0;background:transparent;backdrop-filter:none}.login-card .button{white-space:normal;overflow-wrap:anywhere}.brand-copy h1{overflow-wrap:anywhere}
+/* Keep translated navigation and header actions within narrow phone screens. */
+@media(max-width:680px){
+ .nav-list{display:grid;grid-template-columns:repeat(7,minmax(0,1fr));gap:2px}
+ .nav-item{min-width:0;width:100%;padding-inline:2px;overflow:hidden}
+ .nav-item>span:last-child{max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+ .topbar{flex-wrap:wrap}
+ .topbar>div:first-child{min-width:0;flex:1 1 150px}
+ .top-actions{max-width:100%;flex-wrap:wrap}
+}
+
+.trip-guest-toggle{display:inline-flex;align-items:center;gap:6px;border:0;background:none;padding:0;color:inherit;font:inherit;font-weight:700;text-align:left;cursor:pointer}.trip-guest-toggle svg{width:12px;height:12px}.trip-contact-actions{padding:8px 0}.trip-contact-actions>div{display:flex;align-items:center;gap:10px;margin:4px 0}.trip-contact-actions>div>span{flex:1}.trip-contact-actions a svg{width:16px;height:16px}

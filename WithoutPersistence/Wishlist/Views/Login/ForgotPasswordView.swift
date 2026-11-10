@@ -5,7 +5,7 @@ struct ForgotPasswordView: View {
     @Environment(AuthViewModel.self) private var auth
     @Environment(\.modelContext) private var modelContext
     @Environment(\.dismiss) private var dismiss
-    @AppStorage("auth.accountMode.cloud") private var useCloudAccount = false
+    @AppStorage("auth.accountMode.cloud") private var useCloudAccount = true
 
     @State private var email = ""
     @State private var verificationCode = ""

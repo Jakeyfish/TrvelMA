@@ -178,7 +178,7 @@ private struct CloudTripScheduleView: View {
         let calendar = Calendar.current
         let today = calendar.startOfDay(for: .now)
         let query = searchText.trimmingCharacters(in: .whitespacesAndNewlines)
-        return directory.trips.filter { trip in
+        let filtered = directory.trips.filter { trip in
             let date = trip.appointmentDate.cloudDate
             let matchesStatus: Bool
             if !showsDateControls {
@@ -201,11 +201,10 @@ private struct CloudTripScheduleView: View {
                     trip.stops.map(\.address).joined(separator: " "), trip.locationEnd, trip.flightInfo,
                     trip.orderSource, trip.memo]
                 .contains { $0.localizedCaseInsensitiveContains(query) }
-        }.sorted {
-            let lhs = $0.appointmentDate.cloudDate
-            let rhs = $1.appointmentDate.cloudDate
-            if !calendar.isDate(lhs, inSameDayAs: rhs) { return lhs < rhs }
-            return $0.appointmentTime.cloudDate < $1.appointmentTime.cloudDate
+        }
+        return TripScheduleSortKey.sorted(filtered) {
+            TripScheduleSortKey(appointmentDate: $0.appointmentDate, appointmentTime: $0.appointmentTime,
+                                createdAt: $0.createdAt, id: $0.id, calendar: calendar)
         }
     }
 
@@ -459,6 +458,7 @@ private struct CloudTripManagementCard: View {
     let directory: CloudTripDirectoryModel
     var showsFlightActions = true
     var onComplete: (CloudOnlineRepository.CloudTripRecord) -> Void
+    @State private var isContactExpanded = false
     @State private var isFlightExpanded = false
     @State private var isLookingUpFlight = false
     @State private var flightLookupResult: VariFlightLookupResult?
@@ -478,6 +478,31 @@ private struct CloudTripManagementCard: View {
         components.hour = timeComponents.hour
         components.minute = timeComponents.minute
         return Calendar.current.date(from: components) ?? date
+    }
+
+    private var savedFlightDisplayContext: SavedFlightDisplayContext {
+        SavedFlightDisplayContext(flightNumber: trip.flightInfo, flightDate: trip.flightDate.cloudDate,
+                                  serviceType: trip.serviceType, locationStart: trip.locationStart, locationEnd: trip.locationEnd,
+                                  snapshot: trip.flightSelectionSnapshot, canDisplay: showsFlightActions && !trip.isCompleted && !trip.isCancelled)
+    }
+
+    private func refreshSavedFlightDisplay() {
+        let context = savedFlightDisplayContext
+        flightLookupResult = context.selection
+        flightLookupError = nil
+        flightCandidates = []
+        isChoosingFlight = false
+        departureTimeZoneLabel = ""
+        arrivalTimeZoneLabel = ""
+        guard let selection = context.selection else { return }
+        // Keep the user's expanded/collapsed choice. This reads saved data only.
+        Task {
+            let departure = await FlightTimeZoneResolver.label(for: selection.departureAirport, date: context.flightDate) ?? ""
+            let arrival = await FlightTimeZoneResolver.label(for: selection.arrivalAirport, date: context.flightDate) ?? ""
+            guard savedFlightDisplayContext == context else { return }
+            departureTimeZoneLabel = departure
+            arrivalTimeZoneLabel = arrival
+        }
     }
 
     private var hasReusableFlightSnapshot: Bool {
@@ -500,6 +525,7 @@ private struct CloudTripManagementCard: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
+            HStack(alignment: .top, spacing: 0) {
             NavigationLink {
                 CloudTripDetailView(trip: trip, directory: directory)
             } label: {
@@ -517,9 +543,12 @@ private struct CloudTripManagementCard: View {
                         VStack(alignment: .leading, spacing: 7) {
                             HStack(alignment: .firstTextBaseline) {
                                 Text(trip.customerName.isEmpty ? String(localized: "未填写客户", locale: languageSettings.locale) : trip.customerName)
+                                    .highPriorityGesture(TapGesture().onEnded { withAnimation { isContactExpanded.toggle() } })
+                                    .accessibilityAddTraits(.isButton)
+                                    .accessibilityAction { withAnimation { isContactExpanded.toggle() } }
                                     .font(.headline.weight(.bold)).lineLimit(1)
                                 Spacer(minLength: 6)
-                                Text(cloudMoney(trip.price, code: trip.currencyCode))
+                                TripCardAmountText(tripID: String(describing: trip.id), value: cloudMoney(trip.price, code: trip.currencyCode))
                                     .font(.headline.weight(.bold)).lineLimit(1).minimumScaleFactor(0.75)
                             }
                             Label(LocalizedStringKey(trip.serviceType), systemImage: serviceIcon)
@@ -535,6 +564,10 @@ private struct CloudTripManagementCard: View {
                 }
             }
             .buttonStyle(.plain)
+            TripAmountVisibilityButton(tripID: String(describing: trip.id)).padding(.top, -10)
+            }
+
+            if isContactExpanded { TripPhoneActions(phones: TripPhoneContact.cloud(trip, directory: directory)) }
 
             VStack(alignment: .leading, spacing: 7) {
                 routeRow(title: "起始点", value: trip.locationStart, color: .teal, isLast: false, canNavigate: !trip.isCompleted && !trip.isCancelled, icon: "mappin.and.ellipse")
@@ -604,6 +637,7 @@ private struct CloudTripManagementCard: View {
             Text(directory.errorMessage ?? "")
         }
         .onAppear(perform: showReusableFlightSnapshot)
+        .onChange(of: savedFlightDisplayContext) { _, _ in refreshSavedFlightDisplay() }
     }
 
     private func cloudInfoPill(count rawCount: String, singular: String, plural: String, icon: String, isBag: Bool) -> some View {
@@ -688,15 +722,21 @@ private struct CloudTripManagementCard: View {
     }
 
     private func lookupFlight(forceRefresh: Bool = false) {
+        guard !isLookingUpFlight else { return }
         guard !trip.flightInfo.isEmpty else { return }
         isLookingUpFlight = true
         flightLookupError = nil
         flightCandidates = []
+        let requestContext = savedFlightDisplayContext
         Task {
             do {
                 let date = trip.flightDate.cloudDate
                 let accessToken = await auth.refreshCloudAccessToken() ?? auth.cloudAccessToken
                 guard let accessToken else { throw VariFlightClientError.missingCloudSession }
+                guard requestContext == savedFlightDisplayContext else {
+                    isLookingUpFlight = false
+                    return
+                }
                 let candidates = try await VariFlightClient().lookupCandidatesForTrip(
                     flightNumber: trip.flightInfo,
                     flightDate: date,
@@ -706,6 +746,10 @@ private struct CloudTripManagementCard: View {
                     cloudAccessToken: accessToken,
                     forceRefresh: forceRefresh
                 )
+                guard requestContext == savedFlightDisplayContext else {
+                    isLookingUpFlight = false
+                    return
+                }
                 flightCandidates = candidates
                 if candidates.count == 1, let candidate = candidates.first,
                    !VariFlightClient.requiresExplicitFlightChoice(
@@ -714,11 +758,15 @@ private struct CloudTripManagementCard: View {
                     locationEnd: trip.locationEnd
                    ) {
                     selectFlight(candidate)
+                    // The selection task owns the busy state until its save completes.
+                    return
                 } else {
                     isChoosingFlight = !candidates.isEmpty
                 }
             } catch {
-                flightLookupError = error.localizedDescription
+                if requestContext == savedFlightDisplayContext {
+                    flightLookupError = error.localizedDescription
+                }
             }
             isLookingUpFlight = false
         }
@@ -744,16 +792,33 @@ private struct CloudTripManagementCard: View {
     }
 
     private func selectFlight(_ result: VariFlightLookupResult) {
-        flightLookupResult = result
+        flightLookupError = nil
         let saved = SavedFlightSelection(flightNumber: trip.flightInfo, flightDate: trip.flightDate.cloudDate, selected: result)
-        departureTimeZoneLabel = ""
-        arrivalTimeZoneLabel = ""
+        isLookingUpFlight = true
+        let selectionContext = savedFlightDisplayContext
         Task {
             let departureZone = await FlightTimeZoneResolver.label(for: result.departureAirport, date: trip.flightDate.cloudDate) ?? ""
             let arrivalZone = await FlightTimeZoneResolver.label(for: result.arrivalAirport, date: trip.flightDate.cloudDate) ?? ""
-            departureTimeZoneLabel = departureZone
-            arrivalTimeZoneLabel = arrivalZone
-            _ = await directory.updateStatus(for: trip, flightSelectionSnapshot: saved, using: auth)
+            guard selectionContext == savedFlightDisplayContext else {
+                isLookingUpFlight = false
+                return
+            }
+            let didSave = await directory.updateStatus(for: trip, flightSelectionSnapshot: saved, using: auth)
+            // A save/reload may already have supplied a newer saved snapshot.
+            // Its display observer owns the result in that case.
+            guard selectionContext == savedFlightDisplayContext else {
+                isLookingUpFlight = false
+                return
+            }
+            if didSave {
+                flightLookupResult = result
+                departureTimeZoneLabel = departureZone
+                arrivalTimeZoneLabel = arrivalZone
+                flightLookupError = nil
+            } else {
+                flightLookupError = directory.errorMessage ?? String(localized: "无法保存行程", locale: locale)
+            }
+            isLookingUpFlight = false
         }
     }
 
@@ -845,7 +910,15 @@ private struct CloudTripDetailView: View {
     @State private var flightLookupError: String?
     @State private var departureTimeZoneLabel = ""
     @State private var arrivalTimeZoneLabel = ""
-    let trip: CloudOnlineRepository.CloudTripRecord
+    private let initialTrip: CloudOnlineRepository.CloudTripRecord
+    private var trip: CloudOnlineRepository.CloudTripRecord {
+        directory.trips.first(where: { $0.id == initialTrip.id }) ?? initialTrip
+    }
+
+    init(trip: CloudOnlineRepository.CloudTripRecord, directory: CloudTripDirectoryModel) {
+        initialTrip = trip
+        self.directory = directory
+    }
     let directory: CloudTripDirectoryModel
     @State private var isEditing = false
     @State private var editPresentationID = UUID()
@@ -856,11 +929,34 @@ private struct CloudTripDetailView: View {
     @State private var isShowingCompletionPrompt = false
     @State private var isShowingSettlement = false
     @State private var isFlightExpanded = false
-    @State private var completedOverride: Bool?
-    @State private var cancelledOverride: Bool?
 
-    private var isCompleted: Bool { completedOverride ?? trip.isCompleted }
-    private var isCancelled: Bool { cancelledOverride ?? trip.isCancelled }
+    private var isCompleted: Bool { trip.isCompleted }
+    private var isCancelled: Bool { trip.isCancelled }
+
+    private var savedFlightDisplayContext: SavedFlightDisplayContext {
+        SavedFlightDisplayContext(flightNumber: trip.flightInfo, flightDate: trip.flightDate.cloudDate,
+                                  serviceType: trip.serviceType, locationStart: trip.locationStart, locationEnd: trip.locationEnd,
+                                  snapshot: trip.flightSelectionSnapshot, canDisplay: !isCompleted && !isCancelled)
+    }
+
+    private func refreshSavedFlightDisplay() {
+        let context = savedFlightDisplayContext
+        flightLookupResult = context.selection
+        flightLookupError = nil
+        flightCandidates = []
+        isChoosingFlight = false
+        departureTimeZoneLabel = ""
+        arrivalTimeZoneLabel = ""
+        guard let selection = context.selection else { return }
+        // Keep the user's expanded/collapsed choice. This reads saved data only.
+        Task {
+            let departure = await FlightTimeZoneResolver.label(for: selection.departureAirport, date: context.flightDate) ?? ""
+            let arrival = await FlightTimeZoneResolver.label(for: selection.arrivalAirport, date: context.flightDate) ?? ""
+            guard savedFlightDisplayContext == context else { return }
+            departureTimeZoneLabel = departure
+            arrivalTimeZoneLabel = arrival
+        }
+    }
 
     private var hasReusableFlightSnapshot: Bool {
         guard !isCompleted, !isCancelled,
@@ -917,10 +1013,7 @@ private struct CloudTripDetailView: View {
                     if isCancelled {
                         Button("恢复行程") {
                             Task {
-                                if await directory.updateStatus(for: trip, isCompleted: false, isCancelled: false, using: auth) {
-                                    completedOverride = false
-                                    cancelledOverride = false
-                                }
+                                _ = await directory.updateStatus(for: trip, isCompleted: false, isCancelled: false, using: auth)
                             }
                         }.buttonStyle(.borderedProminent)
                     } else if !isCompleted {
@@ -944,6 +1037,7 @@ private struct CloudTripDetailView: View {
             Section("订单信息") {
                 LabeledContent("客户", value: valueOrFallback(trip.customerName))
                 LabeledContent("联系方式", value: valueOrFallback(trip.customerContact))
+                TripPhoneActions(phones: TripPhoneContact.cloud(trip, directory: directory))
                 HStack(spacing: 8) {
                     compactDetail("行程类型", value: trip.serviceType)
                     compactDetail("订单来源", value: trip.orderSource)
@@ -955,6 +1049,7 @@ private struct CloudTripDetailView: View {
                         compactDetail("旅行社代码", value: trip.travelAgencyCode.isEmpty ? "未填写" : trip.travelAgencyCode)
                         compactDetail("旅行社名称", value: trip.travelAgencyName.isEmpty ? "未填写" : trip.travelAgencyName)
                     }
+                    LabeledContent("旅行社订单号", value: trip.travelAgencyOrderNumber.isEmpty ? "未填写" : trip.travelAgencyOrderNumber)
                 }
             }
             Section("时间") {
@@ -1103,10 +1198,7 @@ private struct CloudTripDetailView: View {
         .confirmationDialog("是否需要取消行程？", isPresented: $isConfirmingCancellation, titleVisibility: .visible) {
             Button("是，取消行程", role: .destructive) {
                 Task {
-                    if await directory.updateStatus(for: trip, isCompleted: false, isCancelled: true, using: auth) {
-                        completedOverride = false
-                        cancelledOverride = true
-                    }
+                    _ = await directory.updateStatus(for: trip, isCompleted: false, isCancelled: true, using: auth)
                 }
             }
             Button("否", role: .cancel) {}
@@ -1118,8 +1210,6 @@ private struct CloudTripDetailView: View {
         .tripCompletionConfirmationPrompt(isPresented: $isConfirmingCompletion) {
             Task {
                 if await directory.updateStatus(for: trip, isCompleted: true, isCancelled: false, using: auth) {
-                    completedOverride = true
-                    cancelledOverride = false
                     isShowingCompletionPrompt = true
                 }
             }
@@ -1127,7 +1217,7 @@ private struct CloudTripDetailView: View {
         .adaptiveFormPresentation(isPresented: $isShowingSettlement) {
             NavigationStack { CloudTripEditor(directory: directory, trip: trip, settlementOnly: true) }
         }
-        .alert("无法删除行程", isPresented: Binding(
+        .alert("行程操作提示", isPresented: Binding(
             get: { directory.errorMessage != nil },
             set: { if !$0 { directory.clearError() } }
         )) {
@@ -1136,6 +1226,7 @@ private struct CloudTripDetailView: View {
             Text(directory.errorMessage ?? "")
         }
         .onAppear(perform: showReusableFlightSnapshot)
+        .onChange(of: savedFlightDisplayContext) { _, _ in refreshSavedFlightDisplay() }
     }
 
     private func detailStatusBadge(title: String, isOn: Bool, tint: Color) -> some View {
@@ -1209,14 +1300,20 @@ private struct CloudTripDetailView: View {
     }
 
     private func lookupFlight(forceRefresh: Bool = false) {
+        guard !isLookingUpFlight else { return }
         guard !trip.flightInfo.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
         isLookingUpFlight = true
         flightLookupError = nil
         flightCandidates = []
+        let requestContext = savedFlightDisplayContext
         Task {
             do {
                 let accessToken = await auth.refreshCloudAccessToken() ?? auth.cloudAccessToken
                 guard let accessToken else { throw VariFlightClientError.missingCloudSession }
+                guard requestContext == savedFlightDisplayContext else {
+                    isLookingUpFlight = false
+                    return
+                }
                 let candidates = try await VariFlightClient().lookupCandidatesForTrip(
                     flightNumber: trip.flightInfo,
                     flightDate: trip.flightDate.cloudDate,
@@ -1226,6 +1323,10 @@ private struct CloudTripDetailView: View {
                     cloudAccessToken: accessToken,
                     forceRefresh: forceRefresh
                 )
+                guard requestContext == savedFlightDisplayContext else {
+                    isLookingUpFlight = false
+                    return
+                }
                 flightCandidates = candidates
                 if candidates.count == 1, let candidate = candidates.first,
                    !VariFlightClient.requiresExplicitFlightChoice(
@@ -1234,11 +1335,15 @@ private struct CloudTripDetailView: View {
                     locationEnd: trip.locationEnd
                    ) {
                     selectFlight(candidate)
+                    // The selection task owns the busy state until its save completes.
+                    return
                 } else {
                     isChoosingFlight = !candidates.isEmpty
                 }
             } catch {
-                flightLookupError = error.localizedDescription
+                if requestContext == savedFlightDisplayContext {
+                    flightLookupError = error.localizedDescription
+                }
             }
             isLookingUpFlight = false
         }
@@ -1264,15 +1369,32 @@ private struct CloudTripDetailView: View {
     }
 
     private func selectFlight(_ result: VariFlightLookupResult) {
-        flightLookupResult = result
         flightLookupError = nil
         let saved = SavedFlightSelection(flightNumber: trip.flightInfo, flightDate: trip.flightDate.cloudDate, selected: result)
         isLookingUpFlight = true
+        let selectionContext = savedFlightDisplayContext
         Task {
-            departureTimeZoneLabel = await FlightTimeZoneResolver.label(for: result.departureAirport, date: trip.flightDate.cloudDate) ?? ""
-            arrivalTimeZoneLabel = await FlightTimeZoneResolver.label(for: result.arrivalAirport, date: trip.flightDate.cloudDate) ?? ""
+            let departureZone = await FlightTimeZoneResolver.label(for: result.departureAirport, date: trip.flightDate.cloudDate) ?? ""
+            let arrivalZone = await FlightTimeZoneResolver.label(for: result.arrivalAirport, date: trip.flightDate.cloudDate) ?? ""
+            guard selectionContext == savedFlightDisplayContext else {
+                isLookingUpFlight = false
+                return
+            }
             let didSave = await directory.updateStatus(for: trip, flightSelectionSnapshot: saved, using: auth)
-            if !didSave { flightLookupError = directory.errorMessage ?? String(localized: "无法保存行程", locale: locale) }
+            // A save/reload may already have supplied a newer saved snapshot.
+            // Its display observer owns the result in that case.
+            guard selectionContext == savedFlightDisplayContext else {
+                isLookingUpFlight = false
+                return
+            }
+            if didSave {
+                flightLookupResult = result
+                departureTimeZoneLabel = departureZone
+                arrivalTimeZoneLabel = arrivalZone
+                flightLookupError = nil
+            } else {
+                flightLookupError = directory.errorMessage ?? String(localized: "无法保存行程", locale: locale)
+            }
             isLookingUpFlight = false
         }
     }
@@ -1280,12 +1402,16 @@ private struct CloudTripDetailView: View {
 
 @MainActor
 private struct CloudTripEditor: View {
+    // Retain identity across ambiguous network failures and retries of this draft.
+    @State private var draftID = UUID().uuidString.lowercased()
     @Environment(AuthViewModel.self) private var auth
     @Environment(\.dismiss) private var dismiss
     @Environment(\.openURL) private var openURL
     @Environment(\.locale) private var appLocale
     @AppStorage(NavigationProvider.defaultsKey) private var defaultNavigationProvider = NavigationProvider.appleMaps.rawValue
     @State private var isLookingUpFlight = false
+    @State private var flightLookupTask: Task<Void, Never>?
+    @State private var flightTimeZoneTask: Task<Void, Never>?
     @State private var flightLookupResult: VariFlightLookupResult?
     @State private var flightLookupError: String?
     @State private var flightCandidates: [VariFlightLookupResult] = []
@@ -1307,6 +1433,7 @@ private struct CloudTripEditor: View {
     @State private var customerContact: String
     @State private var agencyCode: String
     @State private var agencyName: String
+    @State private var agencyOrderNumber: String
     @State private var customerCount: String
     @State private var customerStuff: String
     @State private var appointmentDate: Date
@@ -1513,34 +1640,50 @@ private struct CloudTripEditor: View {
         let normalizedNumber = flightNumber.trimmingCharacters(in: .whitespacesAndNewlines).uppercased()
         guard !normalizedNumber.isEmpty else { return }
         let lookupDate = flightDate
+        let lookupService = serviceType
+        let lookupStart = start
+        let lookupEnd = destination
+        let context = flightLookupContextKey
+        flightLookupTask?.cancel()
+        flightCandidates = []
+        isChoosingFlight = false
         flightLookupResult = nil
         flightLookupError = nil
         isLookingUpFlight = true
-        Task {
-            defer { isLookingUpFlight = false }
+        flightLookupTask = Task {
+            defer {
+                if !Task.isCancelled && context == flightLookupContextKey {
+                    isLookingUpFlight = false
+                    flightLookupTask = nil
+                }
+            }
             do {
-                let accessToken = await auth.refreshCloudAccessToken() ?? auth.cloudAccessToken
-                guard let accessToken else { throw VariFlightClientError.missingCloudSession }
+                let cloudAccessToken: String?
+                cloudAccessToken = await auth.refreshCloudAccessToken() ?? auth.cloudAccessToken
+                guard cloudAccessToken != nil else { throw VariFlightClientError.missingCloudSession }
+                guard !Task.isCancelled, context == flightLookupContextKey else { return }
                 let candidates = try await VariFlightClient().lookupCandidatesForTrip(
                     flightNumber: normalizedNumber,
                     flightDate: lookupDate,
-                    serviceType: serviceType,
-                    locationStart: start,
-                    locationEnd: destination,
-                    cloudAccessToken: accessToken
+                    serviceType: lookupService,
+                    locationStart: lookupStart,
+                    locationEnd: lookupEnd,
+                    cloudAccessToken: cloudAccessToken
                 )
+                guard !Task.isCancelled, context == flightLookupContextKey else { return }
                 flightCandidates = candidates
                 if candidates.count == 1, let candidate = candidates.first,
                    !VariFlightClient.requiresExplicitFlightChoice(
-                    serviceType: serviceType,
-                    locationStart: start,
-                    locationEnd: destination
+                    serviceType: lookupService,
+                    locationStart: lookupStart,
+                    locationEnd: lookupEnd
                    ) {
                     selectFlight(candidate)
                 } else {
                     isChoosingFlight = !candidates.isEmpty
                 }
             } catch {
+                guard !Task.isCancelled, context == flightLookupContextKey else { return }
                 flightLookupError = error.localizedDescription
             }
         }
@@ -1554,13 +1697,31 @@ private struct CloudTripEditor: View {
         baggageCarousel = result.baggageCarousel ?? ""
         flightSelectionSnapshot = SavedFlightSelection(flightNumber: flightNumber, flightDate: flightDate, selected: result)
         didClearFlightSelection = false
-        Task {
-            departureTimeZoneLabel = await FlightTimeZoneResolver.label(for: result.departureAirport, date: flightDate) ?? ""
-            arrivalTimeZoneLabel = await FlightTimeZoneResolver.label(for: result.arrivalAirport, date: flightDate) ?? ""
+        flightTimeZoneTask?.cancel()
+        let context = flightLookupContextKey
+        let selectedDate = flightDate
+        departureTimeZoneLabel = ""
+        arrivalTimeZoneLabel = ""
+        flightTimeZoneTask = Task {
+            let departure = await FlightTimeZoneResolver.label(for: result.departureAirport, date: selectedDate) ?? ""
+            let arrival = await FlightTimeZoneResolver.label(for: result.arrivalAirport, date: selectedDate) ?? ""
+            guard !Task.isCancelled, context == flightLookupContextKey else { return }
+            departureTimeZoneLabel = departure
+            arrivalTimeZoneLabel = arrival
+            flightTimeZoneTask = nil
         }
     }
 
     private func invalidateFlightSelection() {
+        flightLookupTask?.cancel()
+        flightLookupTask = nil
+        flightTimeZoneTask?.cancel()
+        flightTimeZoneTask = nil
+        isLookingUpFlight = false
+        flightCandidates = []
+        isChoosingFlight = false
+        flightLookupError = nil
+
         guard flightSelectionSnapshot != nil ||
               flightLookupResult != nil ||
               !departureTime.isEmpty ||
@@ -1582,6 +1743,11 @@ private struct CloudTripEditor: View {
     }
 
     init(directory: CloudTripDirectoryModel, trip: CloudOnlineRepository.CloudTripRecord?, settlementOnly: Bool = false, copyAsNew: Bool = false) {
+        // Completion reloads the directory, while the presenting card/detail
+        // can still hold the record from before completion.
+        let trip = settlementOnly
+            ? (directory.trips.first(where: { $0.id == trip?.id }) ?? trip)
+            : trip
         self.directory = directory
         self.trip = trip
         self.settlementOnly = settlementOnly
@@ -1593,6 +1759,7 @@ private struct CloudTripEditor: View {
         _customerContact = State(initialValue: trip?.customerContact ?? "")
         _agencyCode = State(initialValue: trip?.travelAgencyCode ?? "")
         _agencyName = State(initialValue: trip?.travelAgencyName ?? "")
+        _agencyOrderNumber = State(initialValue: trip?.travelAgencyOrderNumber ?? "")
         _customerCount = State(initialValue: trip?.customerCount ?? "1")
         _customerStuff = State(initialValue: trip?.customerStuff ?? "0")
         _appointmentDate = State(initialValue: copyAsNew ? .now : (trip?.appointmentDate.cloudDate ?? .now))
@@ -1625,7 +1792,7 @@ private struct CloudTripEditor: View {
             if settlementOnly {
                 Form { settlementForm }
             } else {
-                ScrollView {
+                AddressSuggestionScrollView {
                     VStack(spacing: 14) {
                         formCard("行程类型", icon: "point.topleft.down.to.point.bottomright.curvepath") {
                             LazyVGrid(columns: Array(repeating: GridItem(.flexible()), count: 3), spacing: 10) {
@@ -1646,16 +1813,7 @@ private struct CloudTripEditor: View {
                         }
 
                         formCard("智能粘贴", icon: "t.square") {
-                            ZStack(alignment: .topLeading) {
-                                LimitedIMETextEditor(text: $quickInputText, maxLength: 5000, fontSize: 14)
-                                    .frame(minWidth: 0, maxWidth: .infinity).frame(height: 90).padding(10).background(Color.primary.opacity(0.025), in: RoundedRectangle(cornerRadius: 10))
-                                if quickInputText.isEmpty {
-                                    Text("例如：明天晚上 9 点半 接机 UA123 张先生 送到市中心")
-                                        .font(.system(size: 14)).foregroundStyle(.secondary).lineSpacing(5)
-                                        .padding(.horizontal, 14).padding(.vertical, 16).allowsHitTesting(false)
-                                        .overlay(RoundedRectangle(cornerRadius: 10).stroke(Color.primary.opacity(0.12), lineWidth: 1))
-                                }
-                            }
+                            SmartTripInput(text: $quickInputText, apply: applyRecognizedOrder)
                         }
 
                         formCard("订单来源", icon: "tray.full") {
@@ -1667,6 +1825,7 @@ private struct CloudTripEditor: View {
 
                         if orderSource == "旅行社订单" {
                             formCard("旅行社信息", icon: "building.2.fill") {
+                                labeledInput("旅行社订单号", placeholder: "输入旅行社提供的订单号", text: $agencyOrderNumber)
                                 Button { isShowingAgencyPicker = true } label: {
                                     VStack(alignment: .leading, spacing: 10) {
                                         agencyValueRow("旅行社代码", value: agencyCode)
@@ -1677,6 +1836,11 @@ private struct CloudTripEditor: View {
                                     .background(Color(.secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 12))
                                     .overlay(RoundedRectangle(cornerRadius: 12).stroke(Color.primary.opacity(0.12), lineWidth: 1))
                                 }.buttonStyle(.plain)
+                                let selectedAgencies = directory.agencies.filter { !$0.agencyCode.isEmpty && $0.agencyCode == agencyCode }
+                                if selectedAgencies.count == 1, let agency = selectedAgencies.first {
+                                    if !agency.contactPerson.isEmpty { LabeledContent("旅行社联系人", value: agency.contactPerson) }
+                                    if !agency.phone.isEmpty { LabeledContent("旅行社电话", value: agency.phone) }
+                                }
                             }
                         }
 
@@ -1808,7 +1972,7 @@ private struct CloudTripEditor: View {
                                 VStack(alignment: .leading, spacing: 8) {
                                     Text("提醒时间").font(.caption.weight(.medium)).foregroundStyle(.secondary)
                                     reminderDateTimePickers($reminderDate)
-                                    Text(copyAsNew ? "默认：接载时间前 2 小时" : "默认：接载日期前一天的同一时间")
+                                    Text(copyAsNew ? "默认提前2小时；临近行程自动调整" : "默认前一天；临近行程自动调整到未来时间")
                                         .font(.caption2).foregroundStyle(.tertiary)
                                 }
                                 if hasSecondReminder {
@@ -1821,7 +1985,7 @@ private struct CloudTripEditor: View {
                                             }.buttonStyle(.plain)
                                         }
                                         reminderDateTimePickers($secondReminderDate)
-                                        Text("默认：接载时间前 2 小时").font(.caption2).foregroundStyle(.tertiary)
+                                        Text("默认提前2小时；临近行程自动调整").font(.caption2).foregroundStyle(.tertiary)
                                     }
                                 } else {
                                     Button {
@@ -1846,13 +2010,22 @@ private struct CloudTripEditor: View {
             }
         }
         .scrollDismissesKeyboard(.never)
-        .navigationTitle(trip == nil || copyAsNew ? "新增行程" : "编辑行程")
+        .navigationTitle(settlementOnly ? "财务结算" : trip == nil || copyAsNew ? "新增行程" : "编辑行程")
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
             ToolbarItem(placement: .cancellationAction) { Button("取消") { dismiss() } }
-            ToolbarItem(placement: .confirmationAction) {
-                Button("保存") { Task { await save() } }
-                    .disabled(directory.isSaving)
+            if settlementOnly {
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("仅保存") { Task { await save(markPaid: false) } }.disabled(directory.isSaving)
+                }
+                ToolbarSpacer(.fixed, placement: .confirmationAction)
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("结算") { Task { await save() } }.disabled(directory.isSaving)
+                }
+            } else {
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("保存") { Task { await save() } }.disabled(directory.isSaving)
+                }
             }
         }
         .overlay {
@@ -1878,7 +2051,7 @@ private struct CloudTripEditor: View {
             customerID = ""
         }
         .onChange(of: agencyCode) { _, code in
-            guard let agency = directory.agencies.first(where: { $0.agencyCode == code }) else { return }
+            guard !code.isEmpty, let agency = directory.agencies.first(where: { $0.agencyCode == code }) else { return }
             agencyName = agency.name
         }
         .onAppear {
@@ -1926,12 +2099,60 @@ private struct CloudTripEditor: View {
         .presentationDetents([.large])
     }
 
+    private func applyRecognizedOrder(_ result: RecognizedPickupOrder) {
+        var draft = NewTripFormModel()
+        draft.travelAgencyName = agencyName
+        draft.travelAgencyCode = agencyCode
+        draft.travelAgencyOrderNumber = agencyOrderNumber
+        draft.customerName = customerName
+        draft.custemerConnect = customerContact
+        draft.customerCount = customerCount
+        draft.customerStuff = customerStuff
+        draft.locationEnd = destination
+        draft.TripMemo = memo
+        let matches = directory.agencies.filter { PickupAgencyMatcher.matches($0.name) && !$0.agencyCode.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+        result.apply(to: &draft, agencyCode: matches.count == 1 ? matches.first?.agencyCode : nil)
+        guard result.pickupDateTime != nil else { return }
+        if matches.count == 1, let agency = matches.first { draft.travelAgencyName = agency.name }
+        serviceType = draft.serviceType
+        orderSource = draft.orderSource
+        agencyCode = draft.travelAgencyCode
+        agencyName = draft.travelAgencyName
+        agencyOrderNumber = draft.travelAgencyOrderNumber
+        customerID = ""
+        customerName = draft.customerName
+        customerContact = draft.custemerConnect
+        customerCount = draft.customerCount
+        customerStuff = draft.customerStuff
+        appointmentDate = draft.appointmentDate
+        appointmentTime = draft.appointmentTime
+        reminderEnabled = draft.reminderEnabled
+        hasSecondReminder = draft.hasSecondReminder
+        reminderDate = draft.reminderDateTime
+        secondReminderDate = draft.secondReminderDateTime
+        flightDate = draft.flightdate
+        flightNumber = draft.flightInfo
+        start = draft.locationStart
+        destination = draft.locationEnd
+        memo = draft.TripMemo
+        invalidateFlightSelection()
+    }
+
+    private var settlementAppointmentDateTime: Date {
+        let calendar = Calendar.current
+        var components = calendar.dateComponents([.year, .month, .day], from: appointmentDate)
+        let clock = calendar.dateComponents([.hour, .minute], from: appointmentTime)
+        components.hour = clock.hour
+        components.minute = clock.minute
+        return calendar.date(from: components) ?? appointmentDate
+    }
+
     @ViewBuilder
     private var settlementForm: some View {
         Section("行程信息") {
             LabeledContent("客户", value: trip?.customerName.isEmpty == false ? trip!.customerName : "未填写")
             LabeledContent("行程类型", value: trip?.serviceType ?? serviceType)
-            LabeledContent("接载时间", value: appointmentDate.formatted(date: .abbreviated, time: .shortened))
+            LabeledContent("接载时间", value: settlementAppointmentDateTime.formatted(date: .abbreviated, time: .shortened))
             LabeledContent("行程路线", value: ([trip?.locationStart ?? start] + (trip?.stops.map(\.address) ?? stops) + [trip?.locationEnd ?? destination]).filter { !$0.isEmpty }.joined(separator: " → "))
             if let trip, !trip.flightInfo.isEmpty { LabeledContent("航班", value: trip.flightInfo) }
         }
@@ -1992,7 +2213,7 @@ private struct CloudTripEditor: View {
     }
 
     private var settlementNetIncome: Double {
-        (Double(price) ?? 0) + (Double(tip) ?? 0) + expenses.reduce(0) { $0 + ((Double($1.amount) ?? 0) * ($1.isAddition ? 1 : -1)) }
+        (Double(price) ?? 0) + (Double(tip) ?? 0) + expenses.reduce(0) { $0 + ((SettlementValidation.expenseAmount(from: $1.amount) ?? 0) * ($1.isAddition ? 1 : -1)) }
     }
 
     private func addressField(_ value: Binding<String>, target: String, placeholder: String = "输入地址，可搜索地点") -> some View {
@@ -2042,12 +2263,16 @@ private struct CloudTripEditor: View {
     private func updateReminderDefaults(copyDefault: Bool) {
         var components = Calendar.current.dateComponents([.year, .month, .day], from: appointmentDate)
         let time = Calendar.current.dateComponents([.hour, .minute], from: appointmentTime)
-        components.hour = time.hour
-        components.minute = time.minute
+        components.hour = time.hour; components.minute = time.minute
         let appointment = Calendar.current.date(from: components) ?? appointmentDate
-        let firstReminderHours = copyDefault ? -2 : -24
-        reminderDate = Calendar.current.date(byAdding: .hour, value: firstReminderHours, to: appointment) ?? appointment
-        secondReminderDate = Calendar.current.date(byAdding: .hour, value: -2, to: appointment) ?? appointment
+        let dates = SmartPickupReminderPlan.dates(before: appointment)
+        if dates.count == 2 {
+            reminderDate = copyDefault && !hasSecondReminder ? dates[1] : dates[0]
+            secondReminderDate = dates[1]
+        } else {
+            reminderEnabled = false
+            hasSecondReminder = false
+        }
     }
 
     private func updateSecondReminderDefault() {
@@ -2056,24 +2281,31 @@ private struct CloudTripEditor: View {
         components.hour = time.hour
         components.minute = time.minute
         let appointment = Calendar.current.date(from: components) ?? appointmentDate
-        secondReminderDate = Calendar.current.date(byAdding: .hour, value: -2, to: appointment) ?? appointment
+        let dates = SmartPickupReminderPlan.dates(before: appointment)
+        // Keep a manually chosen first reminder and avoid scheduling the same
+        // notification minute twice when adding the second reminder.
+        let firstMinute = Calendar.current.dateInterval(of: .minute, for: reminderDate)?.start ?? reminderDate
+        guard let next = dates.reversed().first(where: { $0 != firstMinute }) else {
+            hasSecondReminder = false
+            return
+        }
+        secondReminderDate = next
     }
 
-    private func save() async {
+    private func save(markPaid: Bool = true) async {
         guard !settlementOnly || trip != nil else { return }
         if settlementOnly {
-            guard let fare = Double(price), fare >= 0, let tipAmount = Double(tip), tipAmount >= 0 else {
-                directory.setError("行程费用和小费不能小于 0。")
-                return
+            let validationExpenses = expenses.map {
+                SettlementValidation.Expense(
+                    title: $0.title,
+                    amount: SettlementValidation.expenseAmount(from: $0.amount),
+                    isAddition: $0.isAddition
+                )
             }
-            let meaningfulExpenses = expenses.filter {
-                !$0.title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || (Double($0.amount) ?? 0) != 0
-            }
-            guard meaningfulExpenses.allSatisfy({
-                !$0.title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-                    && (Double($0.amount) ?? 0) > 0
-            }) else {
-                directory.setError("请为每条费用明细填写项目名称和大于 0 的金额。")
+            if let failure = SettlementValidation.validate(
+                fare: Double(price), tip: Double(tip), expenses: validationExpenses
+            ) {
+                directory.setError(failure.message)
                 return
             }
         }
@@ -2084,13 +2316,25 @@ private struct CloudTripEditor: View {
                 return
             }
         }
+        if settlementOnly, let trip {
+            let rows = expenses.enumerated().compactMap { index, item -> [String: Any]? in
+                guard let amount = SettlementValidation.expenseAmount(from: item.amount),
+                      !item.title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return nil }
+                return ["id": item.remoteID ?? UUID().uuidString.lowercased(), "position": index,
+                        "is_addition": item.isAddition, "title": item.title, "amount": amount]
+            }
+            if await directory.settle(id: trip.id, fare: Double(price) ?? 0, tip: Double(tip) ?? 0, expenses: rows, markPaid: markPaid, using: auth) {
+                dismiss()
+            }
+            return
+        }
         let trimmedName = customerName.trimmingCharacters(in: .whitespacesAndNewlines)
         if !settlementOnly && trimmedName.isEmpty {
             directory.setError("请输入客户姓名后再保存行程。")
             return
         }
         let linkedCustomer = directory.customers.first(where: { $0.id == customerID })
-        let id = copyAsNew ? UUID().uuidString.lowercased() : (trip?.id ?? UUID().uuidString.lowercased())
+        let id = copyAsNew ? draftID : (trip?.id ?? draftID)
         let snapshotToSave = didClearFlightSelection ? nil : (flightSelectionSnapshot ?? (copyAsNew ? nil : trip?.flightSelectionSnapshot))
         let row: [String: Any] = [
             "id": id,
@@ -2098,6 +2342,7 @@ private struct CloudTripEditor: View {
             "order_source": orderSource,
             "travel_agency_code": orderSource == "旅行社订单" ? agencyCode : "",
             "travel_agency_name": orderSource == "旅行社订单" ? agencyName : "",
+            "travel_agency_order_number": orderSource == "旅行社订单" ? agencyOrderNumber.trimmingCharacters(in: .whitespacesAndNewlines) : "",
             "customer_id": customerID.isEmpty ? NSNull() : customerID,
             "customer_name": linkedCustomer?.name ?? trimmedName,
             "customer_contact": linkedCustomer.map { $0.contacts.first(where: \.isDefault)?.value ?? $0.contacts.first?.value ?? $0.email } ?? customerContact,
@@ -2138,7 +2383,8 @@ private struct CloudTripEditor: View {
             return ["id": existingID ?? UUID().uuidString.lowercased(), "position": index, "address": value]
         }
         let expenseRows = expenses.enumerated().compactMap { index, item -> [String: Any]? in
-            guard let amount = Double(item.amount), !item.title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return nil }
+            let parsedAmount = settlementOnly ? SettlementValidation.expenseAmount(from: item.amount) : Double(item.amount)
+            guard let amount = parsedAmount, !item.title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return nil }
             let remoteID = copyAsNew ? nil : item.remoteID
             return ["id": remoteID ?? UUID().uuidString.lowercased(), "position": index,
                     "is_addition": item.isAddition, "title": item.title, "amount": amount]
@@ -2148,9 +2394,15 @@ private struct CloudTripEditor: View {
             if let tripUUID = UUID(uuidString: id) {
                 await TripReminderScheduler.schedule(
                     tripID: tripUUID,
-                    firstDate: reminderEnabled ? reminderDate : nil,
-                    secondDate: reminderEnabled && hasSecondReminder ? secondReminderDate : nil,
-                    locale: appLocale
+                    firstDate: reminderEnabled && !isCompleted && !isCancelled ? reminderDate : nil,
+                    secondDate: reminderEnabled && !isCompleted && !isCancelled && hasSecondReminder ? secondReminderDate : nil,
+                    locale: appLocale,
+                    message: TripReminderMessage(serviceType: serviceType, flightNumber: flightNumber,
+                        flight: SavedFlightDisplayContext(flightNumber: flightNumber, flightDate: flightDate,
+                            serviceType: serviceType, locationStart: start, locationEnd: destination,
+                            snapshot: snapshotToSave, canDisplay: true).selection,
+                        customer: linkedCustomer?.name ?? trimmedName, start: start, end: destination,
+                        appointmentDate: appointmentDate, appointmentTime: appointmentTime, locale: appLocale)
                 )
             }
             dismiss()

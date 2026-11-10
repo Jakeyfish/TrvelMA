@@ -19,6 +19,8 @@ private struct CloudWalletCategory: Identifiable {
     let title: String
     let amount: Double
     let isExpense: Bool
+    let incomeAmount: Double
+    let expenseAmount: Double
     let color: Color
     var absoluteAmount: Double { abs(amount) }
 }
@@ -42,6 +44,7 @@ struct CloudWalletView: View {
     @AppStorage(BaseCurrencyCatalog.countryCodeKey) private var baseCurrencyCountry = BaseCurrencyCatalog.defaultCountryCode
     @State private var tripsModel = CloudTripDirectoryModel()
     @State private var assets = CloudAccountAssetModel()
+    @State private var tripSnapshot: FinancialTripSnapshotCollection?
     @State private var period: OnlineWalletPeriod = .day
     @State private var anchorDate = Calendar.current.startOfDay(for: .now)
     @State private var methods: [OnlinePaymentMethod] = []
@@ -50,6 +53,17 @@ struct CloudWalletView: View {
     @State private var loadGeneration = 0
     @State private var loadedEmail = ""
     @State private var paymentMethodsSaveTask: Task<Void, Never>?
+
+    private var agencyStatementRows: [AgencyStatementRow] {
+        tripsModel.trips.filter { $0.orderSource == "旅行社订单" && !$0.isPaid && !$0.isCancelled }.map { t in
+            AgencyStatementRow(id: t.id, agencyCode: t.travelAgencyCode, agencyName: t.travelAgencyName,
+                date: t.appointmentDate.cloudDateValue ?? .distantPast, time: t.appointmentTime.cloudDateValue ?? .distantPast,
+                order: t.travelAgencyOrderNumber, service: t.serviceType, guest: t.customerName, contact: t.customerContact,
+                route: ([t.locationStart] + t.stops.map(\.address) + [t.locationEnd]).joined(separator: " → "),
+                memo: t.memo, passengers: t.customerCount, fare: t.price, tip: t.tip, currency: t.currencyCode,
+                fees: t.expenses.map { .init(title: $0.title, amount: $0.amount, addition: $0.isAddition) })
+        }
+    }
 
     private var calendar: Calendar {
         var value = Calendar.current
@@ -78,8 +92,7 @@ struct CloudWalletView: View {
 
     private var periodTrips: [CloudOnlineRepository.CloudTripRecord] {
         tripsModel.trips.filter { trip in
-            guard let date = trip.appointmentDate.cloudDateValue else { return false }
-            return date >= interval.start && date < interval.end
+            FinancialTripInclusion.includes(cancelled: trip.isCancelled, date: trip.appointmentDate.cloudDateValue, in: interval)
         }
     }
 
@@ -99,41 +112,23 @@ struct CloudWalletView: View {
     }
 
     private var financialCategories: [CloudWalletCategory] {
-        var grouped: [String: (title: String, isExpense: Bool, amount: Double)] = [:]
-
-        func add(_ key: String, title: String, isExpense: Bool, amount: Double) {
-            guard amount > 0.0001 else { return }
-            let prior = grouped[key]?.amount ?? 0
-            grouped[key] = (title, isExpense, prior + amount)
-        }
-
+        var entries: [FinancialCategoryAggregation.Entry] = []
         for trip in periodTrips {
-            add("__trip_income", title: localized("行程费用", "Trip fare", "Tarifa del viaje", "運賃", "운행 요금"), isExpense: false, amount: max(0, trip.price))
-            add("__tip_income", title: localized("小费", "Tips", "Propinas", "チップ", "팁"), isExpense: false, amount: max(0, trip.tip))
-            for expense in trip.expenses {
-                let title = expense.title.trimmingCharacters(in: .whitespacesAndNewlines)
-                let displayTitle = title.isEmpty ? localized("其他", "Other", "Otros", "その他", "기타") : title
-                add("\(!expense.isAddition ? "expense" : "income")|\(displayTitle)", title: displayTitle,
-                    isExpense: !expense.isAddition,
-                    amount: abs(expense.amount))
-            }
+            entries.append(.init(title: localized("行程费用", "Trip fare", "Tarifa del viaje", "運賃", "운행 요금"), amount: max(0, trip.price), isAddition: true))
+            entries.append(.init(title: localized("小费", "Tips", "Propinas", "チップ", "팁"), amount: max(0, trip.tip), isAddition: true))
+            entries += trip.expenses.map { .init(title: $0.title, amount: $0.amount, isAddition: $0.isAddition) }
         }
-
         let palette: [Color] = [
             Color(red: 0.31, green: 0.49, blue: 0.96), Color(red: 0.18, green: 0.73, blue: 0.62),
             Color(red: 0.98, green: 0.66, blue: 0.26), Color(red: 0.66, green: 0.42, blue: 0.91),
             Color(red: 0.95, green: 0.39, blue: 0.47), Color(red: 0.25, green: 0.69, blue: 0.84),
             Color(red: 0.76, green: 0.60, blue: 0.27)
         ]
-        return grouped.map { key, value in
-            let colorIndex = abs(key.unicodeScalars.reduce(0) { ($0 &* 31) &+ Int($1.value) }) % palette.count
-            let baseColor = palette[colorIndex]
-            return CloudWalletCategory(id: key, title: value.title,
-                                       amount: value.amount, isExpense: value.isExpense,
-                                       color: value.isExpense ? baseColor.opacity(0.78) : baseColor)
-        }.sorted {
-            if $0.isExpense != $1.isExpense { return !$0.isExpense }
-            return $0.amount > $1.amount
+        return FinancialCategoryAggregation.groups(entries, fallback: localized("其他", "Other", "Otros", "その他", "기타")).map { group in
+            let index = group.id.unicodeScalars.reduce(0) { ($0 &* 31) &+ UInt($1.value) } % UInt(palette.count)
+            return CloudWalletCategory(id: group.id, title: group.title, amount: group.amount, isExpense: group.isExpense,
+                incomeAmount: group.income, expenseAmount: group.expense,
+                color: group.isExpense ? palette[Int(index)].opacity(0.78) : palette[Int(index)])
         }
     }
 
@@ -146,14 +141,19 @@ struct CloudWalletView: View {
                     financialSummary
                     financialDetails
                     paymentMethodsSection
+                    AgencyStatementSection(rows: agencyStatementRows).id(auth.currentEmail)
                 }
                 .padding(16)
                 .padding(.bottom, 28)
             }
             .background(Color(.systemGroupedBackground))
             .scrollDismissesKeyboard(.interactively)
-            .navigationTitle("钱包")
+            .navigationTitle("财务")
             .navigationBarTitleDisplayMode(.inline)
+            .sheet(item: $tripSnapshot) { snapshot in
+                FinancialTripSnapshotSheet(snapshot: snapshot)
+            }
+            .onChange(of: auth.currentEmail) { _, _ in tripSnapshot = nil }
             .onChange(of: methods) { _, updatedMethods in
                 guard isLoaded, updatedMethods != savedMethods else { return }
                 paymentMethodsSaveTask?.cancel()
@@ -177,7 +177,7 @@ struct CloudWalletView: View {
                 isLoaded = false
                 await load()
             }
-            .alert("钱包数据载入失败", isPresented: Binding(
+            .alert("财务数据载入失败", isPresented: Binding(
                 get: { assets.errorMessage != nil || tripsModel.errorMessage != nil },
                 set: { if !$0 { assets.clearError(); tripsModel.clearError() } }
             )) {
@@ -354,12 +354,34 @@ struct CloudWalletView: View {
                 Text(category.title).font(.system(size: 12, weight: .medium)).lineLimit(1).frame(maxWidth: .infinity, alignment: .leading)
                 Text(String(format: "%.1f%%", percentage)).font(.system(size: 10, weight: .medium, design: .rounded)).foregroundStyle(.secondary).monospacedDigit()
             }
-            HStack(spacing: 4) {
-                Text(category.isExpense ? "−" : "+").foregroundStyle(category.isExpense ? Color.orange : Color.green)
-                Text(BaseCurrencyCatalog.format(category.absoluteAmount, countryCode: currencyCountryCode)).foregroundStyle(.primary).lineLimit(1).minimumScaleFactor(0.7)
+            VStack(alignment: .leading, spacing: 2) {
+                if category.incomeAmount > 0 {
+                    Text("+" + BaseCurrencyCatalog.format(category.incomeAmount, countryCode: currencyCountryCode))
+                        .foregroundStyle(Color.green)
+                }
+                if category.expenseAmount > 0 {
+                    Text("−" + BaseCurrencyCatalog.format(category.expenseAmount, countryCode: currencyCountryCode))
+                        .foregroundStyle(Color.orange)
+                }
             }
             .font(.system(size: 11, weight: .semibold, design: .rounded)).padding(.leading, 14)
         }.accessibilityElement(children: .combine)
+    }
+
+    private var snapshotRows: [FinancialTripSnapshotRow] {
+        periodTrips.map { trip in
+            FinancialTripSnapshotRow(id: trip.id, date: trip.appointmentDate.cloudDateValue ?? .distantPast,
+                time: trip.appointmentTime.cloudDateValue ?? .distantPast, guest: trip.customerName,
+                amount: walletCurrency(trip.price + trip.tip + trip.expenses.reduce(0) { $0 + ($1.isAddition ? abs($1.amount) : -abs($1.amount)) }, code: trip.currencyCode),
+                details: FinancialTripSnapshotRow.details(service: trip.serviceType, start: trip.locationStart,
+                    stops: trip.stops.map(\.address), end: trip.locationEnd, flight: trip.flightInfo,
+                    completed: trip.isCompleted, cancelled: trip.isCancelled, paid: trip.isPaid,
+                    contact: trip.customerContact, passengers: trip.customerCount, luggage: trip.customerStuff,
+                    agency: trip.orderSource == "旅行社订单" ? trip.travelAgencyName : "", order: trip.orderSource == "旅行社订单" ? trip.travelAgencyOrderNumber : "", memo: trip.memo)
+                    + FinancialTripSnapshotRow.flightDetails(trip.flightSelectionSnapshot?.selected)
+                    + [("小费", walletCurrency(trip.tip, code: trip.currencyCode))]
+                    + trip.expenses.map { ($0.title, "\($0.isAddition ? "+" : "−")\(walletCurrency(abs($0.amount), code: trip.currencyCode))") })
+        }.sorted { $0.date == $1.date ? ($0.time == $1.time ? $0.id < $1.id : $0.time < $1.time) : $0.date < $1.date }
     }
 
     private var financialDetails: some View {
@@ -367,9 +389,20 @@ struct CloudWalletView: View {
             HStack {
                 Label("收支明细", systemImage: "chart.pie.fill").font(.system(size: 15, weight: .semibold))
                 Spacer()
-                Text("\(periodTrips.count) \(localized("条行程", "trips", "viajes", "件の行程", "개 일정"))")
-                    .font(.system(size: 11, weight: .medium)).foregroundStyle(.secondary)
+                VStack(alignment: .trailing, spacing: 6) {
+                    Text("\(periodTrips.count) \(localized("条行程", "trips", "viajes", "件の行程", "개 일정"))")
+                        .font(.system(size: 11, weight: .medium)).foregroundStyle(.secondary)
+                    Button {
+                        tripSnapshot = FinancialTripSnapshotCollection(rows: snapshotRows)
+                    } label: {
+                        Label("详细信息", systemImage: "list.bullet.rectangle")
+                            .font(.system(size: 12, weight: .semibold))
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityHint("查看所选日期内的行程快照")
+                }
             }
+
             HStack(spacing: 12) {
                 summaryPill(
                     title: "收入",

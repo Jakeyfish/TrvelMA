@@ -232,15 +232,21 @@ enum SupabaseDataSync {
         var cloudDeletionRows: [String: [[String: Any]]] = [:]
         for table in Set(tombstones.map(\.tableName)) {
             cloudDeletionRows[table] = try await fetchRows(table, token: accessToken)
+            guard DataOwnership.activeScope == scope else { throw SyncError.accountChanged }
         }
         for tombstone in tombstones {
+            guard DataOwnership.activeScope == scope else { throw SyncError.accountChanged }
             if conflictExists(table: tombstone.tableName, id: tombstone.recordID, scope: scope, context: context) {
                 continue
             }
             let remoteRow = cloudDeletionRows[tombstone.tableName]?.first {
                 string($0, "id")?.lowercased() == tombstone.recordID.lowercased() && !isDeleted($0)
             }
-            if let remoteRow, let remoteDate = date(remoteRow, "updated_at") {
+            if let remoteRow {
+                guard let remoteDate = date(remoteRow, "updated_at"),
+                      let remoteVersion = string(remoteRow, "updated_at") else {
+                    throw SyncError.response("云端删除记录同步失败。")
+                }
                 let remoteWasEditedAfterDeleteBaseline = tombstone.baseUpdatedAt.map { remoteDate > $0 } ?? true
                 if remoteWasEditedAfterDeleteBaseline {
                     try storeConflict(table: tombstone.tableName, id: tombstone.recordID, scope: scope,
@@ -248,13 +254,43 @@ enum SupabaseDataSync {
                                       row: remoteRow, context: context, isLocalDeletion: true)
                     continue
                 }
+                // New deletion versions must follow even an unchanged remote
+                // baseline from a device whose clock is ahead of this one.
+                let deletionVersion = max(tombstone.deletedAt, remoteDate.addingTimeInterval(1))
+                if tombstone.deletedAt != deletionVersion {
+                    tombstone.deletedAt = deletionVersion
+                    try context.save()
+                }
+                let didDelete = try await patchDeleted(tombstone, expectedUpdatedAt: remoteVersion,
+                                                       ownerID: ownerID, token: accessToken)
+                // Stop old-account work before acknowledging local deletion or
+                // publishing a conflict after a suspended request resumes.
+                guard DataOwnership.activeScope == scope else { throw SyncError.accountChanged }
+                if !didDelete {
+                    // The record changed after preflight. Read its current version
+                    // for the conflict instead of deleting it or dropping the queue.
+                    let latestRows = try await fetchRows(tombstone.tableName, token: accessToken)
+                    guard DataOwnership.activeScope == scope else { throw SyncError.accountChanged }
+                    if let latest = latestRows.first(where: {
+                        string($0, "id")?.lowercased() == tombstone.recordID.lowercased() && !isDeleted($0)
+                    }) {
+                        guard let latestDate = date(latest, "updated_at") else {
+                            throw SyncError.response("云端删除记录同步失败。")
+                        }
+                        try storeConflict(table: tombstone.tableName, id: tombstone.recordID, scope: scope,
+                                          localUpdatedAt: tombstone.deletedAt, remoteUpdatedAt: latestDate,
+                                          row: latest, context: context, isLocalDeletion: true)
+                        continue
+                    }
+                }
             }
-            try await patchDeleted(tombstone, token: accessToken)
+            // A missing or already deleted remote row needs no mutation.
             context.delete(tombstone)
             summary.deleted += 1
         }
         if !tombstones.isEmpty { try context.save() }
         summary.downloaded = try await pullAndMerge(context: context, token: accessToken, scope: scope, ownerID: ownerID)
+        guard DataOwnership.activeScope == scope else { throw SyncError.accountChanged }
         try deduplicateCustomerChildren(context: context, scope: scope)
         try context.save()
         let pendingConflicts = try context.fetch(FetchDescriptor<CloudSyncConflict>(predicate: #Predicate { $0.ownerScope == scope }))
@@ -265,16 +301,20 @@ enum SupabaseDataSync {
         let customers = try context.fetch(FetchDescriptor<Custumer>(predicate: #Predicate { $0.ownerScope == scope })).filter { !blockedCustomers.contains($0.uuid.lowercased()) }
         let trips = try context.fetch(FetchDescriptor<TripBookingRecord>(predicate: #Predicate { $0.ownerScope == scope })).filter { !blockedTrips.contains($0.id.uuidString.lowercased()) }
 
+        let agencyUploadVersions = Dictionary(uniqueKeysWithValues: agencies.map { ($0.uuid, $0.updateAt) })
         try await upsert("travel_agencies", rows: agencies.map { agency in
             ["id": agency.uuid, "owner_id": ownerID, "agency_code": agency.agencyCode,
              "name": agency.name, "contact_person": agency.contactPerson, "phone": agency.phone,
              "office_address": agency.officeAddress, "created_at": iso(agency.createdAt), "updated_at": iso(agency.updateAt), "deleted_at": NSNull()]
         }, token: accessToken)
+        guard DataOwnership.activeScope == scope else { throw SyncError.accountChanged }
         summary.agencies = agencies.count
 
         var customerRows: [[String: Any]] = []
+        var customerUploadVersions: [String: Date] = [:]
         customerRows.reserveCapacity(customers.count)
         for customer in customers {
+            customerUploadVersions[customer.uuid] = customer.updateAt
             var row: [String: Any] = ["id": customer.uuid, "owner_id": ownerID, "name": customer.name, "email": customer.email,
                                       "avatar_url": "", "source": customer.csource, "type": customer.type,
                                       "category": customer.customerCategory, "travel_agency_code": customer.travelAgencyCode,
@@ -283,9 +323,11 @@ enum SupabaseDataSync {
             row["avatar_url"] = try await uploadCustomerAvatarIfNeeded(
                 customer.avatarUrl, customerID: customer.uuid, ownerID: ownerID, token: accessToken
             )
+            guard DataOwnership.activeScope == scope else { throw SyncError.accountChanged }
             customerRows.append(row)
         }
         try await upsert("customers", rows: customerRows, token: accessToken)
+        guard DataOwnership.activeScope == scope else { throw SyncError.accountChanged }
         summary.customers = customers.count
 
         var contacts: [[String: Any]] = []
@@ -303,16 +345,23 @@ enum SupabaseDataSync {
                                   "address": address.addresses, "is_default": address.isDefault, "updated_at": iso(customer.updateAt), "deleted_at": NSNull()])
             }
         }
-        try await markChildrenDeleted(table: "customer_contacts", parentColumn: "customer_id", parentIDs: customers.map(\.uuid), token: accessToken)
-        try await markChildrenDeleted(table: "customer_addresses", parentColumn: "customer_id", parentIDs: customers.map(\.uuid), token: accessToken)
+        try await markChildrenDeleted(table: "customer_contacts", parentColumn: "customer_id", parentIDs: customers.map(\.uuid), token: accessToken, scope: scope)
+        guard DataOwnership.activeScope == scope else { throw SyncError.accountChanged }
+        try await markChildrenDeleted(table: "customer_addresses", parentColumn: "customer_id", parentIDs: customers.map(\.uuid), token: accessToken, scope: scope)
+        guard DataOwnership.activeScope == scope else { throw SyncError.accountChanged }
         try await upsert("customer_contacts", rows: contacts, token: accessToken)
+        guard DataOwnership.activeScope == scope else { throw SyncError.accountChanged }
         try await upsert("customer_addresses", rows: addresses, token: accessToken)
+        guard DataOwnership.activeScope == scope else { throw SyncError.accountChanged }
 
+        let tripUploadVersions = Dictionary(uniqueKeysWithValues: trips.map { ($0.id, $0.updatedAt ?? $0.createdAt) })
         try await upsert("trips", rows: trips.map { trip in
             let row: [String: Any] = [
                 "id": trip.id.uuidString.lowercased(), "owner_id": ownerID, "service_type": trip.serviceType,
                 "order_source": trip.orderSource, "travel_agency_code": trip.travelAgencyCode,
-                "travel_agency_name": trip.travelAgencyName, "customer_name": trip.customerName,
+                "travel_agency_name": trip.travelAgencyName,
+                "travel_agency_order_number": trip.orderSource == "旅行社订单" ? trip.travelAgencyOrderNumber : "",
+                "customer_name": trip.customerName,
                 "customer_contact": trip.customerContact, "customer_count": trip.customerCount,
                 "customer_stuff": trip.customerStuff, "appointment_date": iso(trip.appointmentDate),
                 "appointment_time": iso(trip.appointmentTime), "location_start": trip.locationStart,
@@ -333,6 +382,7 @@ enum SupabaseDataSync {
             ]
             return row
         }, token: accessToken)
+        guard DataOwnership.activeScope == scope else { throw SyncError.accountChanged }
 
         var stops: [[String: Any]] = []
         var expenses: [[String: Any]] = []
@@ -349,17 +399,22 @@ enum SupabaseDataSync {
                                  "title": expense.title, "amount": expense.amount, "updated_at": iso(tripUpdatedAt), "deleted_at": NSNull()])
             }
         }
-        try await markChildrenDeleted(table: "trip_stops", parentColumn: "trip_id", parentIDs: trips.map { $0.id.uuidString.lowercased() }, token: accessToken)
-        try await markChildrenDeleted(table: "trip_expenses", parentColumn: "trip_id", parentIDs: trips.map { $0.id.uuidString.lowercased() }, token: accessToken)
+        try await markChildrenDeleted(table: "trip_stops", parentColumn: "trip_id", parentIDs: trips.map { $0.id.uuidString.lowercased() }, token: accessToken, scope: scope)
+        guard DataOwnership.activeScope == scope else { throw SyncError.accountChanged }
+        try await markChildrenDeleted(table: "trip_expenses", parentColumn: "trip_id", parentIDs: trips.map { $0.id.uuidString.lowercased() }, token: accessToken, scope: scope)
+        guard DataOwnership.activeScope == scope else { throw SyncError.accountChanged }
         try await upsert("trip_stops", rows: stops, token: accessToken)
+        guard DataOwnership.activeScope == scope else { throw SyncError.accountChanged }
         try await upsert("trip_expenses", rows: expenses, token: accessToken)
+        guard DataOwnership.activeScope == scope else { throw SyncError.accountChanged }
         try await syncAccountAssets(email: normalizedEmail, accessToken: accessToken)
+        guard DataOwnership.activeScope == scope else { throw SyncError.accountChanged }
         // Record the exact versions acknowledged by the cloud only after every
         // entity and child-row upload succeeded. A failed partial sync must not
         // advance the baseline and hide a later two-sided edit.
-        for agency in agencies { agency.syncBaseUpdatedAt = agency.updateAt }
-        for customer in customers { customer.syncBaseUpdatedAt = customer.updateAt }
-        for trip in trips { trip.syncBaseUpdatedAt = trip.updatedAt ?? trip.createdAt }
+        for agency in agencies { agency.syncBaseUpdatedAt = agencyUploadVersions[agency.uuid] }
+        for customer in customers { customer.syncBaseUpdatedAt = customerUploadVersions[customer.uuid] }
+        for trip in trips { trip.syncBaseUpdatedAt = tripUploadVersions[trip.id] }
         try context.save()
         summary.trips = trips.count
         summary.uploaded = agencies.count + customers.count + trips.count
@@ -382,6 +437,9 @@ enum SupabaseDataSync {
         let recordID = conflict.recordID
         let ownerScope = conflict.ownerScope
         let deletionKey = "\(conflict.tableName):\(recordID.lowercased())"
+        // Keeping local is a new edit after the remote version being resolved.
+        // Use a full second because outgoing ISO timestamps omit fractions.
+        let resolvedLocalDate = max(Date.now, conflict.remoteUpdatedAt.addingTimeInterval(1))
         switch conflict.tableName {
         case "travel_agencies":
             let descriptor = FetchDescriptor<TravelAgency>(predicate: #Predicate { $0.uuid == recordID && $0.ownerScope == ownerScope })
@@ -389,7 +447,7 @@ enum SupabaseDataSync {
                 if conflict.isRemoteDeletion && keepRemote {
                     context.delete(model)
                 } else if conflict.isRemoteDeletion {
-                    model.updateAt = .now
+                    model.updateAt = resolvedLocalDate
                     model.syncBaseUpdatedAt = conflict.remoteUpdatedAt
                 } else if keepRemote {
                     model.agencyCode = string(row, "agency_code") ?? model.agencyCode
@@ -398,6 +456,8 @@ enum SupabaseDataSync {
                     model.phone = string(row, "phone") ?? ""
                     model.officeAddress = string(row, "office_address") ?? ""
                     model.updateAt = conflict.remoteUpdatedAt
+                } else {
+                    model.updateAt = resolvedLocalDate
                 }
                 model.syncBaseUpdatedAt = conflict.remoteUpdatedAt
             } else if conflict.isLocalDeletion && keepRemote,
@@ -416,10 +476,12 @@ enum SupabaseDataSync {
                 if conflict.isRemoteDeletion && keepRemote {
                     context.delete(model)
                 } else if conflict.isRemoteDeletion {
-                    model.updateAt = .now
+                    model.updateAt = resolvedLocalDate
                     model.syncBaseUpdatedAt = conflict.remoteUpdatedAt
                 } else if keepRemote {
                     apply(row, to: model, updatedAt: conflict.remoteUpdatedAt)
+                } else {
+                    model.updateAt = resolvedLocalDate
                 }
                 model.syncBaseUpdatedAt = conflict.remoteUpdatedAt
             } else if conflict.isLocalDeletion && keepRemote,
@@ -444,10 +506,12 @@ enum SupabaseDataSync {
                 if conflict.isRemoteDeletion && keepRemote {
                     context.delete(model)
                 } else if conflict.isRemoteDeletion {
-                    model.updatedAt = .now
+                    model.updatedAt = resolvedLocalDate
                     model.syncBaseUpdatedAt = conflict.remoteUpdatedAt
                 } else if keepRemote {
                     apply(row, to: model, updatedAt: conflict.remoteUpdatedAt)
+                } else {
+                    model.updatedAt = resolvedLocalDate
                 }
                 model.syncBaseUpdatedAt = conflict.remoteUpdatedAt
             } else if conflict.isLocalDeletion && keepRemote {
@@ -467,12 +531,20 @@ enum SupabaseDataSync {
                     context.delete(tombstone)
                 } else {
                     tombstone.baseUpdatedAt = conflict.remoteUpdatedAt
-                    tombstone.deletedAt = .now
+                    // Confirmed deletion is a new version after the resolved
+                    // remote edit, even when the other device's clock is ahead.
+                    tombstone.deletedAt = resolvedLocalDate
                 }
             }
         }
+        let remindersToCancel: [UUID]
+        if conflict.tableName == "trips", let tripID = UUID(uuidString: conflict.recordID) {
+            let descriptor = FetchDescriptor<TripBookingRecord>(predicate: #Predicate { $0.id == tripID && $0.ownerScope == ownerScope })
+            remindersToCancel = try context.fetch(descriptor).filter { $0.isCompleted || $0.isCancelled }.map(\.id)
+        } else { remindersToCancel = [] }
         context.delete(conflict)
         try context.save()
+        for tripID in remindersToCancel { TripReminderScheduler.cancel(tripID: tripID) }
     }
 
     /// Reconciles account-owned image and profile JSON independently so a blank
@@ -487,10 +559,13 @@ enum SupabaseDataSync {
         let ownerID = try await currentUserID(accessToken: accessToken)
         guard DataOwnership.activeScope == expectedScope else { throw SyncError.accountChanged }
         let settings = try await fetchRows("user_settings", token: accessToken).first
+        guard DataOwnership.activeScope == expectedScope else { throw SyncError.accountChanged }
         var update: [String: Any] = ["owner_id": ownerID]
+        var uploadSnapshots: [String: (asset: AccountAssetStore.Asset, data: Data, updatedAt: Date)] = [:]
         var downloadedAssets = false
 
         for asset in AccountAssetStore.Asset.allCases {
+            guard DataOwnership.activeScope == expectedScope else { throw SyncError.accountChanged }
             let localData = AccountAssetStore.data(for: asset, email: normalizedEmail, namespace: .cloud)
             let localDate = AccountAssetStore.updatedAt(for: asset, email: normalizedEmail, namespace: .cloud)
             let cloudKey = asset.cloudColumn
@@ -510,43 +585,68 @@ enum SupabaseDataSync {
                     guard var json = try? JSONSerialization.jsonObject(with: localData, options: [.fragmentsAllowed]) else {
                         throw SyncError.response("本机名片或收款方式数据无法读取，请重新保存后同步。")
                     }
-                    try await uploadEmbeddedAccountImages(in: &json, asset: asset, ownerID: ownerID, token: accessToken)
+                    try await uploadEmbeddedAccountImages(in: &json, asset: asset, ownerID: ownerID, token: accessToken, scope: expectedScope)
+                    guard DataOwnership.activeScope == expectedScope else { throw SyncError.accountChanged }
+                    guard AccountAssetStore.data(for: asset, email: normalizedEmail, namespace: .cloud) == localData,
+                          AccountAssetStore.updatedAt(for: asset, email: normalizedEmail, namespace: .cloud) == effectiveLocalDate else { continue }
+                    uploadSnapshots[cloudKey] = (asset, localData, effectiveLocalDate)
                     update[cloudKey] = json
                     update["\(cloudKey)_updated_at"] = iso(effectiveLocalDate)
                 } else if let remoteData {
-                    let localJSON = try await hydrateAccountImages(in: remoteData, asset: asset, ownerID: ownerID, token: accessToken)
+                    let localJSON = try await hydrateAccountImages(in: remoteData, asset: asset, ownerID: ownerID, token: accessToken, scope: expectedScope)
+                    guard DataOwnership.activeScope == expectedScope else { throw SyncError.accountChanged }
+                    // A save during image hydration owns the current local draft.
+                    // Compare bytes too: two saves can share a timestamp.
+                    guard AccountAssetStore.data(for: asset, email: normalizedEmail, namespace: .cloud) == localData,
+                          AccountAssetStore.updatedAt(for: asset, email: normalizedEmail, namespace: .cloud) == (localDate ?? effectiveLocalDate) else { continue }
                     AccountAssetStore.set(localJSON, for: asset, email: normalizedEmail, namespace: .cloud, updatedAt: remoteDate)
                     downloadedAssets = true
                 }
             } else if let remoteData, let remoteDate {
-                let localJSON = try await hydrateAccountImages(in: remoteData, asset: asset, ownerID: ownerID, token: accessToken)
+                let localJSON = try await hydrateAccountImages(in: remoteData, asset: asset, ownerID: ownerID, token: accessToken, scope: expectedScope)
+                guard DataOwnership.activeScope == expectedScope else { throw SyncError.accountChanged }
+                // An initially empty cache may have been created while awaiting images.
+                guard AccountAssetStore.data(for: asset, email: normalizedEmail, namespace: .cloud) == localData,
+                      AccountAssetStore.updatedAt(for: asset, email: normalizedEmail, namespace: .cloud) == localDate else { continue }
                 AccountAssetStore.set(localJSON, for: asset, email: normalizedEmail, namespace: .cloud, updatedAt: remoteDate)
                 downloadedAssets = true
             }
         }
 
+        // Waiting for another asset can invalidate one already staged above.
+        // Remove only its columns so unrelated current assets can still upload.
+        for (key, snapshot) in uploadSnapshots {
+            if AccountAssetStore.data(for: snapshot.asset, email: normalizedEmail, namespace: .cloud) != snapshot.data ||
+               AccountAssetStore.updatedAt(for: snapshot.asset, email: normalizedEmail, namespace: .cloud) != snapshot.updatedAt {
+                update.removeValue(forKey: key)
+                update.removeValue(forKey: "\(key)_updated_at")
+            }
+        }
         if update.count > 1 {
             try await upsertUserSettings(update, token: accessToken)
+            guard DataOwnership.activeScope == expectedScope else { throw SyncError.accountChanged }
         }
         if downloadedAssets {
             await MainActor.run {
+                guard DataOwnership.activeScope == expectedScope else { return }
                 NotificationCenter.default.post(name: .accountAssetsDidSync, object: nil)
             }
+            guard DataOwnership.activeScope == expectedScope else { throw SyncError.accountChanged }
         }
     }
 
     /// Converts legacy base64 image fields into private Storage objects before
     /// writing account JSON. The image is retained locally and the remote JSON
     /// receives only a durable object path.
-    private static func uploadEmbeddedAccountImages(in value: inout Any, asset: AccountAssetStore.Asset, ownerID: String, token: String) async throws {
+    private static func uploadEmbeddedAccountImages(in value: inout Any, asset: AccountAssetStore.Asset, ownerID: String, token: String, scope: String) async throws {
+        guard DataOwnership.activeScope == scope else { throw SyncError.accountChanged }
         guard var root = value as? [String: Any] else { return }
         switch asset {
         case .businessCard:
             if let base64 = root["portraitData"] as? String, !base64.isEmpty {
-                let path = accountAssetPath(root["portraitPath"] as? String,
-                                            fallback: "\(ownerID)/business-card/portrait.jpg",
-                                            ownerID: ownerID)
-                try await uploadImage(base64: base64, path: path, token: token)
+                let path = try await uploadAccountImage(base64: base64,
+                                                        folder: "\(ownerID)/business-card/portraits", token: token)
+                guard DataOwnership.activeScope == scope else { throw SyncError.accountChanged }
                 root["portraitPath"] = path
                 root.removeValue(forKey: "portraitData")
             } else if let path = root["portraitPath"] as? String, !path.isEmpty,
@@ -555,6 +655,7 @@ enum SupabaseDataSync {
             }
             if var codes = root["qrCodes"] as? [[String: Any]] {
                 for index in codes.indices {
+                    guard DataOwnership.activeScope == scope else { throw SyncError.accountChanged }
                     let id = (codes[index]["id"] as? String) ?? UUID().uuidString.lowercased()
                     let base64 = codes[index]["imageData"] as? String
                     let hasLocalImage = base64?.isEmpty == false
@@ -564,10 +665,9 @@ enum SupabaseDataSync {
                         throw SyncError.response("名片二维码属于另一个云端账号，请先在原账号同步图片，或重新选择二维码。")
                     }
                     guard let base64, !base64.isEmpty else { continue }
-                    let path = accountAssetPath(existingPath,
-                                               fallback: "\(ownerID)/business-card/qr/\(id).jpg",
-                                               ownerID: ownerID)
-                    try await uploadImage(base64: base64, path: path, token: token)
+                    let path = try await uploadAccountImage(base64: base64,
+                                                            folder: "\(ownerID)/business-card/qr", token: token)
+                    guard DataOwnership.activeScope == scope else { throw SyncError.accountChanged }
                     codes[index]["id"] = id
                     codes[index]["imagePath"] = path
                     codes[index].removeValue(forKey: "imageData")
@@ -577,6 +677,7 @@ enum SupabaseDataSync {
         case .paymentMethods:
             if var methods = root["methods"] as? [[String: Any]] {
                 for index in methods.indices {
+                    guard DataOwnership.activeScope == scope else { throw SyncError.accountChanged }
                     let id = (methods[index]["id"] as? String) ?? UUID().uuidString.lowercased()
                     let base64 = methods[index]["qrImageData"] as? String
                     let hasLocalImage = base64?.isEmpty == false
@@ -586,10 +687,9 @@ enum SupabaseDataSync {
                         throw SyncError.response("收款二维码属于另一个云端账号，请先在原账号同步图片，或重新选择二维码。")
                     }
                     guard let base64, !base64.isEmpty else { continue }
-                    let path = accountAssetPath(existingPath,
-                                               fallback: "\(ownerID)/payment-methods/\(id).jpg",
-                                               ownerID: ownerID)
-                    try await uploadImage(base64: base64, path: path, token: token)
+                    let path = try await uploadAccountImage(base64: base64,
+                                                            folder: "\(ownerID)/payment-methods/qr", token: token)
+                    guard DataOwnership.activeScope == scope else { throw SyncError.accountChanged }
                     methods[index]["id"] = id
                     methods[index]["qrImagePath"] = path
                     methods[index].removeValue(forKey: "qrImageData")
@@ -598,12 +698,6 @@ enum SupabaseDataSync {
             }
         }
         value = root
-    }
-
-    private static func accountAssetPath(_ candidate: String?, fallback: String, ownerID: String) -> String {
-        guard let candidate, !candidate.isEmpty else { return fallback }
-        if isAccountAssetPath(candidate, ownerID: ownerID) { return candidate }
-        return fallback
     }
 
     private static func isAccountAssetPath(_ path: String, ownerID: String) -> Bool {
@@ -620,7 +714,8 @@ enum SupabaseDataSync {
 
     /// Downloads referenced private images into the existing on-device Codable
     /// models. This keeps older app UI code and offline access working unchanged.
-    private static func hydrateAccountImages(in data: Data, asset: AccountAssetStore.Asset, ownerID: String, token: String) async throws -> Data {
+    private static func hydrateAccountImages(in data: Data, asset: AccountAssetStore.Asset, ownerID: String, token: String, scope: String) async throws -> Data {
+        guard DataOwnership.activeScope == scope else { throw SyncError.accountChanged }
         guard var root = try JSONSerialization.jsonObject(with: data, options: [.fragmentsAllowed]) as? [String: Any] else { return data }
         switch asset {
         case .businessCard:
@@ -629,14 +724,17 @@ enum SupabaseDataSync {
                     throw SyncError.response("云端图片读取失败，请检查 Storage 数据库迁移和私有存储权限。")
                 }
                 root["portraitData"] = try await downloadImage(path: path, token: token).base64EncodedString()
+                guard DataOwnership.activeScope == scope else { throw SyncError.accountChanged }
             }
             if var codes = root["qrCodes"] as? [[String: Any]] {
                 for index in codes.indices {
+                    guard DataOwnership.activeScope == scope else { throw SyncError.accountChanged }
                     if let path = codes[index]["imagePath"] as? String, !path.isEmpty {
                         guard isAccountAssetPath(path, ownerID: ownerID) else {
                             throw SyncError.response("云端图片读取失败，请检查 Storage 数据库迁移和私有存储权限。")
                         }
                         codes[index]["imageData"] = try await downloadImage(path: path, token: token).base64EncodedString()
+                        guard DataOwnership.activeScope == scope else { throw SyncError.accountChanged }
                     }
                 }
                 root["qrCodes"] = codes
@@ -644,11 +742,13 @@ enum SupabaseDataSync {
         case .paymentMethods:
             if var methods = root["methods"] as? [[String: Any]] {
                 for index in methods.indices {
+                    guard DataOwnership.activeScope == scope else { throw SyncError.accountChanged }
                     if let path = methods[index]["qrImagePath"] as? String, !path.isEmpty {
                         guard isAccountAssetPath(path, ownerID: ownerID) else {
                             throw SyncError.response("云端图片读取失败，请检查 Storage 数据库迁移和私有存储权限。")
                         }
                         methods[index]["qrImageData"] = try await downloadImage(path: path, token: token).base64EncodedString()
+                        guard DataOwnership.activeScope == scope else { throw SyncError.accountChanged }
                     }
                 }
                 root["methods"] = methods
@@ -657,7 +757,7 @@ enum SupabaseDataSync {
         return try JSONSerialization.data(withJSONObject: root, options: [.fragmentsAllowed, .sortedKeys])
     }
 
-    private static func uploadImage(base64: String, path: String, token: String) async throws {
+    private static func normalizedAccountImage(base64: String) throws -> Data {
         guard let source = Data(base64Encoded: base64), let image = UIImage(data: source), let jpeg = image.jpegData(compressionQuality: 0.88) else {
             throw SyncError.response("名片或收款二维码图片无法读取，请重新选择后同步。")
         }
@@ -674,6 +774,25 @@ enum SupabaseDataSync {
         } else {
             normalizedImage = jpeg
         }
+        return normalizedImage
+    }
+
+    /// Content addresses keep late old uploads from mutating images already
+    /// referenced by a newer profile. Existing legacy paths remain readable.
+    private static func uploadAccountImage(base64: String, folder: String, token: String) async throws -> String {
+        let imageData = try normalizedAccountImage(base64: base64)
+        let digest = SHA256.hash(data: imageData).map { String(format: "%02x", $0) }.joined()
+        let path = "\(folder)/\(digest).jpg"
+        try await uploadImageData(imageData, path: path, token: token)
+        return path
+    }
+
+    private static func uploadImage(base64: String, path: String, token: String) async throws {
+        let imageData = try normalizedAccountImage(base64: base64)
+        try await uploadImageData(imageData, path: path, token: token)
+    }
+
+    private static func uploadImageData(_ normalizedImage: Data, path: String, token: String) async throws {
         var request = storageRequest(path: path, token: token, operation: "object")
         request.httpMethod = "POST"
         request.setValue("image/jpeg", forHTTPHeaderField: "Content-Type")
@@ -823,7 +942,9 @@ enum SupabaseDataSync {
         let customers = try context.fetch(FetchDescriptor<Custumer>(predicate: #Predicate { $0.ownerScope == scope }))
         let trips = try context.fetch(FetchDescriptor<TripBookingRecord>(predicate: #Predicate { $0.ownerScope == scope }))
         let cloudAgencies = try await fetchRows("travel_agencies", token: token)
+        guard DataOwnership.activeScope == scope else { throw SyncError.accountChanged }
         let fetchedCloudCustomers = try await fetchRows("customers", token: token)
+        guard DataOwnership.activeScope == scope else { throw SyncError.accountChanged }
         var cloudCustomers: [[String: Any]] = []
         cloudCustomers.reserveCapacity(fetchedCloudCustomers.count)
         for var row in fetchedCloudCustomers {
@@ -836,6 +957,7 @@ enum SupabaseDataSync {
                 row["avatar_url"] = try await cacheCustomerAvatar(
                     remotePath, customerID: customerID, ownerID: ownerID, token: token
                 )
+                guard DataOwnership.activeScope == scope else { throw SyncError.accountChanged }
             } else if !remotePath.isEmpty {
                 // If this is the original device, retain its still-available
                 // legacy file so the next upload can migrate it to Storage.
@@ -850,6 +972,7 @@ enum SupabaseDataSync {
             cloudCustomers.append(row)
         }
         let cloudTrips = try await fetchRows("trips", token: token)
+        guard DataOwnership.activeScope == scope else { throw SyncError.accountChanged }
         let agencyMap = Dictionary(uniqueKeysWithValues: agencies.map { ($0.uuid.lowercased(), $0) })
         var customerMap = Dictionary(uniqueKeysWithValues: customers.map { ($0.uuid.lowercased(), $0) })
         var tripMap = Dictionary(uniqueKeysWithValues: trips.map { ($0.id.uuidString.lowercased(), $0) })
@@ -899,6 +1022,11 @@ enum SupabaseDataSync {
             if conflictExists(table: "customers", id: id, scope: scope, context: context) { continue }
             if isDeleted(row) {
                 if let local = customerMap[id.lowercased()] {
+                    // Restoring local acknowledges this deletion and creates a
+                    // newer local version. Let that version upload instead of
+                    // recreating the same already-resolved deletion conflict.
+                    if let baseline = local.syncBaseUpdatedAt,
+                       remoteDate <= baseline, local.updateAt > baseline { continue }
                     // Keep a local customer model until the user explicitly
                     // accepts the remote delete. The detail/edit stack may be
                     // holding this SwiftData object even when its fields have
@@ -914,6 +1042,10 @@ enum SupabaseDataSync {
                                       remoteUpdatedAt: remoteDate, row: row, context: context)
                     continue
                 }
+                // A first upload can commit the parent before its children fail.
+                // Equal timestamps without an acknowledged baseline may be our
+                // incomplete upload: retain local children so retry can finish it.
+                if local.syncBaseUpdatedAt == nil, remoteDate == local.updateAt { continue }
                 guard remoteDate >= local.updateAt else { continue }
                 apply(row, to: local, updatedAt: remoteDate)
             } else {
@@ -950,6 +1082,9 @@ enum SupabaseDataSync {
                                       remoteUpdatedAt: remoteDate, row: row, context: context)
                     continue
                 }
+                // Do not read back an unacknowledged, partially uploaded parent
+                // and replace still-local stops/expenses with missing remote rows.
+                if local.syncBaseUpdatedAt == nil, remoteDate == localUpdatedAt { continue }
                 guard remoteDate >= (local.updatedAt ?? local.createdAt) else { continue }
                 apply(row, to: local, updatedAt: remoteDate)
             } else {
@@ -966,7 +1101,9 @@ enum SupabaseDataSync {
 
         if !customerIDsToRefresh.isEmpty {
             let allContacts = try await fetchRows("customer_contacts", token: token)
+            guard DataOwnership.activeScope == scope else { throw SyncError.accountChanged }
             let allAddresses = try await fetchRows("customer_addresses", token: token)
+            guard DataOwnership.activeScope == scope else { throw SyncError.accountChanged }
             for customerID in customerIDsToRefresh {
                 guard let customer = customerMap[customerID.lowercased()] else { continue }
                 let scopedCustomerID = customerID.lowercased()
@@ -993,7 +1130,9 @@ enum SupabaseDataSync {
 
         if !tripIDsToRefresh.isEmpty {
             let remoteStops = try await fetchRows("trip_stops", token: token)
+            guard DataOwnership.activeScope == scope else { throw SyncError.accountChanged }
             let remoteExpenses = try await fetchRows("trip_expenses", token: token)
+            guard DataOwnership.activeScope == scope else { throw SyncError.accountChanged }
             for tripID in tripIDsToRefresh {
                 guard let trip = tripMap[tripID] else { continue }
                 let stops = remoteStops.filter { string($0, "trip_id")?.lowercased() == tripID && !isDeleted($0) }.sorted { (integer($0, "position") ?? 0) < (integer($1, "position") ?? 0) }.compactMap { string($0, "address") }
@@ -1005,6 +1144,11 @@ enum SupabaseDataSync {
             }
         }
         try context.save()
+        for id in tripIDsToRefresh {
+            if let trip = tripMap[id], trip.ownerScope == scope, trip.isCompleted || trip.isCancelled {
+                TripReminderScheduler.cancel(tripID: trip.id)
+            }
+        }
         return changed
     }
 
@@ -1102,26 +1246,47 @@ enum SupabaseDataSync {
         return allRows
     }
 
-    private static func patchDeleted(_ deletion: CloudSyncDeletion, token: String) async throws {
+    private static func patchDeleted(_ deletion: CloudSyncDeletion, expectedUpdatedAt: String,
+                                     ownerID: String, token: String) async throws -> Bool {
         var components = URLComponents(url: SupabaseAuthClient.endpoint(path: "/rest/v1/\(deletion.tableName)"), resolvingAgainstBaseURL: false)!
-        components.queryItems = [URLQueryItem(name: "id", value: "eq.\(deletion.recordID)")]
+        let version = expectedUpdatedAt.replacingOccurrences(of: "\\", with: "\\\\")
+            .replacingOccurrences(of: "\"", with: "\\\"")
+        components.queryItems = [
+            URLQueryItem(name: "id", value: "eq.\(deletion.recordID)"),
+            URLQueryItem(name: "owner_id", value: "eq.\(ownerID)"),
+            URLQueryItem(name: "deleted_at", value: "is.null"),
+            URLQueryItem(name: "updated_at", value: "eq.\"\(version)\""),
+            URLQueryItem(name: "select", value: "id")
+        ]
+        // Preserve a literal '+' in server ISO timestamps under query decoding.
+        components.percentEncodedQuery = components.percentEncodedQuery?.replacingOccurrences(of: "+", with: "%2B")
         var request = URLRequest(url: components.url!)
         request.httpMethod = "PATCH"
         request.setValue(SupabaseAuthClient.publishableKey, forHTTPHeaderField: "apikey")
         request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
         SupabaseAuthClient.applyAccountDeviceHeader(to: &request)
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        request.setValue("return=minimal", forHTTPHeaderField: "Prefer")
+        request.setValue("return=representation", forHTTPHeaderField: "Prefer")
         request.httpBody = try JSONSerialization.data(withJSONObject: ["deleted_at": iso(deletion.deletedAt), "updated_at": iso(deletion.deletedAt)])
         let (data, response) = try await URLSession.shared.data(for: request)
         guard let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode) else {
             let body = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any]
             throw SyncError.response(body?["message"] as? String ?? "云端删除记录同步失败。")
         }
+        guard let rows = (try? JSONSerialization.jsonObject(with: data)) as? [[String: Any]] else {
+            throw SyncError.response("云端删除记录同步失败。")
+        }
+        if rows.isEmpty { return false }
+        guard rows.count == 1,
+              string(rows[0], "id")?.lowercased() == deletion.recordID.lowercased() else {
+            throw SyncError.response("云端删除记录同步失败。")
+        }
+        return true
     }
 
-    private static func markChildrenDeleted(table: String, parentColumn: String, parentIDs: [String], token: String) async throws {
+    private static func markChildrenDeleted(table: String, parentColumn: String, parentIDs: [String], token: String, scope: String) async throws {
         for parentID in parentIDs {
+            guard DataOwnership.activeScope == scope else { throw SyncError.accountChanged }
             var components = URLComponents(url: SupabaseAuthClient.endpoint(path: "/rest/v1/\(table)"), resolvingAgainstBaseURL: false)!
             components.queryItems = [
                 URLQueryItem(name: parentColumn, value: "eq.\(parentID)"),
@@ -1136,6 +1301,7 @@ enum SupabaseDataSync {
             request.setValue("return=minimal", forHTTPHeaderField: "Prefer")
             request.httpBody = try JSONSerialization.data(withJSONObject: ["deleted_at": iso(.now), "updated_at": iso(.now)])
             let (data, response) = try await URLSession.shared.data(for: request)
+            guard DataOwnership.activeScope == scope else { throw SyncError.accountChanged }
             guard let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode) else {
                 let body = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any]
                 throw SyncError.response(body?["message"] as? String ?? "云端子记录同步失败（\(table)）。")
@@ -1163,6 +1329,7 @@ enum SupabaseDataSync {
         trip.orderSource = string(row, "order_source") ?? trip.orderSource
         trip.travelAgencyCode = string(row, "travel_agency_code") ?? ""
         trip.travelAgencyName = string(row, "travel_agency_name") ?? ""
+        trip.travelAgencyOrderNumber = trip.orderSource == "旅行社订单" ? (string(row, "travel_agency_order_number") ?? "") : ""
         trip.customerUUID = string(row, "customer_id")
         trip.customerName = string(row, "customer_name") ?? ""
         trip.customerContact = string(row, "customer_contact") ?? ""
@@ -1200,6 +1367,7 @@ enum SupabaseDataSync {
         form.orderSource = string(row, "order_source") ?? "普通客户"
         form.travelAgencyCode = string(row, "travel_agency_code") ?? ""
         form.travelAgencyName = string(row, "travel_agency_name") ?? ""
+        form.travelAgencyOrderNumber = form.orderSource == "旅行社订单" ? (string(row, "travel_agency_order_number") ?? "") : ""
         form.customerName = string(row, "customer_name") ?? ""
         form.selectedCustomerUUID = string(row, "customer_id")
         form.custemerConnect = string(row, "customer_contact") ?? ""

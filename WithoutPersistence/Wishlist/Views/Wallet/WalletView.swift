@@ -28,6 +28,8 @@ private struct WalletCategory: Identifiable {
     let title: String
     let amount: Double
     let isExpense: Bool
+    let incomeAmount: Double
+    let expenseAmount: Double
     let color: Color
 
     var absoluteAmount: Double { abs(amount) }
@@ -40,6 +42,7 @@ struct WalletView: View {
     @AppStorage(BaseCurrencyCatalog.countryCodeKey)
     private var baseCurrencyCountry = BaseCurrencyCatalog.defaultCountryCode
 
+    @State private var tripSnapshot: FinancialTripSnapshotCollection?
     @State private var period: WalletPeriod = .day
     @State private var anchorDate = Calendar.current.startOfDay(for: .now)
     @State private var paymentMethods: [WalletPaymentMethod] = []
@@ -49,6 +52,18 @@ struct WalletView: View {
     init() {
         let scope = DataOwnership.activeScope
         _bookings = Query(filter: #Predicate { $0.ownerScope == scope })
+    }
+
+    private var agencyStatementRows: [AgencyStatementRow] {
+        bookings.filter { $0.orderSource == "旅行社订单" && !$0.isPaid && !$0.isCancelled }.map { t in
+            AgencyStatementRow(id: t.id.uuidString, agencyCode: t.travelAgencyCode, agencyName: t.travelAgencyName,
+                date: t.appointmentDate, time: t.appointmentTime, order: t.travelAgencyOrderNumber,
+                service: t.serviceType, guest: t.customerName, contact: t.customerContact,
+                route: ([t.locationStart] + t.locationStops + [t.locationEnd]).joined(separator: " → "),
+                memo: t.memo, passengers: t.customerCount, fare: t.price, tip: t.tip,
+                currency: BaseCurrencyCatalog.options.first { $0.countryCode == baseCurrencyCountry }?.currencyCode ?? "USD",
+                fees: t.expenseAdjustments.map { .init(title: $0.title, amount: $0.amount, addition: $0.isAddition) })
+        }
     }
 
     private var paymentMethodsNamespace: AccountAssetStore.Namespace { auth.isCloudAccount ? .cloud : .local }
@@ -79,55 +94,28 @@ struct WalletView: View {
     }
 
     private var periodBookings: [TripBookingRecord] {
-        bookings.filter { $0.appointmentDate >= dateInterval.start && $0.appointmentDate < dateInterval.end }
+        bookings.filter { FinancialTripInclusion.includes(cancelled: $0.isCancelled, date: $0.appointmentDate, in: dateInterval) }
     }
 
     private var categories: [WalletCategory] {
-        var amounts: [String: (title: String, expense: Bool, amount: Double)] = [:]
-        let tripFare = periodBookings.reduce(0) { $0 + max(0, $1.price) }
-        let tips = periodBookings.reduce(0) { $0 + max(0, $1.tip) }
-        if tripFare > 0 {
-            amounts["__trip_income"] = (localized("行程费用", "Trip fare", "Tarifa del viaje", "運賃", "운행 요금"), false, tripFare)
+        var entries: [FinancialCategoryAggregation.Entry] = []
+        for trip in periodBookings {
+            entries.append(.init(title: localized("行程费用", "Trip fare", "Tarifa del viaje", "運賃", "운행 요금"), amount: max(0, trip.price), isAddition: true))
+            entries.append(.init(title: localized("小费", "Tips", "Propinas", "チップ", "팁"), amount: max(0, trip.tip), isAddition: true))
+            entries += trip.expenseAdjustments.map { .init(title: $0.title, amount: $0.amount, isAddition: $0.isAddition) }
         }
-        if tips > 0 {
-            amounts["__tip_income"] = (localized("小费", "Tips", "Propinas", "チップ", "팁"), false, tips)
-        }
-
-        for booking in periodBookings {
-            for item in booking.expenseAdjustments where abs(item.amount) > 0.0001 {
-                let expense = !item.isAddition
-                let title = item.title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-                    ? localized("其他", "Other", "Otros", "その他", "기타")
-                    : item.title.trimmingCharacters(in: .whitespacesAndNewlines)
-                let key = "\(expense ? "expense" : "income")|\(title)"
-                let prior = amounts[key]?.amount ?? 0
-                amounts[key] = (title, expense, prior + abs(item.amount))
-            }
-        }
-
         let palette: [Color] = [
-            Color(red: 0.31, green: 0.49, blue: 0.96),
-            Color(red: 0.18, green: 0.73, blue: 0.62),
-            Color(red: 0.98, green: 0.66, blue: 0.26),
-            Color(red: 0.66, green: 0.42, blue: 0.91),
-            Color(red: 0.95, green: 0.39, blue: 0.47),
-            Color(red: 0.25, green: 0.69, blue: 0.84),
+            Color(red: 0.31, green: 0.49, blue: 0.96), Color(red: 0.18, green: 0.73, blue: 0.62),
+            Color(red: 0.98, green: 0.66, blue: 0.26), Color(red: 0.66, green: 0.42, blue: 0.91),
+            Color(red: 0.95, green: 0.39, blue: 0.47), Color(red: 0.25, green: 0.69, blue: 0.84),
             Color(red: 0.76, green: 0.60, blue: 0.27)
         ]
-        return amounts
-            .map { key, value in
-                WalletCategory(
-                    id: key,
-                    title: value.title,
-                    amount: value.amount,
-                    isExpense: value.expense,
-                    color: value.expense ? paletteColor(for: key, palette: palette).opacity(0.78) : paletteColor(for: key, palette: palette)
-                )
-            }
-            .sorted {
-                if $0.isExpense != $1.isExpense { return !$0.isExpense }
-                return $0.absoluteAmount > $1.absoluteAmount
-            }
+        return FinancialCategoryAggregation.groups(entries, fallback: localized("其他", "Other", "Otros", "その他", "기타")).map { group in
+            let index = group.id.unicodeScalars.reduce(0) { ($0 &* 31) &+ UInt($1.value) } % UInt(palette.count)
+            return WalletCategory(id: group.id, title: group.title, amount: group.amount, isExpense: group.isExpense,
+                incomeAmount: group.income, expenseAmount: group.expense,
+                color: group.isExpense ? palette[Int(index)].opacity(0.78) : palette[Int(index)])
+        }
     }
 
     private var totalIncome: Double {
@@ -165,6 +153,7 @@ struct WalletView: View {
                     financialSummary
                     categoryList
                     paymentMethodsSection
+                    AgencyStatementSection(rows: agencyStatementRows).id(auth.currentEmail)
                 }
                 .padding(.horizontal, 16)
                 .padding(.top, 14)
@@ -172,8 +161,12 @@ struct WalletView: View {
             }
             .scrollDismissesKeyboard(.interactively)
             .background(Color(.systemGroupedBackground))
-            .navigationTitle(localized("钱包", "Wallet", "Cartera", "ウォレット", "지갑"))
+            .navigationTitle(localized("财务", "Finance", "Finanzas", "財務", "재무"))
             .navigationBarTitleDisplayMode(.inline)
+            .sheet(item: $tripSnapshot) { snapshot in
+                FinancialTripSnapshotSheet(snapshot: snapshot)
+            }
+            .onChange(of: auth.currentEmail) { _, _ in tripSnapshot = nil }
             .onAppear(perform: loadPaymentMethods)
             .onChange(of: paymentMethods) { _, _ in
                 if paymentMethods != persistedPaymentMethods { savePaymentMethods() }
@@ -371,18 +364,36 @@ struct WalletView: View {
                     .foregroundStyle(.secondary)
                     .monospacedDigit()
             }
-            HStack(spacing: 4) {
-                Text(category.isExpense ? "−" : "+")
-                    .foregroundStyle(category.isExpense ? Color.orange : Color.green)
-                Text(BaseCurrencyCatalog.format(category.absoluteAmount, countryCode: baseCurrencyCountry))
-                    .foregroundStyle(.primary)
-                    .lineLimit(1)
-                    .minimumScaleFactor(0.75)
+            VStack(alignment: .leading, spacing: 2) {
+                if category.incomeAmount > 0 {
+                    Text("+" + BaseCurrencyCatalog.format(category.incomeAmount, countryCode: baseCurrencyCountry))
+                        .foregroundStyle(Color.green)
+                }
+                if category.expenseAmount > 0 {
+                    Text("−" + BaseCurrencyCatalog.format(category.expenseAmount, countryCode: baseCurrencyCountry))
+                        .foregroundStyle(Color.orange)
+                }
             }
             .font(.system(size: 11, weight: .semibold, design: .rounded))
             .padding(.leading, 14)
         }
         .accessibilityElement(children: .combine)
+    }
+
+    private var snapshotRows: [FinancialTripSnapshotRow] {
+        periodBookings.map { trip in
+            FinancialTripSnapshotRow(id: trip.id.uuidString, date: trip.appointmentDate,
+                time: trip.appointmentTime, guest: trip.customerName,
+                amount: BaseCurrencyCatalog.format(trip.price + trip.tip + trip.expenseAdjustments.reduce(0) { $0 + ($1.isAddition ? abs($1.amount) : -abs($1.amount)) }, countryCode: baseCurrencyCountry),
+                details: FinancialTripSnapshotRow.details(service: trip.serviceType, start: trip.locationStart,
+                    stops: trip.locationStops, end: trip.locationEnd, flight: trip.flightInfo,
+                    completed: trip.isCompleted, cancelled: trip.isCancelled, paid: trip.isPaid,
+                    contact: trip.customerContact, passengers: trip.customerCount, luggage: trip.customerStuff,
+                    agency: trip.orderSource == "旅行社订单" ? trip.travelAgencyName : "", order: trip.orderSource == "旅行社订单" ? trip.travelAgencyOrderNumber : "", memo: trip.memo)
+                    + FinancialTripSnapshotRow.flightDetails((try? JSONDecoder().decode(SavedFlightSelection.self, from: Data(trip.flightSelectionSnapshotJSON.utf8)))?.selected)
+                    + [("小费", BaseCurrencyCatalog.format(trip.tip, countryCode: baseCurrencyCountry))]
+                    + trip.expenseAdjustments.map { ($0.title, "\($0.isAddition ? "+" : "−")\(BaseCurrencyCatalog.format(abs($0.amount), countryCode: baseCurrencyCountry))") })
+        }.sorted { $0.date == $1.date ? ($0.time == $1.time ? $0.id < $1.id : $0.time < $1.time) : $0.date < $1.date }
     }
 
     private var categoryList: some View {
@@ -391,10 +402,20 @@ struct WalletView: View {
                 Label(localized("收支明细", "Breakdown", "Desglose", "収支内訳", "수입·지출 내역"), systemImage: "chart.pie.fill")
                     .font(.system(size: 15, weight: .semibold))
                 Spacer()
-                Text("\(periodBookings.count) \(localized("条行程", "trips", "viajes", "件の行程", "개 일정"))")
-                    .font(.system(size: 11, weight: .medium))
-                    .foregroundStyle(.secondary)
+                VStack(alignment: .trailing, spacing: 6) {
+                    Text("\(periodBookings.count) \(localized("条行程", "trips", "viajes", "件の行程", "개 일정"))")
+                        .font(.system(size: 11, weight: .medium)).foregroundStyle(.secondary)
+                    Button {
+                        tripSnapshot = FinancialTripSnapshotCollection(rows: snapshotRows)
+                    } label: {
+                        Label("详细信息", systemImage: "list.bullet.rectangle")
+                            .font(.system(size: 12, weight: .semibold))
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityHint("查看所选日期内的行程快照")
+                }
             }
+
 
             HStack(spacing: 12) {
                 summaryPill(
@@ -523,7 +544,7 @@ struct WalletView: View {
 
     private func traditionalChinese(_ text: String) -> String {
         let translations: [String: String] = [
-            "钱包": "錢包", "行程费用": "行程費用", "小费": "小費", "其他": "其他",
+            "财务": "財務", "行程费用": "行程費用", "小费": "小費", "其他": "其他",
             "上一段日期": "上一段日期", "下一段日期": "下一段日期", "总收入": "總收入", "净收入": "淨收入",
             "暂无收支": "暫無收支", "所选日期内没有财务记录": "所選日期內沒有財務記錄",
             "收支明细": "收支明細", "条行程": "筆行程", "收入": "收入", "支出": "支出",
@@ -693,5 +714,145 @@ private struct WalletPaymentMethodRow: View {
             return chinese
         default: return chinese
         }
+    }
+}
+
+// Value copies keep this read-only presentation stable while the directory refreshes.
+struct FinancialTripSnapshotCollection: Identifiable {
+    let id = UUID()
+    let rows: [FinancialTripSnapshotRow]
+}
+
+struct FinancialTripSnapshotRow: Identifiable {
+    let id: String
+    let date: Date
+    let time: Date
+    let guest: String
+    let amount: String
+    let details: [(String, String)]
+
+    static func flightDetails(_ flight: VariFlightLookupResult?) -> [(String, String)] {
+        guard let flight else { return [] }
+        return [("起飞机场", flight.departureAirport ?? ""), ("到达机场", flight.arrivalAirport ?? ""),
+                ("出发航站楼", flight.departureTerminal ?? ""), ("到达航站楼", flight.arrivalTerminal ?? ""),
+                ("起飞时间", flight.departureTime ?? ""), ("预计到达时间", flight.estimatedArrivalTime ?? ""),
+                ("行李转盘", flight.baggageCarousel ?? "")].filter { !$0.1.isEmpty }
+    }
+
+    static func details(service: String, start: String, stops: [String], end: String,
+                        flight: String, completed: Bool, cancelled: Bool, paid: Bool,
+                        contact: String, passengers: String, luggage: String,
+                        agency: String, order: String, memo: String) -> [(String, String)] {
+        var rows = [("类型", service), ("状态", cancelled ? "已取消" : completed ? "已完成" : "待执行"),
+                    ("收款", paid ? "已结清" : "未收款"), ("联系电话", contact),
+                    ("人数", passengers), ("行李", luggage), ("起始点", start)]
+        rows += stops.enumerated().map { ("停靠点 \($0.offset + 1)", $0.element) }
+        rows += [("目的地", end), ("航班", flight), ("旅行社", agency), ("旅行社订单号", order), ("备注", memo)]
+        return rows.filter { !$0.1.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+    }
+}
+
+struct FinancialTripSnapshotSheet: View {
+    let snapshot: FinancialTripSnapshotCollection
+    @Environment(\.dismiss) private var dismiss
+    @Environment(\.locale) private var locale
+
+    var body: some View {
+        NavigationStack {
+            ScrollView {
+                LazyVStack(spacing: 12) {
+                    if snapshot.rows.isEmpty {
+                        ContentUnavailableView("暂无行程", systemImage: "calendar", description: Text("所选日期内没有行程"))
+                    }
+                    ForEach(snapshot.rows) { row in
+                        DisclosureGroup {
+                            FinancialSnapshotRecordCard(row: row)
+                                .padding(.top, 12)
+                        } label: {
+                            HStack(spacing: 12) {
+                                VStack(spacing: 3) {
+                                    Text(row.time.formatted(.dateTime.hour().minute().locale(locale)))
+                                        .font(.system(size: 17, weight: .bold)).monospacedDigit()
+                                    Text(row.date.formatted(.dateTime.year().month().day().locale(locale)))
+                                        .font(.caption2).foregroundStyle(.secondary)
+                                }
+                                .padding(10)
+                                .background(Color(.tertiarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 12))
+                                Text(row.guest.isEmpty ? "未填写客户" : row.guest)
+                                    .font(.headline).foregroundStyle(.primary).frame(maxWidth: .infinity, alignment: .leading)
+                                Text(row.amount).font(.headline).foregroundStyle(.primary)
+                            }
+                            .padding(.vertical, 4)
+                        }
+                        .padding(14)
+                        .background(Color(.secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 20))
+                    }
+                }.padding(16)
+            }
+            .background(Color(.systemGroupedBackground))
+            .navigationTitle("行程快照")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar { ToolbarItem(placement: .topBarTrailing) { Button("关闭") { dismiss() } } }
+        }
+    }
+}
+
+
+/// Read-only counterpart of the trip-list record: time tile, service/facts,
+/// connected route, saved flight information and status capsules.
+private struct FinancialSnapshotRecordCard: View {
+    let row: FinancialTripSnapshotRow
+    private func value(_ key: String) -> String { row.details.first { $0.0 == key }?.1 ?? "" }
+    private var route: [(String, String)] {
+        row.details.filter { $0.0 == "起始点" || $0.0.hasPrefix("停靠点") || $0.0 == "目的地" }
+    }
+    private var flight: [(String, String)] {
+        row.details.filter { ["航班", "起飞机场", "到达机场", "出发航站楼", "到达航站楼", "起飞时间", "预计到达时间", "行李转盘"].contains($0.0) }
+    }
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Label(value("类型"), systemImage: value("类型").contains("送") ? "airplane.departure" : "airplane.arrival")
+                .font(.subheadline.weight(.medium)).foregroundStyle(Color.accentColor)
+            HStack(spacing: 6) {
+                fact("\(value("人数")) 位乘客", icon: "person.fill")
+                fact("\(value("行李")) 件行李", icon: "suitcase.fill")
+            }
+            VStack(alignment: .leading, spacing: 8) {
+                ForEach(Array(route.enumerated()), id: \.offset) { index, point in
+                    HStack(alignment: .top, spacing: 10) {
+                        VStack(spacing: 4) {
+                            Image(systemName: index == 0 ? "mappin.and.ellipse" : point.0 == "目的地" ? "flag.checkered" : "mappin.circle.fill")
+                                .foregroundStyle(index == 0 ? Color.teal : .orange)
+                            if index < route.count - 1 { Rectangle().fill(Color.secondary.opacity(0.18)).frame(width: 2, height: 24) }
+                        }.frame(width: 18)
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text(point.0).font(.caption).foregroundStyle(.secondary)
+                            Text(point.1).font(.subheadline.weight(.medium)).foregroundStyle(.primary)
+                        }
+                    }
+                }
+            }
+            if !flight.isEmpty {
+                VStack(alignment: .leading, spacing: 8) {
+                    Label(value("航班"), systemImage: "airplane").font(.subheadline.weight(.semibold)).foregroundStyle(Color.accentColor)
+                    ForEach(Array(flight.filter { $0.0 != "航班" }.enumerated()), id: \.offset) { _, field in
+                        HStack { Text(field.0).foregroundStyle(.secondary); Spacer(); Text(field.1) }.font(.caption)
+                    }
+                }.padding(12).background(Color(.tertiarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 14))
+            }
+            HStack(spacing: 8) {
+                Text(value("状态")).font(.caption).padding(.horizontal, 10).padding(.vertical, 6)
+                    .background(Color.accentColor.opacity(0.10), in: Capsule()).foregroundStyle(Color.accentColor)
+                Text(value("收款")).font(.caption).padding(.horizontal, 10).padding(.vertical, 6)
+                    .background(Color.green.opacity(0.10), in: Capsule()).foregroundStyle(.green)
+            }
+            if !value("备注").isEmpty { Text(value("备注")).font(.caption).foregroundStyle(.secondary) }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+    private func fact(_ text: String, icon: String) -> some View {
+        Label(text, systemImage: icon).font(.caption2).foregroundStyle(.secondary)
+            .padding(.horizontal, 8).padding(.vertical, 5)
+            .background(Color(.tertiarySystemGroupedBackground), in: Capsule())
     }
 }

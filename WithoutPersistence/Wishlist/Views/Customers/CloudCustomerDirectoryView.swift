@@ -111,6 +111,7 @@ private struct CloudCustomerDetailView: View {
     @AppStorage(NavigationProvider.defaultsKey) private var defaultNavigationProvider = NavigationProvider.appleMaps.rawValue
     let customer: CloudOnlineRepository.CustomerRecord
     let directory: CloudCustomerDirectoryModel
+    @State private var isShowingEditor = false
     @State private var isConfirmingDelete = false
     @State private var isShowingDeleteBlockAlert = false
     @State private var hasLoadedTrips = false
@@ -142,13 +143,14 @@ private struct CloudCustomerDetailView: View {
             await directory.reloadTrips(for: customer.id, using: auth)
             hasLoadedTrips = directory.tripErrorByCustomerID[customer.id] == nil
         }
+        .sheet(isPresented: $isShowingEditor) {
+            NavigationStack { CloudCustomerEditor(directory: directory, customer: currentCustomer) }
+        }
         .navigationTitle("客户资料")
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
             ToolbarItem(placement: .topBarTrailing) {
-                NavigationLink {
-                    CloudCustomerEditor(directory: directory, customer: currentCustomer)
-                } label: {
+                Button { isShowingEditor = true } label: {
                     Label("编辑", systemImage: "pencil")
                 }
             }

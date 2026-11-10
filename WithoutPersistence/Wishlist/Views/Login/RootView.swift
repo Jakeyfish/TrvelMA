@@ -9,6 +9,7 @@
 
 import SwiftUI
 import SwiftData
+import UIKit
 
 //struct RootView: View {
 //
@@ -37,6 +38,10 @@ struct RootView: View {
     @Environment(\.scenePhase) private var scenePhase
     @State private var cloudSyncStatus: CloudSyncStatus = .preparing
     @State private var isSyncing = false
+    @State private var showingCloudDeletion = false
+    @State private var showingPurchasePlans = false
+    @State private var initialCloudSyncRequest = InitialCloudSyncRequest()
+    @State private var syncAfterForeground = false
     @State private var syncErrorMessage: String?
     @State private var pendingAssetSyncTask: Task<Void, Never>?
     @State private var syncRetryTask: Task<Void, Never>?
@@ -61,6 +66,16 @@ struct RootView: View {
     private var storeTaskIdentity: String {
         [accountTaskIdentity, auth.productEdition.rawValue, dataStore.activeMode.rawValue,
          dataStore.startupError ?? ""].joined(separator: "|")
+    }
+
+    private var shouldStartInitialCloudSync: Bool {
+        initialCloudSyncRequest.isReady(
+            account: accountTaskIdentity,
+            isActive: scenePhase == .active,
+            canSync: auth.canUseCurrentCloudEdition && auth.productEdition.allowsCrossDeviceSync,
+            hasConsent: hasCloudImportConsent,
+            hasImportPrompt: cloudImportCounts != nil
+        )
     }
 
     private func syncStatusText(completed: (Int, Int, Int)?, failed: Bool) -> String {
@@ -205,6 +220,8 @@ struct RootView: View {
                     .foregroundStyle(.secondary)
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
+        } else if auth.canReadExpiredArchive {
+            ExpiredAccountArchiveView()
         } else if auth.shouldBlockCloudClient {
             VStack(spacing: 16) {
                 Image(systemName: "icloud.slash")
@@ -220,11 +237,21 @@ struct RootView: View {
                     if auth.requiresCloudReauthentication {
                         auth.logout()
                     } else {
-                        Task { await auth.retryServerEntitlementLookup() }
+                        Task {
+                            await auth.retryServerEntitlementLookup()
+                            // A failed cold-start lookup ended the original
+                            // preparation task. Resume setup after access recovers.
+                            await prepareCloudSync()
+                        }
                     }
                 }
                 .buttonStyle(.borderedProminent)
+                if BillingReleaseConfiguration.plansVisible && auth.canManageCloudPurchases {
+                    Button("版本与购买") { showingPurchasePlans = true }
+                        .buttonStyle(.bordered)
+                }
                 if !auth.requiresCloudReauthentication {
+                    Button("删除云端账号", role: .destructive) { showingCloudDeletion = true }
                     Button(entitlementStatusCopy.signOut) { auth.logout() }
                         .buttonStyle(.bordered)
                 }
@@ -277,11 +304,22 @@ struct RootView: View {
             LoginView()
         }
         }
+        .sheet(isPresented: $showingCloudDeletion) { CloudAccountDeletionView() }
+        .sheet(isPresented: $showingPurchasePlans) { PurchasePlansView() }
+        // Apple authentication can trigger a foreground entitlement recheck.
+        // Keep the purchase sheet above the account data route so that recheck
+        // cannot destroy an in-flight StoreKit operation or its result.
+        .onReceive(NotificationCenter.default.publisher(for: .requestPurchasePlans)) { _ in
+            guard BillingReleaseConfiguration.plansVisible, auth.isLoggedIn,
+                  !auth.isCloudAccount || auth.canManageCloudPurchases else { return }
+            showingPurchasePlans = true
+        }
         .environment(\.locale, languageSettings.locale)
         // Entitlement verification is an account-scoped network operation.
         // Do not key it to productEdition or storage mode: both can change
         // while startup is in progress and would cancel the request.
         .task(id: accountTaskIdentity) {
+            initialCloudSyncRequest = InitialCloudSyncRequest()
             syncRetryTask?.cancel()
             guard dataStore.startupError == nil else { return }
             if (dataStore.activeMode == .cloud) != auth.isCloudAccount {
@@ -293,11 +331,24 @@ struct RootView: View {
                 await prepareLocalDataScope()
             }
         }
+        // Startup preparation may finish before the scene becomes active, or
+        // after the foreground event has already happened. Observe both inputs
+        // together so neither ordering can lose the first sync request. This
+        // unstructured task is not cancelled when the scene goes inactive.
+        .onChange(of: shouldStartInitialCloudSync) { _, ready in
+            if ready {
+                Task { await syncLocalData(showsError: false) }
+            }
+        }
         .onChange(of: scenePhase) { _, phase in
             if phase == .active && auth.isCloudAccount && auth.serverEntitlement?.edition == .cloud && auth.entitlementLookupCompleted {
                 Task { await auth.recheckOnlineOnlyAccessOnForeground() }
             } else if phase == .active && auth.canUseCurrentCloudEdition && auth.productEdition.allowsCrossDeviceSync && hasCloudImportConsent && cloudImportCounts == nil {
-                Task { await syncLocalData() }
+                if isSyncing {
+                    syncAfterForeground = true
+                } else {
+                    Task { await syncLocalData(force: true, showsError: false) }
+                }
             }
         }
         .onReceive(NotificationCenter.default.publisher(for: .accountAssetsDidChange)) { _ in
@@ -436,7 +487,7 @@ struct RootView: View {
         if switchedCloudAccounts || localAccountDoesNotMatchCloudAccount || anotherCloudAccountHasDeviceData {
             CloudLocalDataPreference.cloudDataOnly.save(for: email)
             UserDefaults.standard.set(true, forKey: cloudImportConsentKey)
-            await syncLocalData()
+            await requestInitialCloudSync()
             return
         }
 
@@ -473,17 +524,24 @@ struct RootView: View {
                     return
                 }
             }
-            await syncLocalData()
+            await requestInitialCloudSync()
             return
         }
 
         guard customers + agencies + trips + deletions > 0 || hasUnimportedAssets else {
             UserDefaults.standard.set(true, forKey: cloudImportConsentKey)
-            await syncLocalData()
+            await requestInitialCloudSync()
             return
         }
 
         cloudImportCounts = CloudImportCounts(customers: customers, agencies: agencies, trips: trips)
+    }
+
+    @MainActor
+    private func requestInitialCloudSync() async {
+        guard !Task.isCancelled else { return }
+        initialCloudSyncRequest.request(for: accountTaskIdentity)
+        await syncLocalData()
     }
 
     private func hasCachedCloudDataForAnotherAccount(excluding email: String) -> Bool {
@@ -530,7 +588,8 @@ struct RootView: View {
 
     @MainActor
     private func syncLocalData(force: Bool = false, showsError: Bool = true) async {
-        guard auth.canUseCurrentCloudEdition, auth.productEdition.allowsCrossDeviceSync, hasCloudImportConsent, cloudImportCounts == nil, !isSyncing else { return }
+        guard auth.canUseCurrentCloudEdition, auth.productEdition.allowsCrossDeviceSync, hasCloudImportConsent, cloudImportCounts == nil, scenePhase == .active, !isSyncing else { return }
+        initialCloudSyncRequest.consume(for: accountTaskIdentity)
         if !force, let retryDate = scheduledSyncRetryDate(), retryDate > .now {
             cloudSyncStatus = .failed
             scheduleSyncRetry(at: retryDate)
@@ -543,28 +602,40 @@ struct RootView: View {
         defer {
             isSyncing = false
             auth.setCloudSyncInProgress(assetSyncInProgress)
+            if syncAfterForeground {
+                syncAfterForeground = false
+                if scenePhase == .active {
+                    Task { await syncLocalData(force: true, showsError: false) }
+                }
+            }
         }
         do {
             let syncEmail = auth.currentEmail.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-            guard let token = (await auth.refreshCloudAccessToken()) ?? auth.cloudAccessToken else {
-                throw SupabaseDataSync.SyncError.noSession
+            let result = try await SyncBackgroundExecution.run {
+                guard let token = (await auth.refreshCloudAccessToken()) ?? auth.cloudAccessToken else {
+                    throw SupabaseDataSync.SyncError.noSession
+                }
+                try Task.checkCancellation()
+                guard auth.canUseCurrentCloudEdition, auth.productEdition.allowsCrossDeviceSync,
+                      auth.currentEmail.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() == syncEmail else {
+                    throw CancellationError()
+                }
+                return try await SupabaseDataSync.uploadLocalData(
+                    context: modelContext,
+                    accessToken: token,
+                    accountEmail: syncEmail
+                )
             }
-            guard auth.canUseCurrentCloudEdition, auth.productEdition.allowsCrossDeviceSync,
-                  auth.currentEmail.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() == syncEmail else {
-                return
-            }
-            let result = try await SupabaseDataSync.uploadLocalData(
-                context: modelContext,
-                accessToken: token,
-                accountEmail: syncEmail
-            )
+            syncErrorMessage = nil
             clearScheduledSyncRetry()
             cloudSyncStatus = .completed(customers: result.customers, agencies: result.agencies, trips: result.trips)
             await refreshPendingSyncConflicts()
         } catch {
             cloudSyncStatus = .failed
             persistFailedSyncAndScheduleRetry()
-            if showsError { syncErrorMessage = error.localizedDescription }
+            if showsError && scenePhase == .active && !Task.isCancelled && !(error is CancellationError) {
+                syncErrorMessage = error.localizedDescription
+            }
             await refreshPendingSyncConflicts()
         }
     }
@@ -610,6 +681,9 @@ struct RootView: View {
                 return
             }
             guard !Task.isCancelled, scenePhase == .active else { return }
+            // The timer has fired. Do not let syncLocalData cancel the task
+            // that is about to perform its own network requests.
+            syncRetryTask = nil
             await syncLocalData(showsError: false)
         }
     }
@@ -625,17 +699,66 @@ struct RootView: View {
         guard auth.canUseCurrentCloudEdition, auth.productEdition.allowsCrossDeviceSync, hasCloudImportConsent, cloudImportCounts == nil else { return }
         do {
             let syncEmail = auth.currentEmail.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-            guard let token = (await auth.refreshCloudAccessToken()) ?? auth.cloudAccessToken else {
-                throw SupabaseDataSync.SyncError.noSession
+            try await SyncBackgroundExecution.run {
+                guard let token = (await auth.refreshCloudAccessToken()) ?? auth.cloudAccessToken else {
+                    throw SupabaseDataSync.SyncError.noSession
+                }
+                try Task.checkCancellation()
+                guard auth.canUseCurrentCloudEdition, auth.productEdition.allowsCrossDeviceSync,
+                      auth.currentEmail.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() == syncEmail else {
+                    throw CancellationError()
+                }
+                try await SupabaseDataSync.syncAccountAssets(email: syncEmail, accessToken: token)
             }
-            guard auth.canUseCurrentCloudEdition, auth.productEdition.allowsCrossDeviceSync,
-                  auth.currentEmail.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() == syncEmail else {
-                return
-            }
-            try await SupabaseDataSync.syncAccountAssets(email: syncEmail, accessToken: token)
         } catch {
             cloudSyncStatus = .failed
-            syncErrorMessage = error.localizedDescription
+            if scenePhase == .active && !(error is CancellationError) {
+                syncErrorMessage = error.localizedDescription
+            }
+        }
+    }
+}
+
+/// Gives an in-flight sync a finite opportunity to finish after locking the device.
+/// Expiration cancels its requests; foreground recovery performs another sync.
+@MainActor
+enum SyncBackgroundExecution {
+    typealias Begin = (@escaping @MainActor @Sendable () -> Void) -> UIBackgroundTaskIdentifier
+    typealias End = (UIBackgroundTaskIdentifier) -> Void
+
+    static func run<Value>(
+        begin: Begin = { UIApplication.shared.beginBackgroundTask(withName: "Cloud sync", expirationHandler: $0) },
+        end: @escaping End = { UIApplication.shared.endBackgroundTask($0) },
+        operation: @escaping @MainActor () async throws -> Value
+    ) async throws -> Value {
+        let worker = Task { @MainActor in
+            try Task.checkCancellation()
+            let value = try await operation()
+            try Task.checkCancellation()
+            return value
+        }
+        let lease = Lease(end: end)
+        lease.identifier = begin { [weak lease] in
+            worker.cancel()
+            lease?.finish()
+        }
+        defer { lease.finish() }
+        return try await withTaskCancellationHandler {
+            try await worker.value
+        } onCancel: {
+            worker.cancel()
+        }
+    }
+
+    private final class Lease {
+        var identifier: UIBackgroundTaskIdentifier = .invalid
+        let end: End
+        init(end: @escaping End) { self.end = end }
+        func finish() {
+            guard identifier != .invalid else { return }
+            let finished = identifier
+            identifier = .invalid
+            end(finished)
         }
     }
 }
@@ -838,3 +961,20 @@ private struct ConflictField: Identifiable {
 //        RootView()
 //        .environment(dataSource)
 //}
+
+/// Keeps the first prepared sync pending until its account can actually start.
+/// Account binding prevents a pending request from crossing a sign-in change.
+struct InitialCloudSyncRequest {
+    private var pendingAccount: String?
+
+    mutating func request(for account: String) { pendingAccount = account }
+
+    func isReady(account: String, isActive: Bool, canSync: Bool,
+                 hasConsent: Bool, hasImportPrompt: Bool) -> Bool {
+        pendingAccount == account && isActive && canSync && hasConsent && !hasImportPrompt
+    }
+
+    mutating func consume(for account: String) {
+        if pendingAccount == account { pendingAccount = nil }
+    }
+}

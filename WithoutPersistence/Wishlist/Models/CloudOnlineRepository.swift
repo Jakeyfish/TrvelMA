@@ -163,6 +163,7 @@ enum CloudOnlineRepository {
         let orderSource: String
         let travelAgencyCode: String
         let travelAgencyName: String
+        var travelAgencyOrderNumber: String = ""
         let customerID: String?
         let customerName: String
         let customerContact: String
@@ -174,17 +175,17 @@ enum CloudOnlineRepository {
         let locationEnd: String
         let flightInfo: String
         let flightDate: String
-        let flightDepartureTime: String?
-        let flightEstimatedArrivalTime: String?
-        let flightArrivalTerminal: String?
-        let flightBaggageCarousel: String?
-        let flightSelectionSnapshot: SavedFlightSelection?
+        var flightDepartureTime: String?
+        var flightEstimatedArrivalTime: String?
+        var flightArrivalTerminal: String?
+        var flightBaggageCarousel: String?
+        var flightSelectionSnapshot: SavedFlightSelection?
         let memo: String
-        let price: Double
-        let tip: Double
-        let isPaid: Bool
-        let isCompleted: Bool
-        let isCancelled: Bool
+        var price: Double
+        var tip: Double
+        var isPaid: Bool
+        var isCompleted: Bool
+        var isCancelled: Bool
         let reminderEnabled: Bool
         let reminderAt: String?
         let hasSecondReminder: Bool
@@ -192,7 +193,12 @@ enum CloudOnlineRepository {
         let currencyCode: String
         let createdAt: String
         let stops: [TripStopRecord]
-        let expenses: [TripExpenseRecord]
+        var expenses: [TripExpenseRecord]
+
+        var flightContextFields: [String: String] {
+            ["flight_info": flightInfo, "flight_date": flightDate, "service_type": serviceType,
+             "location_start": locationStart, "location_end": locationEnd]
+        }
 
     }
 
@@ -202,6 +208,7 @@ enum CloudOnlineRepository {
         let orderSource: String
         let travelAgencyCode: String
         let travelAgencyName: String
+        let travelAgencyOrderNumber: String?
         let customerID: String?
         let customerName: String
         let customerContact: String
@@ -237,6 +244,7 @@ enum CloudOnlineRepository {
             case orderSource = "order_source"
             case travelAgencyCode = "travel_agency_code"
             case travelAgencyName = "travel_agency_name"
+            case travelAgencyOrderNumber = "travel_agency_order_number"
             case customerID = "customer_id"
             case customerName = "customer_name"
             case customerContact = "customer_contact"
@@ -385,6 +393,7 @@ enum CloudOnlineRepository {
         case invalidAccount
         case accountChanged
         case invalidRows
+        case tripChanged
         case unsupportedOperation
         case requestFailed(String)
 
@@ -396,6 +405,8 @@ enum CloudOnlineRepository {
                 String(localized: "账号已切换，请重新打开页面后重试。", locale: AppLanguageSettings.currentLocale)
             case .invalidRows:
                 String(localized: "云端资料格式无效，尚未保存。", locale: AppLanguageSettings.currentLocale)
+            case .tripChanged:
+                String(localized: "行程已更新或不可用，请刷新后重新选择航班。", locale: AppLanguageSettings.currentLocale)
             case .unsupportedOperation:
                 String(localized: "此类云端资料不支持删除。", locale: AppLanguageSettings.currentLocale)
             case .requestFailed(let message):
@@ -550,6 +561,7 @@ enum CloudOnlineRepository {
                 CloudTripRecord(
                     id: trip.id, serviceType: trip.serviceType, orderSource: trip.orderSource,
                     travelAgencyCode: trip.travelAgencyCode, travelAgencyName: trip.travelAgencyName,
+                    travelAgencyOrderNumber: trip.orderSource == "旅行社订单" ? (trip.travelAgencyOrderNumber ?? "") : "",
                     customerID: trip.customerID, customerName: trip.customerName,
                     customerContact: trip.customerContact, customerCount: trip.customerCount,
                     customerStuff: trip.customerStuff, appointmentDate: trip.appointmentDate,
@@ -591,21 +603,54 @@ enum CloudOnlineRepository {
         }
     }
 
+    static func saveSettlement(id: String, fare: Double, tip: Double, expenses: [[String: Any]], markPaid: Bool = true,
+                               account: Account, accessToken: String) async throws {
+        let validation = expenses.map {
+            SettlementValidation.Expense(title: $0["title"] as? String ?? "",
+                amount: $0["amount"] as? Double, isAddition: $0["is_addition"] as? Bool ?? false)
+        }
+        if let failure = SettlementValidation.validate(fare: fare, tip: tip, expenses: validation) {
+            throw NSError(domain: "TripSettlement", code: 1, userInfo: [NSLocalizedDescriptionKey: failure.message])
+        }
+        try await withVerifiedAccount(account, token: accessToken) { _ in
+            let action = markPaid ? "settle_online_trip" : "save_online_trip_finances"
+            var request = URLRequest(url: SupabaseAuthClient.endpoint(path: "/rest/v1/rpc/\(action)"))
+            request.httpMethod = "POST"
+            setAuthHeaders(on: &request, accessToken: accessToken)
+            request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+            request.httpBody = try JSONSerialization.data(withJSONObject: [
+                "p_trip_id": id, "p_fare": fare, "p_tip": tip, "p_expenses": expenses
+            ])
+            _ = try await perform(request, table: .trips)
+        }
+    }
+
     /// Applies a narrow patch to a trip so status or flight refreshes cannot
     /// overwrite unrelated fields from a stale copy held by another screen/device.
     static func updateTripFields(
         id: String,
         fields: [String: Any],
+        expectedFlightContext: [String: String]? = nil,
         account: Account,
         accessToken: String
     ) async throws {
         try await withVerifiedAccount(account, token: accessToken) { verifiedAccount in
-            let query = [
+            var query = [
                 URLQueryItem(name: "id", value: "eq.\(id)"),
                 URLQueryItem(name: "owner_id", value: "eq.\(verifiedAccount.id)"),
                 URLQueryItem(name: "deleted_at", value: "is.null"),
                 URLQueryItem(name: "select", value: "id")
             ]
+            if let expectedFlightContext {
+                for (key, rawValue) in expectedFlightContext.sorted(by: { $0.key < $1.key }) {
+                    // Quote reserved characters in addresses and ISO timestamps;
+                    // URLQueryItem handles percent encoding after grammar escaping.
+                    let value = rawValue
+                        .replacingOccurrences(of: "\\", with: "\\\\")
+                        .replacingOccurrences(of: "\"", with: "\\\"")
+                    query.append(URLQueryItem(name: key, value: "eq.\"\(value)\""))
+                }
+            }
             var request = URLRequest(url: SupabaseAuthClient.endpoint(path: "/rest/v1/trips", queryItems: query))
             request.httpMethod = "PATCH"
             setAuthHeaders(on: &request, accessToken: accessToken)
@@ -614,7 +659,7 @@ enum CloudOnlineRepository {
             request.httpBody = try JSONSerialization.data(withJSONObject: fields, options: [.fragmentsAllowed])
             let data = try await perform(request, table: .trips)
             guard let rows = try JSONSerialization.jsonObject(with: data) as? [[String: Any]], !rows.isEmpty else {
-                throw RepositoryError.invalidRows
+                throw expectedFlightContext == nil ? RepositoryError.invalidRows : RepositoryError.tripChanged
             }
         }
     }

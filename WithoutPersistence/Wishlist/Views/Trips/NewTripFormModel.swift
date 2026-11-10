@@ -14,6 +14,250 @@ import Combine
 import CoreLocation
 import UserNotifications
 
+enum SmartPickupReminderPlan {
+    /// Notification triggers and the editor use minute precision. Never invent
+    /// two identical reminders or put an expired reminder into the saved draft.
+    static func dates(before appointment: Date, now: Date = .now, calendar: Calendar = .current) -> [Date] {
+        func minute(_ date: Date) -> Date {
+            calendar.dateInterval(of: .minute, for: date)?.start ?? date
+        }
+        let preferred = [calendar.date(byAdding: .day, value: -1, to: appointment)] +
+            [120, 60, 30, 15, 5, 1].map { calendar.date(byAdding: .minute, value: -$0, to: appointment) }
+        var dates: [Date] = []
+        for candidate in preferred.compactMap({ $0 }).map(minute) where candidate > now && candidate < appointment {
+            if !dates.contains(candidate) { dates.append(candidate) }
+            if dates.count == 2 { return dates.sorted() }
+        }
+        for candidate in [minute(now).addingTimeInterval(60), minute(appointment).addingTimeInterval(-60)] where candidate > now && candidate < appointment {
+            if !dates.contains(candidate) { dates.append(candidate) }
+        }
+        return dates.count >= 2 ? Array(dates.sorted().prefix(2)) : []
+    }
+}
+
+enum PickupAgencyMatcher {
+    /// Known names only: similar-looking unrelated agencies must not be selected.
+    static func matches(_ name: String) -> Bool {
+        let folded = name.folding(options: [.widthInsensitive, .diacriticInsensitive], locale: Locale(identifier: "en_US_POSIX"))
+            .lowercased().replacingOccurrences(of: "風", with: "风").replacingOccurrences(of: "遊", with: "游")
+        let key = String(String.UnicodeScalarView(folded.unicodeScalars.filter { CharacterSet.alphanumerics.contains($0) }))
+        return ["途风", "途风旅行", "途风旅游", "途风旅行社", "tours4fun", "途风tours4fun", "tours4fun途风",
+                "途风旅游tours4fun", "tours4fun途风旅游", "途风旅行社tours4fun", "tours4fun途风旅行社", "途风旅行tours4fun", "tours4fun途风旅行"].contains(key)
+    }
+}
+
+/// Structured Tours4Fun pickup import. Parsing is local and never sends pasted text to a service.
+struct RecognizedPickupOrder: Identifiable {
+    let id = UUID()
+    var orderNumber: String
+    var date: Date?
+    var inferredYear: Bool
+    var flight: String
+    var airport: String
+    var estimatedArrival: String?
+    var contact: String?
+    var phone: String?
+    var passengers: String?
+    var luggage: String?
+    var hotel: String?
+    var address: String?
+    var rawText: String
+
+    var destination: String? {
+        guard let address, !address.isEmpty else { return nil }
+        return [hotel, address].compactMap { $0 }.filter { !$0.isEmpty }.joined(separator: ", ")
+    }
+    var dateText: String {
+        guard let date else { return "日期无效，请修改原文后重试" }
+        let formatter = DateFormatter()
+        formatter.timeZone = TimeZone(identifier: "America/Los_Angeles")
+        formatter.dateFormat = "yyyy-MM-dd"
+        return formatter.string(from: date)
+    }
+    var pickupDateTime: Date? {
+        guard let date, let estimatedArrival else { return nil }
+        let parts = estimatedArrival.split(separator: ":").compactMap { Int($0) }
+        guard parts.count == 2 else { return nil }
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = TimeZone(identifier: "America/Los_Angeles")!
+        var components = calendar.dateComponents([.year, .month, .day], from: date)
+        components.hour = parts[0]; components.minute = parts[1]
+        guard let value = calendar.date(from: components),
+              calendar.component(.hour, from: value) == parts[0],
+              calendar.component(.minute, from: value) == parts[1] else { return nil }
+        return value
+    }
+    func reminderDates(now: Date = .now) -> [Date] {
+        guard let pickupDateTime else { return [] }
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = TimeZone(identifier: "America/Los_Angeles")!
+        return SmartPickupReminderPlan.dates(before: pickupDateTime, now: now, calendar: calendar)
+    }
+    func apply(to form: inout NewTripFormModel, agencyCode: String? = nil, now: Date = .now) {
+        guard let date, let pickupDateTime else { return }
+        let sameAgency = PickupAgencyMatcher.matches(form.travelAgencyName)
+        form.travelAgencyCode = agencyCode ?? (sameAgency ? form.travelAgencyCode : "")
+        form.orderSource = "旅行社订单"
+        form.travelAgencyName = "途风"
+        form.travelAgencyOrderNumber = orderNumber
+        form.serviceType = "接机"
+        form.appointmentDate = date
+        form.appointmentTime = pickupDateTime
+        let reminders = reminderDates(now: now)
+        form.reminderEnabled = reminders.count == 2
+        form.hasSecondReminder = reminders.count == 2
+        if reminders.count == 2 { form.reminderDateTime = reminders[0]; form.secondReminderDateTime = reminders[1] }
+        form.reminderDateWasCustomized = false
+        form.secondReminderDateWasCustomized = false
+        form.copiedReminderDefaultsToTwoHours = false
+        form.flightdate = date
+        form.flightInfo = flight
+        form.locationStart = airport
+        if let destination { form.locationEnd = destination }
+        if let contact { form.customerName = contact; form.selectedCustomerUUID = nil }
+        if let phone { form.custemerConnect = phone }
+        if let passengers { form.customerCount = passengers }
+        if let luggage { form.customerStuff = luggage }
+        form.flightSelectionSnapshotJSON = ""
+        form.flightDepartureTime = ""
+        form.flightEstimatedArrivalTime = estimatedArrival ?? ""
+        form.flightArrivalTerminal = ""
+        form.flightBaggageCarousel = ""
+        let arrival = estimatedArrival.map { "\n航班预计抵达：\($0)（洛杉矶当地时间；已用作接客时间）" } ?? ""
+        let note = "途风订单号：\(orderNumber)\(arrival)\n原始订单：\n\(rawText)"
+        if !form.TripMemo.contains(note) {
+            form.TripMemo += (form.TripMemo.isEmpty ? "" : "\n\n") + note
+        }
+    }
+}
+
+enum PickupOrderRecognizer {
+    static func recognize(_ raw: String, now: Date = .now) -> RecognizedPickupOrder? {
+        let text = raw.replacingOccurrences(of: "\u{00a0}", with: " ").replacingOccurrences(of: "\r\n", with: "\n")
+        func groups(_ pattern: String, in value: String? = nil) -> [String]? {
+            let value = value ?? text
+            guard let regex = try? NSRegularExpression(pattern: pattern, options: [.caseInsensitive, .anchorsMatchLines]),
+                  let match = regex.firstMatch(in: value, range: NSRange(value.startIndex..., in: value)) else { return nil }
+            return (1..<match.numberOfRanges).map { index in
+                Range(match.range(at: index), in: value).map { String(value[$0]).trimmingCharacters(in: .whitespacesAndNewlines) } ?? ""
+            }
+        }
+        func field(_ label: String) -> String? {
+            guard let value = groups("(?:" + label + ")[^\\S\\r\\n]*[：:][^\\S\\r\\n]*([^\\r\\n]+)")?.first,
+                  !value.isEmpty else { return nil }
+            return value
+        }
+        guard let number = groups(#"(?:订单号|訂單號)\s*[：:]\s*(C-\d+-US)\b"#)?.first,
+              let dateLine = field("接机日期|接機日期"),
+              let flight = groups(#"(?:航班号|航班號)\s*[：:]\s*([A-Z0-9]{2}\s*\d{1,4})\b"#)?.first,
+              let airport = groups(#"(?:抵达机场|抵達機場)\s*[：:]\s*([A-Z]{3})\b"#)?.first,
+              airport.uppercased() == "LAX",
+              let guestAddress = field("客人地址"),
+              let contactLine = field("联络人|聯絡人|联系人|聯繫人"),
+              field("类型|類型").map({ $0.hasPrefix("接机") || $0.hasPrefix("接機") }) ?? true else { return nil }
+        let trailingYear = groups(#"^(\d{1,2})[/.-](\d{1,2})[/.-](\d{4})(?=$|[\s，,;；])"#, in: dateLine)
+        let components = trailingYear.map { [$0[2], $0[0], $0[1]] } ??
+            groups(#"^(?:(\d{4})[年/.-])?(\d{1,2})[月/.-](\d{1,2})(?:日)?(?=$|[\s，,;；])"#, in: dateLine)
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = TimeZone(identifier: "America/Los_Angeles")!
+        var date: Date?
+        let explicitYear = components.flatMap { Int($0[0]) }
+        if let components, let month = Int(components[1]), let day = Int(components[2]) {
+            let today = calendar.dateComponents([.year, .month, .day], from: now)
+            let past = month < today.month! || (month == today.month! && day < today.day!)
+            let year = explicitYear ?? (today.year! + (past ? 1 : 0))
+            if let candidate = calendar.date(from: DateComponents(year: year, month: month, day: day, hour: 12)),
+               calendar.component(.year, from: candidate) == year,
+               calendar.component(.month, from: candidate) == month,
+               calendar.component(.day, from: candidate) == day { date = candidate }
+        }
+        let time = groups(#"(?:接机时间|接機時間|抵达时间|抵達時間)[^\S\r\n]*[：:][^\S\r\n]*[^\d\r\n]{0,12}(\d{1,2})[:：](\d{2})(?!\d)"#)
+        var arrival: String?
+        if let time, let hour = Int(time[0]), let minute = Int(time[1]), (0...23).contains(hour), (0...59).contains(minute) {
+            arrival = String(format: "%02d:%02d", hour, minute)
+        }
+        let contact = contactLine.components(separatedBy: CharacterSet(charactersIn: "（(")).first?.trimmingCharacters(in: .whitespaces)
+        let phoneText = groups(#"(?:联络电话|聯絡電話|联系电话|聯繫電話)[^\S\r\n]*[：:][^\S\r\n]*(\+?\d[\d ()（）-]*)"#)?.first
+        let phone = phoneText.map { value -> String in
+            let digits = value.filter { $0.isASCII && $0.isNumber }
+            return (value.hasPrefix("+") || digits.hasPrefix("886") ? "+" : "") + digits
+        }
+        let addressParts = groups(#"^(.*?)\s*(?:住址|地址)\s*[：:]\s*(.+)$"#, in: guestAddress)
+        let hotel = addressParts?.first
+        let address = addressParts?[1] ?? guestAddress
+        return RecognizedPickupOrder(orderNumber: number.uppercased(), date: date, inferredYear: explicitYear == nil,
+            flight: flight.replacingOccurrences(of: " ", with: "").uppercased(), airport: airport.uppercased(), estimatedArrival: arrival,
+            contact: contact, phone: phone, passengers: groups(#"(?:人数|人數)\s*[：:]\s*(\d+)\s*人"#)?.first ?? groups(#"[（(]\s*(\d+)\s*人\s*[）)]"#, in: contactLine)?.first,
+            luggage: groups(#"(\d+)\s*件\s*行李"#)?.first, hotel: hotel, address: address, rawText: raw)
+    }
+}
+
+/// Shared by local and cloud trip editors; applying only changes their unsaved draft.
+struct SmartTripInput: View {
+    @Binding var text: String
+    let apply: (RecognizedPickupOrder) -> Void
+    @State private var recognized: RecognizedPickupOrder?
+    @State private var error: String?
+    @State private var notificationNotice: String?
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            LimitedIMETextEditor(text: $text, maxLength: 5000, fontSize: 14)
+                .frame(height: 110)
+                .overlay(RoundedRectangle(cornerRadius: 8).stroke(.secondary.opacity(0.2)))
+            Text("智能识别录入")
+                .font(.caption).foregroundStyle(.secondary)
+            Button("识别订单") {
+                UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder), to: nil, from: nil, for: nil)
+                if let result = PickupOrderRecognizer.recognize(text) { recognized = result; error = nil }
+                else { error = "未识别为途风 LAX 接机格式，请检查订单号、接机日期、航班、机场、客人地址和联系人标签。" }
+            }.buttonStyle(.borderedProminent).disabled(text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+            if let error { Text(error).font(.caption).foregroundStyle(.orange) }
+            if let notificationNotice { Text(notificationNotice).font(.caption).foregroundStyle(.orange) }
+        }
+        .sheet(item: $recognized) { result in
+            NavigationStack {
+                List {
+                    Section("识别结果") {
+                        LabeledContent("订单来源", value: "旅行社 · 途风")
+                        LabeledContent("订单号", value: result.orderNumber)
+                        LabeledContent("接机日期", value: result.dateText)
+                        LabeledContent("航班", value: result.flight)
+                        LabeledContent("起点机场", value: result.airport)
+                        LabeledContent("接客时间（预计抵达）", value: result.estimatedArrival ?? "未识别")
+                        LabeledContent("联系人", value: result.contact ?? "未识别")
+                        LabeledContent("电话", value: result.phone ?? "未识别")
+                        LabeledContent("人数 / 行李", value: "\(result.passengers ?? "待填") 人 / \(result.luggage ?? "待填") 件")
+                        LabeledContent("目的地酒店", value: result.hotel ?? "未识别")
+                        LabeledContent("目的地地址", value: result.address ?? "未识别")
+                    }
+                    Section("请确认") {
+                        if result.inferredYear { Text("未写年份时，按洛杉矶当地今天比较：同日或未来取本年，已过日期取明年。") }
+                        Text("接客时间取航班预计抵达。自动预设前一天、提前2小时两条提醒；临近时调整为仍未过去的时间。报价请确认，航站楼需查航班后选择。")
+                        if result.reminderDates().count != 2 { Text("接客时间已过或太近，无法安排两条未来提醒，请手动调整。").foregroundStyle(.orange) }
+                        Text("填入会替换已识别字段；报价及未识别字段保留。订单号填入独立的旅行社订单号字段，原文也留在备注。")
+                        if result.pickupDateTime == nil { Text("日期或抵达时间无效，请返回修改原文。不会自动改成其他日期。").foregroundStyle(.orange) }
+                    }
+                }
+                .navigationTitle("识别预览")
+                .toolbar {
+                    ToolbarItem(placement: .cancellationAction) { Button("返回") { recognized = nil } }
+                    ToolbarItem(placement: .confirmationAction) {
+                        Button("填入行程") {
+                            apply(result); recognized = nil
+                            if result.reminderDates().count == 2 {
+                                Task {
+                                    let granted = (try? await UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound, .badge])) ?? false
+                                    notificationNotice = granted ? nil : "两条提醒已预设，但系统未允许通知；请在系统设置中允许通知后保存。"
+                                }
+                            }
+                        }.disabled(result.pickupDateTime == nil)
+                    }
+                }
+            }
+        }
+    }
+}
+
 // MARK: - 1. 本地安全行程数据模型
 struct NewTripFormModel {
     var id: UUID = .init()
@@ -22,6 +266,7 @@ struct NewTripFormModel {
     var orderSource: String = "普通客户"
     var travelAgencyCode: String = ""
     var travelAgencyName: String = ""
+    var travelAgencyOrderNumber: String = ""
     var customerSelection: String = "客户选择"
     var selectedCustomerUUID: String?
     var customerName: String = ""
@@ -58,6 +303,7 @@ struct NewTripFormModel {
         orderSource = booking.orderSource
         travelAgencyCode = booking.travelAgencyCode
         travelAgencyName = booking.travelAgencyName
+        travelAgencyOrderNumber = booking.travelAgencyOrderNumber
         customerName = booking.customerName
         selectedCustomerUUID = booking.customerUUID
         custemerConnect = booking.customerContact
@@ -94,14 +340,16 @@ struct NewTripFormModel {
         appointmentComponents.minute = timeComponents.minute
         let appointment = Calendar.current.date(from: appointmentComponents) ?? appointmentDate
 
+        let dates = SmartPickupReminderPlan.dates(before: appointment)
+        guard dates.count == 2 else {
+            reminderEnabled = false
+            hasSecondReminder = false
+            return
+        }
         if !reminderDateWasCustomized {
-            reminderDateTime = copiedReminderDefaultsToTwoHours
-                ? (Calendar.current.date(byAdding: .hour, value: -2, to: appointment) ?? appointment)
-                : (Calendar.current.date(byAdding: .day, value: -1, to: appointment) ?? appointment)
+            reminderDateTime = copiedReminderDefaultsToTwoHours && !hasSecondReminder ? dates[1] : dates[0]
         }
-        if !secondReminderDateWasCustomized {
-            secondReminderDateTime = Calendar.current.date(byAdding: .hour, value: -2, to: appointment) ?? appointment
-        }
+        if !secondReminderDateWasCustomized { secondReminderDateTime = dates[1] }
     }
 
     mutating func adjustRemindersForAppointmentChange() {
@@ -111,12 +359,19 @@ struct NewTripFormModel {
         appointmentComponents.minute = timeComponents.minute
         let appointment = Calendar.current.date(from: appointmentComponents) ?? appointmentDate
 
-        reminderDateTime = Calendar.current.date(byAdding: .day, value: -1, to: appointment) ?? appointment
-        secondReminderDateTime = Calendar.current.date(byAdding: .hour, value: -2, to: appointment) ?? appointment
+        let dates = SmartPickupReminderPlan.dates(before: appointment)
+        if dates.count == 2 {
+            reminderDateTime = dates[0]
+            secondReminderDateTime = dates[1]
+        } else {
+            reminderEnabled = false
+            hasSecondReminder = false
+        }
         reminderDateWasCustomized = false
         secondReminderDateWasCustomized = false
         copiedReminderDefaultsToTwoHours = false
     }
+
 }
 
 @Model
@@ -127,6 +382,7 @@ final class TripBookingRecord {
     var orderSource: String
     var travelAgencyCode: String = ""
     var travelAgencyName: String = ""
+    var travelAgencyOrderNumber: String = ""
     var customerName: String
     var customerUUID: String? = nil
     var customerContact: String
@@ -204,6 +460,7 @@ final class TripBookingRecord {
         orderSource = form.orderSource
         travelAgencyCode = form.orderSource == "旅行社订单" ? form.travelAgencyCode : ""
         travelAgencyName = form.orderSource == "旅行社订单" ? form.travelAgencyName : ""
+        travelAgencyOrderNumber = form.orderSource == "旅行社订单" ? form.travelAgencyOrderNumber.trimmingCharacters(in: .whitespacesAndNewlines) : ""
         customerName = form.customerName
         customerUUID = form.selectedCustomerUUID
         customerContact = form.custemerConnect
@@ -247,6 +504,7 @@ final class TripBookingRecord {
         orderSource = source.orderSource
         travelAgencyCode = source.travelAgencyCode
         travelAgencyName = source.travelAgencyName
+        travelAgencyOrderNumber = source.travelAgencyOrderNumber
         customerName = source.customerName
         customerUUID = source.customerUUID
         customerContact = source.customerContact
@@ -287,6 +545,7 @@ final class TripBookingRecord {
         orderSource = form.orderSource
         travelAgencyCode = form.orderSource == "旅行社订单" ? form.travelAgencyCode : ""
         travelAgencyName = form.orderSource == "旅行社订单" ? form.travelAgencyName : ""
+        travelAgencyOrderNumber = form.orderSource == "旅行社订单" ? form.travelAgencyOrderNumber.trimmingCharacters(in: .whitespacesAndNewlines) : ""
         customerName = form.customerName
         customerUUID = form.selectedCustomerUUID
         customerContact = form.custemerConnect
@@ -347,7 +606,7 @@ struct AddTripFormView: View {
     var body: some View {
         NavigationStack {
             ZStack {
-                ScrollView {
+                AddressSuggestionScrollView {
                     VStack(spacing: 14) {
                         // ===== 模块 1：服务类型网格 =====
                         ServiceTypeSection(formData: $formData)
@@ -452,14 +711,20 @@ struct AddTripFormView: View {
             try modelContext.save()
             UserDefaults.standard.set(formData.appointmentDate.timeIntervalSince1970, forKey: "tripList.selectedDateTimestamp")
             let tripID = record.id
-            let firstDate = record.reminderDateTime
-            let secondDate = record.secondReminderDateTime
+            let firstDate = record.isCompleted || record.isCancelled ? nil : record.reminderDateTime
+            let secondDate = record.isCompleted || record.isCancelled ? nil : record.secondReminderDateTime
+            let reminderFlight = SavedFlightDisplayContext(flightNumber: record.flightInfo, flightDate: record.flightDate,
+                serviceType: record.serviceType, locationStart: record.locationStart, locationEnd: record.locationEnd,
+                snapshot: record.flightSelectionSnapshotJSON.data(using: .utf8).flatMap { try? JSONDecoder().decode(SavedFlightSelection.self, from: $0) }, canDisplay: true).selection
+            let reminderMessage = TripReminderMessage(serviceType: record.serviceType, flightNumber: record.flightInfo,
+                flight: reminderFlight, customer: record.customerName, start: record.locationStart, end: record.locationEnd,
+                appointmentDate: record.appointmentDate, appointmentTime: record.appointmentTime, locale: appLocale)
             Task {
                 await TripReminderScheduler.schedule(
                     tripID: tripID,
                     firstDate: firstDate,
                     secondDate: secondDate,
-                    locale: appLocale
+                    locale: appLocale, message: reminderMessage
                 )
             }
             dismiss()
@@ -522,24 +787,17 @@ struct ServiceTypeSection: View {
 // 模块 2 布局
 struct QuickInputSection: View {
     @Binding var formData: NewTripFormModel
+    @Environment(\.modelContext) private var context
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
-            HStack{
-                Image(systemName: "t.square")
-                Text("智能粘贴").font(.subheadline.bold())
-            }
-            VStack(spacing: 0) {
-                ZStack(alignment: .topLeading) {
-                    LimitedIMETextEditor(text: $formData.quickInputText, maxLength: 5000, fontSize: 14)
-                        .frame(minWidth: 0, maxWidth: .infinity).frame(height: 90).padding(10)
-                        .cornerRadius(10)
-                    if formData.quickInputText.isEmpty {
-                        Text("例如：明天晚上 9 点半 接机 UA123 张先生 送到市中心")
-                            .font(.system(size: 14))
-                            .foregroundStyle(.secondary).lineSpacing(5)
-                            .padding(.horizontal, 14).padding(.vertical, 16).allowsHitTesting(false)
-                            .overlay(RoundedRectangle(cornerRadius: 10).stroke(Color.primary.opacity(0.12), lineWidth: 1))
-                    }
+            Label("智能粘贴", systemImage: "t.square").font(.subheadline.bold())
+            SmartTripInput(text: $formData.quickInputText) { result in
+                let scope = DataOwnership.activeScope
+                let descriptor = FetchDescriptor<TravelAgency>(predicate: #Predicate { $0.ownerScope == scope })
+                let matches = ((try? context.fetch(descriptor)) ?? []).filter { PickupAgencyMatcher.matches($0.name) && !$0.agencyCode.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+                result.apply(to: &formData, agencyCode: matches.count == 1 ? matches.first?.agencyCode : nil)
+                if result.pickupDateTime != nil, matches.count == 1, let agency = matches.first {
+                    formData.travelAgencyName = agency.name
                 }
             }
         }
@@ -600,12 +858,22 @@ struct OrderSourceSection: View {
 
 struct TravelAgencyTripSection: View {
     @Binding var formData: NewTripFormModel
+    @Query private var agencies: [TravelAgency]
+    private var matchedAgency: TravelAgency? {
+        guard !formData.travelAgencyCode.isEmpty else { return nil }
+        let rows = agencies.filter { $0.ownerScope == DataOwnership.activeScope && $0.agencyCode == formData.travelAgencyCode }
+        return rows.count == 1 ? rows.first : nil
+    }
     @State private var isShowingAgencyPicker = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
             Label("旅行社信息", systemImage: "building.2.fill")
                 .font(.subheadline.weight(.semibold))
+            Text("旅行社订单号").font(.caption).foregroundStyle(.secondary)
+            SystemIMETextField(text: $formData.travelAgencyOrderNumber, placeholder: "输入旅行社提供的订单号", capitalization: .allCharacters, autocorrection: .no, fontSize: 14)
+                .padding(12)
+                .background(Color(.secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 12))
             Button { isShowingAgencyPicker = true } label: {
                 VStack(alignment: .leading, spacing: 10) {
                     agencyValueRow(title: "旅行社代码", value: formData.travelAgencyCode)
@@ -624,6 +892,10 @@ struct TravelAgencyTripSection: View {
                     formData.travelAgencyCode = agency.agencyCode
                     formData.travelAgencyName = agency.name
                 }
+            }
+            if let agency = matchedAgency {
+                if !agency.contactPerson.isEmpty { LabeledContent("旅行社联系人", value: agency.contactPerson) }
+                if !agency.phone.isEmpty { LabeledContent("旅行社电话", value: agency.phone) }
             }
         }
         .padding()
@@ -815,7 +1087,7 @@ struct TripDeteilSection: View {
     @State private var isShowingSuggestions = false
     @State private var suggestionTarget: AddressPickerTarget?
     @State private var suppressAutocompleteOnce = false
-    @FocusState private var focusedAddressField: AddressPickerTarget?
+    @State private var focusedAddressField: AddressPickerTarget?
     @StateObject private var locationManager = TripCurrentLocationManager()
     @State private var currentLocationTarget: AddressPickerTarget = .start
     @Query private var customers: [Custumer]
@@ -823,6 +1095,8 @@ struct TripDeteilSection: View {
     @State private var selectedAddressIndex: Int?
     @State private var isLookingUpFlight = false
     @State private var flightLookupError: String?
+    @State private var flightLookupTask: Task<Void, Never>?
+    @State private var flightTimeZoneTask: Task<Void, Never>?
     @State private var flightLookupResult: VariFlightLookupResult?
     @State private var flightCandidates: [VariFlightLookupResult] = []
     @State private var isChoosingFlight = false
@@ -973,16 +1247,21 @@ struct TripDeteilSection: View {
                 }
                 .frame(maxWidth: .infinity)
             }
-            Button(action: lookupFlight) {
-                HStack(spacing: 8) {
-                    if isLookingUpFlight { ProgressView().controlSize(.small) }
-                    else { Image(systemName: "magnifyingglass") }
-                    Text(isLookingUpFlight ? "正在查询航班" : "查询航班信息")
+            if auth.canQueryFlights {
+                Button(action: lookupFlight) {
+                    HStack(spacing: 8) {
+                        if isLookingUpFlight { ProgressView().controlSize(.small) }
+                        else { Image(systemName: "magnifyingglass") }
+                        Text(isLookingUpFlight ? "正在查询航班" : "查询航班信息")
+                    }
+                    .frame(maxWidth: .infinity)
                 }
-                .frame(maxWidth: .infinity)
+                .buttonStyle(.bordered)
+                .disabled(isLookingUpFlight || formData.flightInfo.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+            } else {
+                Text("本地版可手动填写航班信息，并查看已保存的航班资料。")
+                    .font(.footnote).foregroundStyle(.secondary)
             }
-            .buttonStyle(.bordered)
-            .disabled(isLookingUpFlight || formData.flightInfo.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
 
             if isLookingUpFlight || flightLookupError != nil || flightLookupResult != nil {
                 FlightInformationPanel(
@@ -1022,7 +1301,6 @@ struct TripDeteilSection: View {
             case .destination: value = formData.locationEnd
             }
             suggestionTarget = target
-            searcher.completions = []
             searcher.searchQuery = value
             isShowingSuggestions = !value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
         }
@@ -1055,12 +1333,17 @@ struct TripDeteilSection: View {
         navigationLabel: String
     ) -> some View {
         VStack(spacing: 4) {
-            TextField(placeholder, text: address)
-                .font(.system(size: 14))
-                .textInputAutocapitalization(.sentences)
-                .autocorrectionDisabled(false)
-                .focused($focusedAddressField, equals: target)
-                .keyboardDoneToolbar()
+            SystemIMETextField(
+                text: address, placeholder: placeholder, capitalization: .sentences,
+                autocorrection: .default, fontSize: 14,
+                isFocused: Binding(
+                    get: { focusedAddressField == target },
+                    set: { focused in
+                        if focused { focusedAddressField = target }
+                        else if focusedAddressField == target { focusedAddressField = nil }
+                    }
+                )
+            )
             .frame(minWidth: 0, maxWidth: .infinity, minHeight: 38)
 
             HStack(spacing: 8) {
@@ -1216,7 +1499,6 @@ struct TripDeteilSection: View {
     }
 
     private func addressInputDidChange(_ value: String, target: AddressPickerTarget) {
-        searcher.completions = []
         searcher.searchQuery = value
         if suppressAutocompleteOnce {
             suppressAutocompleteOnce = false
@@ -1228,16 +1510,27 @@ struct TripDeteilSection: View {
     }
 
     private func shouldShowSuggestions(for target: AddressPickerTarget) -> Bool {
-        isShowingSuggestions && suggestionTarget == target && !searcher.completions.isEmpty
+        isShowingSuggestions && focusedAddressField == target && suggestionTarget == target
     }
 
     private func addressSuggestions(for target: AddressPickerTarget) -> some View {
-        VStack(spacing: 0) {
-            ForEach(Array(searcher.completions.enumerated()), id: \.offset) { _, completion in
+        let anchor = "local-address-suggestions-" + target.id
+        return VStack(spacing: 0) {
+            if searcher.isSearching {
+                ProgressView("正在查找地址…").padding(12)
+                    .id(searcher.completions.isEmpty ? anchor : anchor + "-loading")
+            } else if searcher.errorMessage != nil {
+                Text("地址联想暂不可用，请检查网络后重试。").font(.caption).padding(12).id(anchor)
+                Button("重试") { searcher.retry() }.padding(.bottom, 8)
+            } else if searcher.completions.isEmpty {
+                Text("未找到地址，请补充城市或门牌号。").font(.caption).padding(12).id(anchor)
+            }
+            ForEach(Array(searcher.completions.prefix(5).enumerated()), id: \.offset) { index, completion in
                 Button {
                     let address = [completion.title, completion.subtitle]
                         .filter { !$0.isEmpty }
                         .joined(separator: " ")
+                    UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder), to: nil, from: nil, for: nil)
                     setAddress(address, for: target)
                     focusedAddressField = nil
                 } label: {
@@ -1264,7 +1557,8 @@ struct TripDeteilSection: View {
                     .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
-                if completion.title != searcher.completions.last?.title {
+                .id(index == min(1, searcher.completions.count - 1) ? anchor : anchor + "-row-\(index)")
+                if completion.title != searcher.completions.prefix(5).last?.title {
                     Divider().padding(.leading, 42)
                 }
             }
@@ -1273,6 +1567,7 @@ struct TripDeteilSection: View {
         .overlay(RoundedRectangle(cornerRadius: 12, style: .continuous).stroke(Color.secondary.opacity(0.15), lineWidth: 1))
         .padding(.leading, 4)
         .padding(.trailing, 4)
+        .preference(key: AddressSuggestionScrollPreference.self, value: AddressSuggestionScrollRequest(id: anchor, query: searcher.searchQuery, resultCount: searcher.completions.count, isSearching: searcher.isSearching))
     }
 
     private func setAddress(_ address: String, for target: AddressPickerTarget) {
@@ -1304,45 +1599,74 @@ struct TripDeteilSection: View {
     }
 
     private func lookupFlight() {
-        flightLookupError = nil
+        guard auth.canQueryFlights else {
+            flightLookupError = String(localized: "在线航班查询仅限云端版。", locale: AppLanguageSettings.currentLocale)
+            return
+        }
+        let normalizedNumber = formData.flightInfo.trimmingCharacters(in: .whitespacesAndNewlines).uppercased()
+        guard !normalizedNumber.isEmpty else { return }
+        let lookupDate = formData.flightdate
+        let lookupService = formData.serviceType
+        let lookupStart = formData.locationStart
+        let lookupEnd = formData.locationEnd
+        let context = flightLookupContextKey
+        flightLookupTask?.cancel()
+        flightCandidates = []
+        isChoosingFlight = false
         flightLookupResult = nil
+        flightLookupError = nil
         isLookingUpFlight = true
-        Task {
-            defer { isLookingUpFlight = false }
+        flightLookupTask = Task {
+            defer {
+                if !Task.isCancelled && context == flightLookupContextKey {
+                    isLookingUpFlight = false
+                    flightLookupTask = nil
+                }
+            }
             do {
                 let cloudAccessToken: String?
                 if auth.isCloudAccount {
                     cloudAccessToken = await auth.refreshCloudAccessToken() ?? auth.cloudAccessToken
                     guard cloudAccessToken != nil else { throw VariFlightClientError.missingCloudSession }
-                } else {
-                    cloudAccessToken = nil
-                }
+                } else { cloudAccessToken = nil }
+                guard !Task.isCancelled, context == flightLookupContextKey else { return }
                 let candidates = try await VariFlightClient().lookupCandidatesForTrip(
-                    flightNumber: formData.flightInfo,
-                    flightDate: formData.flightdate,
-                    serviceType: formData.serviceType,
-                    locationStart: formData.locationStart,
-                    locationEnd: formData.locationEnd,
+                    flightNumber: normalizedNumber,
+                    flightDate: lookupDate,
+                    serviceType: lookupService,
+                    locationStart: lookupStart,
+                    locationEnd: lookupEnd,
                     cloudAccessToken: cloudAccessToken
                 )
+                guard !Task.isCancelled, context == flightLookupContextKey else { return }
                 flightCandidates = candidates
                 if candidates.count == 1, let candidate = candidates.first,
                    !VariFlightClient.requiresExplicitFlightChoice(
-                    serviceType: formData.serviceType,
-                    locationStart: formData.locationStart,
-                    locationEnd: formData.locationEnd
+                    serviceType: lookupService,
+                    locationStart: lookupStart,
+                    locationEnd: lookupEnd
                    ) {
                     selectFlight(candidate)
                 } else {
                     isChoosingFlight = !candidates.isEmpty
                 }
             } catch {
+                guard !Task.isCancelled, context == flightLookupContextKey else { return }
                 flightLookupError = error.localizedDescription
             }
         }
     }
 
     private func invalidateFlightSelection() {
+        flightLookupTask?.cancel()
+        flightLookupTask = nil
+        flightTimeZoneTask?.cancel()
+        flightTimeZoneTask = nil
+        isLookingUpFlight = false
+        flightCandidates = []
+        isChoosingFlight = false
+        flightLookupError = nil
+
         guard !formData.flightSelectionSnapshotJSON.isEmpty ||
               flightLookupResult != nil ||
               !formData.flightDepartureTime.isEmpty ||
@@ -1370,9 +1694,18 @@ struct TripDeteilSection: View {
         formData.flightBaggageCarousel = result.baggageCarousel ?? ""
         let snapshot = SavedFlightSelection(flightNumber: formData.flightInfo, flightDate: formData.flightdate, selected: result)
         if let data = try? JSONEncoder().encode(snapshot) { formData.flightSelectionSnapshotJSON = String(decoding: data, as: UTF8.self) }
-        Task {
-            departureTimeZoneLabel = await FlightTimeZoneResolver.label(for: result.departureAirport, date: formData.flightdate) ?? ""
-            arrivalTimeZoneLabel = await FlightTimeZoneResolver.label(for: result.arrivalAirport, date: formData.flightdate) ?? ""
+        flightTimeZoneTask?.cancel()
+        let context = flightLookupContextKey
+        let selectedDate = formData.flightdate
+        departureTimeZoneLabel = ""
+        arrivalTimeZoneLabel = ""
+        flightTimeZoneTask = Task {
+            let departure = await FlightTimeZoneResolver.label(for: result.departureAirport, date: selectedDate) ?? ""
+            let arrival = await FlightTimeZoneResolver.label(for: result.arrivalAirport, date: selectedDate) ?? ""
+            guard !Task.isCancelled, context == flightLookupContextKey else { return }
+            departureTimeZoneLabel = departure
+            arrivalTimeZoneLabel = arrival
+            flightTimeZoneTask = nil
         }
     }
 }
@@ -1525,8 +1858,8 @@ private struct TripReminderSection: View {
                         onChange: { formData.reminderDateWasCustomized = true }
                     )
                     Text(LocalizedStringKey(formData.copiedReminderDefaultsToTwoHours
-                        ? "默认：接载时间前 2 小时"
-                        : "默认：接载日期前一天的同一时间"))
+                        ? "默认提前2小时；临近行程自动调整"
+                        : "默认前一天；临近行程自动调整到未来时间"))
                         .font(.caption2)
                         .foregroundStyle(.tertiary)
                 }
@@ -1553,7 +1886,7 @@ private struct TripReminderSection: View {
                             dateTime: $formData.secondReminderDateTime,
                             onChange: { formData.secondReminderDateWasCustomized = true }
                         )
-                        Text("默认：接载时间前 2 小时")
+                        Text("默认提前2小时；临近行程自动调整")
                             .font(.caption2)
                             .foregroundStyle(.tertiary)
                     }
@@ -1648,8 +1981,117 @@ private struct TripReminderSection: View {
     }
 }
 
+struct TripReminderMessage {
+    let title: String
+    let details: String
+    let pickup: Date
+    let locale: Locale
+
+    init(serviceType: String, flightNumber: String, flight: VariFlightLookupResult?, customer: String,
+         start: String, end: String, appointmentDate: Date, appointmentTime: Date, locale: Locale,
+         calendar: Calendar = .current) {
+        self.locale = locale
+        let day = calendar.dateComponents([.year, .month, .day], from: appointmentDate)
+        let clock = calendar.dateComponents([.hour, .minute], from: appointmentTime)
+        pickup = calendar.date(from: DateComponents(year: day.year, month: day.month, day: day.day, hour: clock.hour, minute: clock.minute)) ?? appointmentDate
+        func clean(_ value: String?) -> String { (value ?? "").split(whereSeparator: \.isWhitespace).joined(separator: " ") }
+        func airport(_ name: String?, _ terminal: String?) -> String {
+            let name = clean(name), terminal = clean(terminal)
+            guard !name.isEmpty else { return "" }
+            guard !terminal.isEmpty else { return name }
+            let label = terminal.allSatisfy(\.isNumber) ? "T" + terminal : terminal
+            return name + " " + label
+        }
+        let route = [airport(flight?.departureAirport, flight?.departureTerminal), airport(flight?.arrivalAirport, flight?.arrivalTerminal)]
+        let flightRoute = route.allSatisfy { !$0.isEmpty } ? route.joined(separator: " → ") : ""
+        let type = clean(serviceType)
+        title = String(localized: "行程管家", locale: locale)
+        let tripSummary = (type.isEmpty ? "" : "[" + type + "]")
+            + [clean(flightNumber).uppercased(), flightRoute].filter { !$0.isEmpty }.map { " " + $0 }.joined()
+        let formatter = DateFormatter()
+        formatter.locale = locale
+        formatter.calendar = calendar
+        formatter.timeZone = calendar.timeZone
+        formatter.dateFormat = "M/d HH:mm"
+        let addresses = [clean(start), clean(end)].filter { !$0.isEmpty }.joined(separator: " → ")
+        details = [tripSummary, formatter.string(from: pickup), clean(customer), addresses].filter { !$0.isEmpty }.joined(separator: " · ")
+    }
+
+    func body(at reminderDate: Date) -> String {
+        let minutes = Int(ceil(pickup.timeIntervalSince(reminderDate) / 60))
+        guard minutes > 0 else { return details }
+        let remaining = minutes % 60 == 0
+            ? String(localized: "距接客约 \(minutes / 60) 小时", locale: locale)
+            : String(localized: "距接客约 \(minutes) 分钟", locale: locale)
+        return details + " · " + remaining
+    }
+}
+
+extension TripReminderMessage {
+    private static func cloudDate(_ value: String) -> Date {
+        let fractional = ISO8601DateFormatter()
+        fractional.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        return fractional.date(from: value) ?? ISO8601DateFormatter().date(from: value) ?? .distantPast
+    }
+    init(booking: TripBookingRecord, locale: Locale) {
+        let snapshot = (try? JSONDecoder().decode(SavedFlightSelection.self, from: Data(booking.flightSelectionSnapshotJSON.utf8)))
+        let flight = SavedFlightDisplayContext(flightNumber: booking.flightInfo, flightDate: booking.flightDate,
+            serviceType: booking.serviceType, locationStart: booking.locationStart, locationEnd: booking.locationEnd,
+            snapshot: snapshot, canDisplay: true).selection
+        self.init(serviceType: booking.serviceType, flightNumber: booking.flightInfo, flight: flight,
+            customer: booking.customerName, start: booking.locationStart, end: booking.locationEnd,
+            appointmentDate: booking.appointmentDate, appointmentTime: booking.appointmentTime, locale: locale)
+    }
+    init(trip: CloudOnlineRepository.CloudTripRecord, locale: Locale) {
+        let flight = SavedFlightDisplayContext(flightNumber: trip.flightInfo, flightDate: Self.cloudDate(trip.flightDate),
+            serviceType: trip.serviceType, locationStart: trip.locationStart, locationEnd: trip.locationEnd,
+            snapshot: trip.flightSelectionSnapshot, canDisplay: true).selection
+        self.init(serviceType: trip.serviceType, flightNumber: trip.flightInfo, flight: flight,
+            customer: trip.customerName, start: trip.locationStart, end: trip.locationEnd,
+            appointmentDate: Self.cloudDate(trip.appointmentDate), appointmentTime: Self.cloudDate(trip.appointmentTime), locale: locale)
+    }
+}
+
 enum TripReminderScheduler {
-    static func schedule(tripID: UUID, firstDate: Date?, secondDate: Date?, locale: Locale) async {
+    static func identifiers(for tripID: UUID) -> [String] {
+        ["trip-reminder-\(tripID.uuidString)-1", "trip-reminder-\(tripID.uuidString)-2"]
+    }
+
+    static func cancel(tripID: UUID) {
+        UNUserNotificationCenter.current().removePendingNotificationRequests(withIdentifiers: identifiers(for: tripID))
+    }
+
+    /// Upgrade only existing pending notifications; never recreate disabled or delivered reminders.
+    @MainActor static func refreshPendingMessages(_ messages: [UUID: TripReminderMessage], isCurrent: @MainActor () -> Bool = { !Task.isCancelled }) async {
+        guard !messages.isEmpty else { return }
+        let center = UNUserNotificationCenter.current()
+        let requests = await center.pendingNotificationRequests()
+        guard isCurrent() else { return }
+        for request in requests {
+            guard isCurrent() else { return }
+            guard let match = messages.first(where: { identifiers(for: $0.key).contains(request.identifier) }),
+                  let date = (request.trigger as? UNCalendarNotificationTrigger)?.nextTriggerDate() ?? (request.trigger as? UNTimeIntervalNotificationTrigger)?.nextTriggerDate(), date > .now,
+                  let content = request.content.mutableCopy() as? UNMutableNotificationContent else { continue }
+            let message = match.value
+            guard content.title != message.title || content.body != message.body(at: date) else { continue }
+            content.title = message.title
+            content.body = message.body(at: date)
+            try? await center.add(UNNotificationRequest(identifier: request.identifier, content: content, trigger: request.trigger))
+        }
+    }
+
+    /// Persist an absolute instant so timezone changes and the repeated DST hour
+    /// cannot move a previously chosen reminder to a different occurrence.
+    static func trigger(for date: Date) -> UNCalendarNotificationTrigger {
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = TimeZone(secondsFromGMT: 0)!
+        var components = calendar.dateComponents([.year, .month, .day, .hour, .minute], from: date)
+        components.calendar = calendar
+        components.timeZone = calendar.timeZone
+        return UNCalendarNotificationTrigger(dateMatching: components, repeats: false)
+    }
+
+    static func schedule(tripID: UUID, firstDate: Date?, secondDate: Date?, locale: Locale, message: TripReminderMessage) async {
         let center = UNUserNotificationCenter.current()
         let firstID = "trip-reminder-\(tripID.uuidString)-1"
         let secondID = "trip-reminder-\(tripID.uuidString)-2"
@@ -1660,12 +2102,11 @@ enum TripReminderScheduler {
             guard let date, date > .now else { continue }
 
             let content = UNMutableNotificationContent()
-            content.title = String(localized: "行程提醒", locale: locale)
-            content.body = String(localized: "您有一个即将开始的行程。", locale: locale)
-            content.sound = .default
+            content.title = message.title
+            content.body = message.body(at: date)
+            content.sound = UNNotificationSound(named: UNNotificationSoundName(rawValue: "trip-reminder-chime.caf"))
 
-            let components = Calendar.current.dateComponents([.year, .month, .day, .hour, .minute], from: date)
-            let trigger = UNCalendarNotificationTrigger(dateMatching: components, repeats: false)
+            let trigger = trigger(for: date)
             do {
                 try await center.add(UNNotificationRequest(identifier: identifier, content: content, trigger: trigger))
             } catch {
@@ -1701,44 +2142,109 @@ final class TripNotificationDelegate: NSObject, UNUserNotificationCenterDelegate
 
 // MARK: - 7. 现代原生地址自动匹配引擎
 class AddressAutocompleteSearcher: NSObject, ObservableObject, MKLocalSearchCompleterDelegate {
-    @Published var searchQuery = ""
-    @Published var completions: [MKLocalSearchCompletion] = []
-    
-    private var completer = MKLocalSearchCompleter()
+    @Published var searchQuery = "" {
+        didSet {
+            guard normalized(searchQuery) != normalized(oldValue) else { return }
+            cancelCurrentRequest()
+            let query = normalized(searchQuery)
+            completions = cachedResults[query] ?? []
+            errorMessage = nil
+            isSearching = !query.isEmpty && cachedResults[query] == nil
+        }
+    }
+    @Published private(set) var completions: [MKLocalSearchCompletion] = []
+    @Published private(set) var isSearching = false
+    @Published private(set) var errorMessage: String?
+
+    private let makeCompleter: () -> MKLocalSearchCompleter
+    private var completer: MKLocalSearchCompleter?
+    private var activeQuery = ""
+    private var cachedResults: [String: [MKLocalSearchCompletion]] = [:]
+    private var region: MKCoordinateRegion?
     private var cancellable: AnyCancellable?
-    
-    override init() {
+
+    override convenience init() {
+        self.init(makeCompleter: { MKLocalSearchCompleter() })
+    }
+
+    init(makeCompleter: @escaping () -> MKLocalSearchCompleter) {
+        self.makeCompleter = makeCompleter
         super.init()
-        completer.delegate = self
-        // 限制匹配类型为：具体地址及兴趣点（如机场、酒店、火车站），完美对齐接送机业务
-        completer.resultTypes = [.address, .pointOfInterest]
-        
-        // 节流机制：防止打字太快导致高频重复向系统发起地理请求
         cancellable = $searchQuery
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .removeDuplicates()
             .debounce(for: .milliseconds(300), scheduler: RunLoop.main)
-            .sink { [weak self] query in
-                if query.isEmpty {
-                    self?.completions = []
-                } else {
-                    self?.completer.queryFragment = query
-                }
-            }
+            .sink { [weak self] query in self?.request(query) }
+    }
+
+    private func normalized(_ value: String) -> String {
+        value.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    private func cancelCurrentRequest() {
+        completer?.delegate = nil
+        completer?.cancel()
+        completer = nil
+        activeQuery = ""
+    }
+
+    private func request(_ query: String) {
+        guard query == normalized(searchQuery), !query.isEmpty else { return }
+        if let cached = cachedResults[query] {
+            completions = cached
+            isSearching = false
+            return
+        }
+        // A new completer also retries a previously cancelled identical query.
+        // Apple need not send another callback when an existing queryFragment is unchanged.
+        cancelCurrentRequest()
+        let next = makeCompleter()
+        next.delegate = self
+        next.resultTypes = [.address, .pointOfInterest]
+        if let region { next.region = region }
+        completer = next
+        activeQuery = query
+        errorMessage = nil
+        isSearching = true
+        next.queryFragment = query
+    }
+
+    func retry() {
+        let query = normalized(searchQuery)
+        guard !query.isEmpty else { return }
+        cachedResults.removeValue(forKey: query)
+        request(query)
     }
 
     func updateRegion(center: CLLocationCoordinate2D) {
-        completer.region = MKCoordinateRegion(
-            center: center,
-            latitudinalMeters: 30_000,
-            longitudinalMeters: 30_000
-        )
+        region = MKCoordinateRegion(center: center, latitudinalMeters: 30_000, longitudinalMeters: 30_000)
+        cachedResults.removeAll()
+        cancelCurrentRequest()
+        completions = []
+        request(normalized(searchQuery))
     }
-    
+
     func completerDidUpdateResults(_ completer: MKLocalSearchCompleter) {
-        DispatchQueue.main.async { self.completions = completer.results }
+        DispatchQueue.main.async {
+            guard self.completer === completer,
+                  self.activeQuery == self.normalized(self.searchQuery) else { return }
+            let results = completer.results
+            if self.cachedResults.count >= 20 { self.cachedResults.removeAll() }
+            self.cachedResults[self.activeQuery] = results
+            self.completions = results
+            self.isSearching = false
+            self.errorMessage = nil
+        }
     }
-    
+
     func completer(_ completer: MKLocalSearchCompleter, didFailWithError error: Error) {
-        print("地址自动匹配补全失败: \(error.localizedDescription)")
+        DispatchQueue.main.async {
+            guard self.completer === completer,
+                  self.activeQuery == self.normalized(self.searchQuery) else { return }
+            self.completions = []
+            self.isSearching = false
+            self.errorMessage = error.localizedDescription
+        }
     }
 }
 

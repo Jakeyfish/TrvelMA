@@ -31,12 +31,21 @@ struct WishlistView: View {
     @State private var isPresentingCloudSyncSettings = false
     @State private var isPresentingExpenseItems = false
     @State private var isPresentingPrivacyPolicy = false
+    @State private var isPresentingBuildInformation = false
     @State private var isPresentingCooperativeAgencies = false
     @State private var isPerson = false
+    @State private var showingCloudDeletion = false
     @State private var accountDeletionAlert: AccountDeletionAlert?
 
     /// The namespace used for coordinating a navigation transition.
     @Namespace private var namespace
+
+    private var appBuildInformation: String {
+        let version = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "—"
+        let build = Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String ?? "—"
+        let locale = AppLanguageSettings.currentLocale
+        return "\(String(localized: "App 版本", locale: locale))：\(version)\n\(String(localized: "构建号", locale: locale))：\(build)"
+    }
 
     private var accountEmailWidth: CGFloat {
         min(max(CGFloat(auth.currentEmail.count) * 6.2 + 16, 122), 205)
@@ -57,6 +66,12 @@ struct WishlistView: View {
         case (true, .korean): "클라우드"
         case (false, .korean): "로컬"
         }
+    }
+
+    private func accountExpiration(_ raw: String) -> Date? {
+        let formatter = ISO8601DateFormatter()
+        formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        return formatter.date(from: raw) ?? ISO8601DateFormatter().date(from: raw)
     }
 
     var body: some View {
@@ -97,6 +112,18 @@ struct WishlistView: View {
                                     .padding(.vertical, 2)
                                     .background(auth.isCloudAccount ? Color.accentColor.opacity(0.10) : Color.secondary.opacity(0.10), in: Capsule())
                                     .fixedSize()
+                                if auth.isCloudAccount, let raw = auth.serverEntitlement?.expiresAt {
+                                    TimelineView(.periodic(from: .now, by: 60)) { context in
+                                        if let end = accountExpiration(raw) {
+                                            let days = max(0, Int(ceil(end.timeIntervalSince(context.date) / 86400)))
+                                            Text(days > 0 ? AppLocalization.format("剩余 %ld 天", days) : AppLocalization.text("已到期"))
+                                                .font(.system(size: 10, weight: .semibold))
+                                                .foregroundStyle(.red)
+                                                .help(AppLocalization.format("到期：%@", end.formatted(Date.FormatStyle(date: .numeric, time: .shortened).locale(AppLanguageSettings.currentLocale))))
+                                                .accessibilityLabel(AppLocalization.format("剩余 %ld 天，到期：%@", days, end.formatted(Date.FormatStyle(date: .numeric, time: .shortened).locale(AppLanguageSettings.currentLocale))))
+                                        }
+                                    }
+                                }
                             }
 
                             HStack(spacing: 4) {
@@ -171,6 +198,20 @@ struct WishlistView: View {
                                 Label("隐私政策", systemImage: "hand.raised.fill")
                             }
 
+                            if BillingReleaseConfiguration.plansVisible {
+                                Button {
+                                    NotificationCenter.default.post(name: .requestPurchasePlans, object: nil)
+                                } label: {
+                                    Label("版本与购买", systemImage: "cart")
+                                }
+                            }
+
+                            Button {
+                                isPresentingBuildInformation = true
+                            } label: {
+                                Label("版本信息", systemImage: "info.circle")
+                            }
+
                             if auth.isCloudAccount {
                                 Button(role: .destructive) {
                                     accountDeletionAlert = .cloudLocalDataConfirmation
@@ -181,7 +222,7 @@ struct WishlistView: View {
                             }
 
                             Button(role: .destructive) {
-                                accountDeletionAlert = .confirmation
+                                if auth.isCloudAccount { showingCloudDeletion = true } else { accountDeletionAlert = .confirmation }
                             } label: {
                                 Label("删除账户", systemImage: "person.crop.circle.badge.xmark")
                             }
@@ -241,6 +282,11 @@ struct WishlistView: View {
             .sheet(isPresented: $isPresentingPrivacyPolicy) {
                 PrivacyPolicyView()
             }
+            .alert("版本信息", isPresented: $isPresentingBuildInformation) {
+                Button("关闭", role: .cancel) { }
+            } message: {
+                Text(appBuildInformation)
+            }
             .adaptiveFormPresentation(isPresented: $isPresentingCooperativeAgencies) {
                 if auth.serverEntitlement?.edition == .cloud {
                     CloudTravelAgencyDirectoryView()
@@ -248,12 +294,13 @@ struct WishlistView: View {
                     TravelAgencyListView()
                 }
             }
+            .sheet(isPresented: $showingCloudDeletion) { CloudAccountDeletionView() }
             .alert(item: $accountDeletionAlert) { alert in
                 switch alert {
                 case .confirmation:
                     Alert(
                         title: Text("确定删除账户？"),
-                        message: Text("此操作将删除此设备上的全部账户及相关本地资料，并清空登录状态和本地缓存。删除后无法恢复。当前版本未接入云端存储，因此没有云端数据可删除。"),
+                        message: Text("此操作将删除此设备上的全部账户及相关本地资料，并清空登录状态和本地缓存。删除后无法恢复。本地账号的删除不影响其他云端账号。"),
                         primaryButton: .destructive(Text("删除"), action: deleteAccount),
                         secondaryButton: .cancel(Text("取消"))
                     )
@@ -408,6 +455,7 @@ struct TripListDashboardView: View {
     @State private var completionBooking: TripBookingRecord?
     @State private var pendingCompletionBooking: TripBookingRecord?
     @State private var settlementBooking: TripBookingRecord?
+    @State private var completionErrorMessage: String?
 
     init(showsDateControls: Bool = true) {
         self.showsDateControls = showsDateControls
@@ -446,7 +494,7 @@ struct TripListDashboardView: View {
         let calendar = Calendar.current
         let today = calendar.startOfDay(for: .now)
         let query = searchText.trimmingCharacters(in: .whitespacesAndNewlines)
-        return bookings.filter { booking in
+        let filtered = bookings.filter { booking in
             let matchesStatus: Bool
             if !showsDateControls {
                 matchesStatus = !booking.isCompleted && !booking.isCancelled && calendar.startOfDay(for: booking.appointmentDate) >= today
@@ -469,9 +517,10 @@ struct TripListDashboardView: View {
             return [booking.customerName, booking.customerContact, booking.serviceType, booking.locationStart,
                     booking.locationStops.joined(separator: " "), booking.locationEnd, booking.flightInfo, booking.orderSource, booking.memo]
                 .contains { $0.localizedCaseInsensitiveContains(query) }
-        }.sorted {
-            if !calendar.isDate($0.appointmentDate, inSameDayAs: $1.appointmentDate) { return $0.appointmentDate < $1.appointmentDate }
-            return $0.appointmentTime < $1.appointmentTime
+        }
+        return TripScheduleSortKey.sorted(filtered) {
+            TripScheduleSortKey(appointmentDate: $0.appointmentDate, appointmentTime: $0.appointmentTime,
+                                createdAt: $0.createdAt, id: $0.id.uuidString, calendar: calendar)
         }
     }
 
@@ -591,6 +640,12 @@ struct TripListDashboardView: View {
                 selectedDateTimestamp = firstAvailableDate.timeIntervalSince1970
             }
         }
+        .task(id: bookings.map { $0.id }) {
+            let messages = bookings.filter { !$0.isCompleted && !$0.isCancelled }.map {
+                ($0.id, TripReminderMessage(booking: $0, locale: locale))
+            }
+            await TripReminderScheduler.refreshPendingMessages(Dictionary(uniqueKeysWithValues: messages))
+        }
         .onChange(of: datesWithBookings) { _, newDates in
             guard !showsDateControls,
                   !isShowingAllDates,
@@ -609,6 +664,14 @@ struct TripListDashboardView: View {
             pendingCompletionBooking = nil
             requestCompletion(for: booking)
         })
+        .alert("行程操作失败", isPresented: Binding(
+            get: { completionErrorMessage != nil },
+            set: { if !$0 { completionErrorMessage = nil } }
+        )) {
+            Button("确定", role: .cancel) { completionErrorMessage = nil }
+        } message: {
+            Text(completionErrorMessage ?? "")
+        }
         .completionSettlementPrompt(isPresented: Binding(
             get: { completionBooking != nil },
             set: { if !$0 { completionBooking = nil } }
@@ -630,11 +693,14 @@ struct TripListDashboardView: View {
     }
 
     private func requestCompletion(for booking: TripBookingRecord) {
-        booking.isCompleted = true
-        booking.isCancelled = false
-        booking.updatedAt = .now
-        try? modelContext.save()
-        completionBooking = booking
+        do {
+            try TripExecutionState.save(booking: booking, completed: true, cancelled: false) {
+                try modelContext.save()
+            }
+            completionBooking = booking
+        } catch {
+            completionErrorMessage = error.localizedDescription
+        }
     }
 
     private var allPendingDatesButton: some View {
@@ -846,9 +912,8 @@ struct FlightInformationPanel: View {
                 VStack(alignment: .leading, spacing: 3) {
                     Text("起飞机场").font(.caption2).foregroundStyle(.secondary)
                     Text(result.departureAirport ?? "—").font(.caption.weight(.semibold)).lineLimit(2)
-                    if let terminal = result.departureTerminal, !terminal.isEmpty {
-                        Text(String(localized: "出发航站楼 \(terminal)", locale: locale)).font(.caption2).foregroundStyle(.secondary)
-                    }
+                    Text(String(localized: "出发航站楼 \(terminalDisplay(result.departureTerminal))", locale: locale))
+                        .font(.caption2).foregroundStyle(.secondary)
                 }
                 Spacer(minLength: 4)
                 VStack(alignment: .trailing, spacing: 3) {
@@ -857,12 +922,17 @@ struct FlightInformationPanel: View {
                         .font(.caption.weight(.semibold))
                         .lineLimit(2)
                         .multilineTextAlignment(.trailing)
-                    if let terminal = result.arrivalTerminal, !terminal.isEmpty {
-                        Text(String(localized: "到达航站楼 \(terminal)", locale: locale)).font(.caption2).foregroundStyle(.secondary)
-                    }
+                    Text(String(localized: "到达航站楼 \(terminalDisplay(result.arrivalTerminal))", locale: locale))
+                        .font(.caption2).foregroundStyle(.secondary)
+                        .multilineTextAlignment(.trailing)
                 }
             }
         }
+    }
+
+    private func terminalDisplay(_ value: String?) -> String {
+        let terminal = value?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        return terminal.isEmpty ? "—" : terminal
     }
 
     private var airlineLogo: some View {
@@ -996,6 +1066,8 @@ private struct TripManagementCard: View {
     var onComplete: (TripBookingRecord) -> Void
     @State private var isShowingFinancialSettlement = false
     @State private var isShowingCancellationPrompt = false
+    @State private var executionErrorMessage: String?
+    @State private var isContactExpanded = false
     @State private var isFlightExpanded = false
     @State private var isLookingUpFlight = false
     @State private var flightLookupResult: VariFlightLookupResult?
@@ -1009,6 +1081,31 @@ private struct TripManagementCard: View {
         let day = Calendar.current.dateComponents([.year, .month, .day], from: booking.appointmentDate)
         let time = Calendar.current.dateComponents([.hour, .minute], from: booking.appointmentTime)
         return Calendar.current.date(from: DateComponents(year: day.year, month: day.month, day: day.day, hour: time.hour, minute: time.minute)) ?? booking.appointmentDate
+    }
+
+    private var savedFlightDisplayContext: SavedFlightDisplayContext {
+        SavedFlightDisplayContext(flightNumber: booking.flightInfo, flightDate: booking.flightDate,
+                                  serviceType: booking.serviceType, locationStart: booking.locationStart, locationEnd: booking.locationEnd,
+                                  snapshot: booking.flightSelectionSnapshotJSON.data(using: .utf8).flatMap { try? JSONDecoder().decode(SavedFlightSelection.self, from: $0) }, canDisplay: showsFlightActions && !booking.isCompleted && !booking.isCancelled)
+    }
+
+    private func refreshSavedFlightDisplay() {
+        let context = savedFlightDisplayContext
+        flightLookupResult = context.selection
+        flightLookupError = nil
+        flightCandidates = []
+        isChoosingFlight = false
+        departureTimeZoneLabel = ""
+        arrivalTimeZoneLabel = ""
+        guard let selection = context.selection else { return }
+        // Keep the user's expanded/collapsed choice. This reads saved data only.
+        Task {
+            let departure = await FlightTimeZoneResolver.label(for: selection.departureAirport, date: context.flightDate) ?? ""
+            let arrival = await FlightTimeZoneResolver.label(for: selection.arrivalAirport, date: context.flightDate) ?? ""
+            guard savedFlightDisplayContext == context else { return }
+            departureTimeZoneLabel = departure
+            arrivalTimeZoneLabel = arrival
+        }
     }
 
     private var hasReusableFlightSnapshot: Bool {
@@ -1032,6 +1129,7 @@ private struct TripManagementCard: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
+            HStack(alignment: .top, spacing: 0) {
             NavigationLink {
                 TripBrowseView(booking: booking)
             } label: {
@@ -1049,8 +1147,11 @@ private struct TripManagementCard: View {
                         VStack(alignment: .leading, spacing: 7) {
                             HStack(alignment: .firstTextBaseline) {
                                 Text(booking.customerName).font(.headline.weight(.bold)).lineLimit(1)
+                                    .highPriorityGesture(TapGesture().onEnded { withAnimation { isContactExpanded.toggle() } })
+                                    .accessibilityAddTraits(.isButton)
+                                    .accessibilityAction { withAnimation { isContactExpanded.toggle() } }
                                 Spacer(minLength: 6)
-                                Text(BaseCurrencyCatalog.format(booking.price, countryCode: baseCurrencyCountry))
+                                TripCardAmountText(tripID: String(describing: booking.id), value: BaseCurrencyCatalog.format(booking.price, countryCode: baseCurrencyCountry))
                                     .font(.headline.weight(.bold)).lineLimit(1).minimumScaleFactor(0.75)
                             }
                             Label(LocalizedStringKey(booking.serviceType), systemImage: serviceIcon)
@@ -1066,6 +1167,10 @@ private struct TripManagementCard: View {
                 }
             }
             .buttonStyle(.plain)
+            TripAmountVisibilityButton(tripID: String(describing: booking.id)).padding(.top, -10)
+            }
+
+            if isContactExpanded { TripPhoneActions(phones: TripPhoneContact.local(booking, context: modelContext)) }
 
             VStack(alignment: .leading, spacing: 7) {
                 routeRow(title: "起始点", value: booking.locationStart, color: .teal, isLast: false, canNavigate: !booking.isCompleted && !booking.isCancelled, icon: "mappin.and.ellipse")
@@ -1110,7 +1215,7 @@ private struct TripManagementCard: View {
                                 .foregroundStyle(Color.accentColor)
                         }
                         .buttonStyle(.plain)
-                        .disabled(isLookingUpFlight)
+                        .disabled(isLookingUpFlight || !auth.canQueryFlights)
                         .accessibilityLabel("刷新航班信息")
                     }
                     .padding(10)
@@ -1170,6 +1275,14 @@ private struct TripManagementCard: View {
                 }
             }
         }
+        .alert("行程操作失败", isPresented: Binding(
+            get: { executionErrorMessage != nil },
+            set: { if !$0 { executionErrorMessage = nil } }
+        )) {
+            Button("确定", role: .cancel) { executionErrorMessage = nil }
+        } message: {
+            Text(executionErrorMessage ?? "")
+        }
         .confirmationDialog("是否需要取消行程？", isPresented: $isShowingCancellationPrompt, titleVisibility: .visible) {
             Button("是，取消行程", role: .destructive) { setCancelled(true) }
             Button("否", role: .cancel) { }
@@ -1186,6 +1299,7 @@ private struct TripManagementCard: View {
         .background(Color(.secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 18, style: .continuous))
         .overlay(RoundedRectangle(cornerRadius: 18, style: .continuous).stroke(Color.secondary.opacity(0.15), lineWidth: 1))
         .onAppear(perform: showReusableFlightSnapshot)
+        .onChange(of: savedFlightDisplayContext) { _, _ in refreshSavedFlightDisplay() }
     }
 
     private func passengerCountLabel(_ rawCount: String) -> String {
@@ -1230,9 +1344,15 @@ private struct TripManagementCard: View {
     }
 
     private func lookupFlight(forceRefresh: Bool = false) {
+        guard auth.canQueryFlights else {
+            flightLookupError = String(localized: "在线航班查询仅限云端版。", locale: AppLanguageSettings.currentLocale)
+            return
+        }
+        guard !isLookingUpFlight else { return }
         isLookingUpFlight = true
         flightLookupError = nil
         flightCandidates = []
+        let requestContext = savedFlightDisplayContext
         Task {
             do {
                 let cloudAccessToken: String?
@@ -1241,6 +1361,10 @@ private struct TripManagementCard: View {
                     guard cloudAccessToken != nil else { throw VariFlightClientError.missingCloudSession }
                 } else {
                     cloudAccessToken = nil
+                }
+                guard requestContext == savedFlightDisplayContext else {
+                    isLookingUpFlight = false
+                    return
                 }
                 let candidates = try await VariFlightClient().lookupCandidatesForTrip(
                     flightNumber: booking.flightInfo,
@@ -1251,6 +1375,10 @@ private struct TripManagementCard: View {
                     cloudAccessToken: cloudAccessToken,
                     forceRefresh: forceRefresh
                 )
+                guard requestContext == savedFlightDisplayContext else {
+                    isLookingUpFlight = false
+                    return
+                }
                 flightCandidates = candidates
                 if candidates.count == 1, let candidate = candidates.first,
                    !VariFlightClient.requiresExplicitFlightChoice(
@@ -1264,7 +1392,9 @@ private struct TripManagementCard: View {
                     isChoosingFlight = !candidates.isEmpty
                 }
             } catch {
-                flightLookupError = error.localizedDescription
+                if requestContext == savedFlightDisplayContext {
+                    flightLookupError = error.localizedDescription
+                }
             }
             isLookingUpFlight = false
         }
@@ -1291,26 +1421,36 @@ private struct TripManagementCard: View {
     }
 
     private func selectFlight(_ result: VariFlightLookupResult) {
-        flightLookupResult = result
         let saved = SavedFlightSelection(flightNumber: booking.flightInfo, flightDate: booking.flightDate, selected: result)
-        if let data = try? JSONEncoder().encode(saved) { booking.flightSelectionSnapshotJSON = String(decoding: data, as: UTF8.self) }
-        booking.flightDepartureTime = result.departureTime
-        booking.flightEstimatedArrivalTime = result.estimatedArrivalTime
-        booking.flightArrivalTerminal = result.arrivalTerminal
-        booking.flightBaggageCarousel = result.baggageCarousel
-        booking.updatedAt = .now
-        try? modelContext.save()
-        Task {
-            departureTimeZoneLabel = await FlightTimeZoneResolver.label(for: result.departureAirport, date: booking.flightDate) ?? ""
-            arrivalTimeZoneLabel = await FlightTimeZoneResolver.label(for: result.arrivalAirport, date: booking.flightDate) ?? ""
+        do {
+            try FlightSelectionPersistence.save(booking: booking, snapshot: saved) {
+                try modelContext.save()
+            }
+            flightLookupResult = result
+            flightLookupError = nil
+            departureTimeZoneLabel = ""
+            arrivalTimeZoneLabel = ""
+            let context = savedFlightDisplayContext
+            Task {
+                let departure = await FlightTimeZoneResolver.label(for: result.departureAirport, date: context.flightDate) ?? ""
+                let arrival = await FlightTimeZoneResolver.label(for: result.arrivalAirport, date: context.flightDate) ?? ""
+                guard savedFlightDisplayContext == context else { return }
+                departureTimeZoneLabel = departure
+                arrivalTimeZoneLabel = arrival
+            }
+        } catch {
+            flightLookupError = error.localizedDescription
         }
     }
 
     private func setCancelled(_ cancelled: Bool) {
-        booking.isCancelled = cancelled
-        if cancelled { booking.isCompleted = false }
-        booking.updatedAt = .now
-        try? modelContext.save()
+        do {
+            try TripExecutionState.save(booking: booking, completed: cancelled ? false : booking.isCompleted, cancelled: cancelled) {
+                try modelContext.save()
+            }
+        } catch {
+            executionErrorMessage = error.localizedDescription
+        }
     }
 
     private var serviceIcon: String {
@@ -1423,9 +1563,8 @@ private struct ExpenseItemManagementView: View {
             List {
                 Section {
                     ForEach(expenseNames.indices, id: \.self) { index in
-                        TextField("费用名称", text: $expenseNames[index])
-                            .keyboardDoneToolbar()
-                            .nativeIMEInput()
+                        SystemIMETextField(text: $expenseNames[index], placeholder: "费用名称")
+                            .frame(minHeight: 30)
                     }
                     .onDelete(perform: deleteExpenseNames)
                 } header: {
@@ -1436,9 +1575,8 @@ private struct ExpenseItemManagementView: View {
 
                 Section("添加费用项目") {
                     HStack(spacing: 10) {
-                        TextField("输入费用名称", text: $newExpenseName)
-                            .keyboardDoneToolbar()
-                            .nativeIMEInput()
+                        SystemIMETextField(text: $newExpenseName, placeholder: "输入费用名称")
+                            .frame(minHeight: 30)
                         Button("添加", action: addExpenseName)
                             .disabled(newExpenseName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                     }
@@ -1481,6 +1619,7 @@ private struct FinancialSettlementView: View {
     @State private var expenseAdjustments: [TripExpenseAdjustment]
     @State private var expenseItemNames: [String]
     @State private var errorMessage: String?
+    @State private var invalidAmountFields: Set<String> = []
 
     private var currencySymbol: String {
         BaseCurrencyCatalog.option(for: baseCurrencyCountry).symbol
@@ -1514,16 +1653,18 @@ private struct FinancialSettlementView: View {
 
             Section("财务信息") {
                 HStack(spacing: 8) {
-                    amountField("行程费用", amount: $tripFare)
+                    amountField("行程费用", amount: $tripFare, key: "fare")
                     Spacer(minLength: 4)
-                    amountField("小费", amount: $tip)
+                    amountField("小费", amount: $tip, key: "tip")
                 }
             }
 
             Section {
-                ForEach(expenseAdjustments.indices, id: \.self) { index in
-                    expenseRow($expenseAdjustments[index]) {
-                        expenseAdjustments.remove(at: index)
+                ForEach($expenseAdjustments) { expense in
+                    let expenseID = expense.wrappedValue.id
+                    expenseRow(expense) {
+                        expenseAdjustments.removeAll { $0.id == expenseID }
+                        invalidAmountFields.remove(expenseID.uuidString)
                     }
                 }
 
@@ -1558,8 +1699,11 @@ private struct FinancialSettlementView: View {
                 Button("取消") { dismiss() }
             }
             ToolbarItem(placement: .confirmationAction) {
-                Button("保存") { saveSettlement() }
-                    .fontWeight(.semibold)
+                Button("仅保存") { saveSettlement(markPaid: false) }
+            }
+            ToolbarSpacer(.fixed, placement: .confirmationAction)
+            ToolbarItem(placement: .confirmationAction) {
+                Button("结算") { saveSettlement() }.fontWeight(.semibold)
             }
         }
         .alert("无法保存结算", isPresented: Binding(
@@ -1593,7 +1737,7 @@ private struct FinancialSettlementView: View {
         .padding(.vertical, 3)
     }
 
-    private func amountField(_ title: String, amount: Binding<Double>) -> some View {
+    private func amountField(_ title: String, amount: Binding<Double>, key: String) -> some View {
         HStack(spacing: 6) {
             Text(title)
                 .font(.headline)
@@ -1602,7 +1746,9 @@ private struct FinancialSettlementView: View {
             Text(currencySymbol)
                 .font(.headline)
                 .foregroundStyle(.secondary)
-            AmountTextField(placeholder: "0", value: amount, fontSize: 20)
+            AmountTextField(placeholder: "0", value: amount, fontSize: 20, onValidityChange: {
+                setAmountValidity($0, key: key)
+            })
                 .frame(width: 76)
         }
     }
@@ -1611,7 +1757,8 @@ private struct FinancialSettlementView: View {
         _ expense: Binding<TripExpenseAdjustment>,
         onDelete: @escaping () -> Void
     ) -> some View {
-        HStack(spacing: 8) {
+        let amountKey = expense.wrappedValue.id.uuidString
+        return HStack(spacing: 8) {
             Button {
                 expense.wrappedValue.isAddition.toggle()
             } label: {
@@ -1642,7 +1789,9 @@ private struct FinancialSettlementView: View {
             Text(currencySymbol)
                 .font(.subheadline.weight(.medium))
                 .foregroundStyle(.secondary)
-            AmountTextField(placeholder: "金额", value: expense.amount)
+            AmountTextField(placeholder: "金额", value: expense.amount, onValidityChange: {
+                setAmountValidity($0, key: amountKey)
+            })
                 .frame(width: 72)
 
             Button(role: .destructive, action: onDelete) {
@@ -1654,34 +1803,27 @@ private struct FinancialSettlementView: View {
         }
     }
 
-    private func saveSettlement() {
-        guard tripFare >= 0, tip >= 0 else {
-            errorMessage = "行程费用和小费不能小于 0。"
+    private func setAmountValidity(_ valid: Bool, key: String) {
+        if valid { invalidAmountFields.remove(key) }
+        else { invalidAmountFields.insert(key) }
+    }
+
+    private func saveSettlement(markPaid: Bool = true) {
+        let activeFields = Set(["fare", "tip"] + expenseAdjustments.map { $0.id.uuidString })
+        guard invalidAmountFields.isDisjoint(with: activeFields) else {
+            errorMessage = "请输入有效金额后再保存结算。"
             return
         }
-
-        let meaningfulItems = expenseAdjustments.filter {
-            !$0.title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || $0.amount != 0
-        }
-        guard meaningfulItems.allSatisfy({
-            !$0.title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && $0.amount > 0
-        }) else {
-            errorMessage = "请为每条费用明细填写项目名称和大于 0 的金额。"
-            return
-        }
-
-        booking.price = max(0, tripFare)
-        booking.tip = max(0, tip)
-        booking.expenseAdjustments = meaningfulItems
-        booking.isPaid = true
-        booking.updatedAt = .now
         do {
-            try modelContext.save()
+            try SettlementValidation.save(booking: booking, fare: tripFare, tip: tip, expenses: expenseAdjustments, markPaid: markPaid) {
+                try modelContext.save()
+            }
             dismiss()
         } catch {
             errorMessage = error.localizedDescription
         }
     }
+
 }
 
 private struct TripBrowseView: View {
@@ -1712,6 +1854,31 @@ private struct TripBrowseView: View {
         let day = Calendar.current.dateComponents([.year, .month, .day], from: booking.appointmentDate)
         let time = Calendar.current.dateComponents([.hour, .minute], from: booking.appointmentTime)
         return Calendar.current.date(from: DateComponents(year: day.year, month: day.month, day: day.day, hour: time.hour, minute: time.minute)) ?? booking.appointmentDate
+    }
+
+    private var savedFlightDisplayContext: SavedFlightDisplayContext {
+        SavedFlightDisplayContext(flightNumber: booking.flightInfo, flightDate: booking.flightDate,
+                                  serviceType: booking.serviceType, locationStart: booking.locationStart, locationEnd: booking.locationEnd,
+                                  snapshot: booking.flightSelectionSnapshotJSON.data(using: .utf8).flatMap { try? JSONDecoder().decode(SavedFlightSelection.self, from: $0) }, canDisplay: !booking.isCompleted && !booking.isCancelled)
+    }
+
+    private func refreshSavedFlightDisplay() {
+        let context = savedFlightDisplayContext
+        flightLookupResult = context.selection
+        flightLookupError = nil
+        flightCandidates = []
+        isChoosingFlight = false
+        departureTimeZoneLabel = ""
+        arrivalTimeZoneLabel = ""
+        guard let selection = context.selection else { return }
+        // Keep the user's expanded/collapsed choice. This reads saved data only.
+        Task {
+            let departure = await FlightTimeZoneResolver.label(for: selection.departureAirport, date: context.flightDate) ?? ""
+            let arrival = await FlightTimeZoneResolver.label(for: selection.arrivalAirport, date: context.flightDate) ?? ""
+            guard savedFlightDisplayContext == context else { return }
+            departureTimeZoneLabel = departure
+            arrivalTimeZoneLabel = arrival
+        }
     }
 
     private var hasReusableFlightSnapshot: Bool {
@@ -1788,12 +1955,14 @@ private struct TripBrowseView: View {
             Section("订单信息") {
                 LabeledContent("客户", value: valueOrFallback(booking.customerName))
                 LabeledContent("联系方式", value: valueOrFallback(booking.customerContact))
+                TripPhoneActions(phones: TripPhoneContact.local(booking, context: modelContext))
                 compactOrderDetails
                 if booking.orderSource == "旅行社订单" {
                     HStack(spacing: 12) {
                         compactDetail("旅行社代码", value: valueOrFallback(booking.travelAgencyCode))
                         compactDetail("旅行社名称", value: valueOrFallback(booking.travelAgencyName))
                     }
+                    LabeledContent("旅行社订单号", value: valueOrFallback(booking.travelAgencyOrderNumber))
                 }
             }
 
@@ -1843,7 +2012,7 @@ private struct TripBrowseView: View {
                                         .foregroundStyle(Color.accentColor)
                                 }
                                 .buttonStyle(.plain)
-                                .disabled(isLookingUpFlight)
+                                .disabled(isLookingUpFlight || !auth.canQueryFlights)
                                 .accessibilityLabel("刷新航班信息")
                             }
                             if isFlightExpanded {
@@ -1932,9 +2101,7 @@ private struct TripBrowseView: View {
                     HStack(spacing: 12) {
                         if booking.isCancelled {
                             Button("恢复行程") {
-                                booking.isCancelled = false
-                                booking.isCompleted = false
-                                saveChanges()
+                                setExecutionState(completed: false, cancelled: false)
                             }
                             .buttonStyle(.borderedProminent)
                             .tint(.accentColor)
@@ -2005,10 +2172,7 @@ private struct TripBrowseView: View {
             onSettle: { isShowingFinancialSettlement = true }
         )
         .tripCompletionConfirmationPrompt(isPresented: $isConfirmingCompletion) {
-            booking.isCompleted = true
-            booking.isCancelled = false
-            saveChanges()
-            isShowingCompletionSettlementPrompt = true
+            completeTrip()
         }
         .adaptiveFormPresentation(isPresented: $isShowingFinancialSettlement) {
             NavigationStack {
@@ -2017,9 +2181,7 @@ private struct TripBrowseView: View {
         }
         .confirmationDialog("是否需要取消行程？", isPresented: $isConfirmingCancellation, titleVisibility: .visible) {
             Button("是，取消行程", role: .destructive) {
-                booking.isCancelled = true
-                booking.isCompleted = false
-                saveChanges()
+                setExecutionState(completed: false, cancelled: true)
             }
             Button("否", role: .cancel) { }
         }
@@ -2027,12 +2189,13 @@ private struct TripBrowseView: View {
             Button("删除", role: .destructive) { deleteTrip() }
             Button("取消", role: .cancel) {}
         }
-        .alert("删除失败", isPresented: Binding(get: { errorMessage != nil }, set: { if !$0 { errorMessage = nil } })) {
+        .alert("行程操作失败", isPresented: Binding(get: { errorMessage != nil }, set: { if !$0 { errorMessage = nil } })) {
             Button("确定", role: .cancel) { errorMessage = nil }
         } message: {
             Text(errorMessage ?? "")
         }
         .onAppear(perform: showReusableFlightSnapshot)
+        .onChange(of: savedFlightDisplayContext) { _, _ in refreshSavedFlightDisplay() }
     }
 
     private func inlineFinancialDetail(_ title: String, value: String) -> some View {
@@ -2097,10 +2260,16 @@ private struct TripBrowseView: View {
     }
 
     private func lookupFlight(forceRefresh: Bool = false) {
+        guard auth.canQueryFlights else {
+            flightLookupError = String(localized: "在线航班查询仅限云端版。", locale: AppLanguageSettings.currentLocale)
+            return
+        }
+        guard !isLookingUpFlight else { return }
         guard !booking.flightInfo.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
         isLookingUpFlight = true
         flightLookupError = nil
         flightCandidates = []
+        let requestContext = savedFlightDisplayContext
         Task {
             do {
                 let cloudAccessToken: String?
@@ -2109,6 +2278,10 @@ private struct TripBrowseView: View {
                     guard cloudAccessToken != nil else { throw VariFlightClientError.missingCloudSession }
                 } else {
                     cloudAccessToken = nil
+                }
+                guard requestContext == savedFlightDisplayContext else {
+                    isLookingUpFlight = false
+                    return
                 }
                 let candidates = try await VariFlightClient().lookupCandidatesForTrip(
                     flightNumber: booking.flightInfo,
@@ -2119,6 +2292,10 @@ private struct TripBrowseView: View {
                     cloudAccessToken: cloudAccessToken,
                     forceRefresh: forceRefresh
                 )
+                guard requestContext == savedFlightDisplayContext else {
+                    isLookingUpFlight = false
+                    return
+                }
                 flightCandidates = candidates
                 if candidates.count == 1, let candidate = candidates.first,
                    !VariFlightClient.requiresExplicitFlightChoice(
@@ -2131,7 +2308,9 @@ private struct TripBrowseView: View {
                     isChoosingFlight = !candidates.isEmpty
                 }
             } catch {
-                flightLookupError = error.localizedDescription
+                if requestContext == savedFlightDisplayContext {
+                    flightLookupError = error.localizedDescription
+                }
             }
             isLookingUpFlight = false
         }
@@ -2158,19 +2337,25 @@ private struct TripBrowseView: View {
     }
 
     private func selectFlight(_ result: VariFlightLookupResult) {
-        flightLookupResult = result
         let saved = SavedFlightSelection(flightNumber: booking.flightInfo, flightDate: booking.flightDate, selected: result)
-        if let data = try? JSONEncoder().encode(saved) {
-            booking.flightSelectionSnapshotJSON = String(decoding: data, as: UTF8.self)
-        }
-        booking.flightDepartureTime = result.departureTime
-        booking.flightEstimatedArrivalTime = result.estimatedArrivalTime
-        booking.flightArrivalTerminal = result.arrivalTerminal
-        booking.flightBaggageCarousel = result.baggageCarousel
-        saveChanges()
-        Task {
-            departureTimeZoneLabel = await FlightTimeZoneResolver.label(for: result.departureAirport, date: booking.flightDate) ?? ""
-            arrivalTimeZoneLabel = await FlightTimeZoneResolver.label(for: result.arrivalAirport, date: booking.flightDate) ?? ""
+        do {
+            try FlightSelectionPersistence.save(booking: booking, snapshot: saved) {
+                try modelContext.save()
+            }
+            flightLookupResult = result
+            flightLookupError = nil
+            departureTimeZoneLabel = ""
+            arrivalTimeZoneLabel = ""
+            let context = savedFlightDisplayContext
+            Task {
+                let departure = await FlightTimeZoneResolver.label(for: result.departureAirport, date: context.flightDate) ?? ""
+                let arrival = await FlightTimeZoneResolver.label(for: result.arrivalAirport, date: context.flightDate) ?? ""
+                guard savedFlightDisplayContext == context else { return }
+                departureTimeZoneLabel = departure
+                arrivalTimeZoneLabel = arrival
+            }
+        } catch {
+            flightLookupError = error.localizedDescription
         }
     }
 
@@ -2178,10 +2363,26 @@ private struct TripBrowseView: View {
         value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? String(localized: "未填写") : value
     }
 
-    private func saveChanges() {
-        booking.updatedAt = .now
-        try? modelContext.save()
+    private func completeTrip() {
+        if setExecutionState(completed: true, cancelled: false) {
+            isShowingCompletionSettlementPrompt = true
+        }
     }
+
+    @discardableResult
+    private func setExecutionState(completed: Bool, cancelled: Bool) -> Bool {
+        do {
+            try TripExecutionState.save(booking: booking, completed: completed, cancelled: cancelled) {
+                try modelContext.save()
+            }
+            return true
+        } catch {
+            errorMessage = error.localizedDescription
+            return false
+        }
+    }
+
+
 
     private func deleteTrip() {
         SupabaseDataSync.recordDeletion(table: "trips", id: booking.id.uuidString.lowercased(), context: modelContext)

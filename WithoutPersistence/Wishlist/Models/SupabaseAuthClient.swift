@@ -121,23 +121,27 @@ enum SupabaseAuthClient {
     }
 
     static func signUp(email: String, password: String, salutation: String, phone: String) async throws -> AuthResponse {
-        try await post(path: "/auth/v1/signup", body: [
+        try await post(path: "/auth/v1/signup", queryItems: [URLQueryItem(name: "redirect_to", value: "https://trvelma.pages.dev/")], body: [
             "email": email,
             "password": password,
             "data": ["salutation": salutation, "phone": phone]
         ])
     }
 
+    static func resendSignupConfirmation(email: String) async throws {
+        let _: AuthResponse = try await post(path: "/auth/v1/resend", queryItems: [URLQueryItem(name: "redirect_to", value: "https://trvelma.pages.dev/")], body: ["type": "signup", "email": email])
+    }
+
     static func requestPasswordRecovery(email: String) async throws {
-        let url = endpoint(path: "/auth/v1/recover")
+        let url = endpoint(path: "/auth/v1/recover", queryItems: [URLQueryItem(name: "redirect_to", value: "https://trvelma.pages.dev/")])
         var request = URLRequest(url: url)
         request.timeoutInterval = requestTimeout
         request.httpMethod = "POST"
         request.setValue(publishableKey, forHTTPHeaderField: "apikey")
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.httpBody = try JSONSerialization.data(withJSONObject: ["email": email])
-        let (_, response) = try await URLSession.shared.data(for: request)
-        try validate(response)
+        let (data, response) = try await URLSession.shared.data(for: request)
+        try validate(response, data: data)
     }
 
     static func fetchAccountEntitlement(accessToken: String) async throws -> AccountEntitlementLookup {
@@ -189,6 +193,50 @@ enum SupabaseAuthClient {
         } catch {
             // A failed logout-side release must not prevent local sign-out.
         }
+    }
+
+    struct PurchaseAccount: Decodable {
+        let id: UUID
+        let email: String
+    }
+
+    static func fetchPurchaseAccount(accessToken: String) async throws -> PurchaseAccount {
+        var request = URLRequest(url: endpoint(path: "/auth/v1/user"))
+        request.timeoutInterval = requestTimeout
+        request.setValue(publishableKey, forHTTPHeaderField: "apikey")
+        request.setValue("Bearer \(accessToken)", forHTTPHeaderField: "Authorization")
+        let (data, response) = try await URLSession.shared.data(for: request)
+        try validate(response, data: data)
+        return try JSONDecoder().decode(PurchaseAccount.self, from: data)
+    }
+
+    static func verifyCloudStoreTransaction(accessToken: String, signedTransaction: String) async throws {
+        struct Result: Decodable { let recorded: Bool }
+        let result: Result = try await post(path: "/functions/v1/storekit-verify",
+            body: ["signedTransaction": signedTransaction], accessToken: accessToken)
+        guard result.recorded else {
+            throw AuthError.message(AppLocalization.text("购买签名未通过验证，没有变更权限。"))
+        }
+    }
+
+    static func deleteCloudAccount(accessToken: String, password: String) async throws {
+        struct Result: Decodable { let deleted: Bool }
+        let result: Result = try await post(path: "/functions/v1/delete-account", body: ["password": password, "confirmation": "DELETE"], accessToken: accessToken)
+        guard result.deleted else { throw AuthError.message(AppLocalization.text("服务器未确认账号删除，请稍后重试。")) }
+    }
+
+    static func readExpiredArchive(accessToken: String) async throws -> Data {
+        var request = URLRequest(url: endpoint(path: "/rest/v1/rpc/read_expired_account_archive"))
+        request.httpMethod = "POST"
+        request.timeoutInterval = requestTimeout
+        request.setValue(publishableKey, forHTTPHeaderField: "apikey")
+        request.setValue("Bearer \(accessToken)", forHTTPHeaderField: "Authorization")
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        applyAccountDeviceHeader(to: &request)
+        request.httpBody = Data("{}".utf8)
+        let (data,response) = try await URLSession.shared.data(for: request)
+        try validate(response,data:data)
+        return data
     }
 
     private static func post<T: Decodable>(path: String, queryItems: [URLQueryItem] = [], body: [String: Any], accessToken: String? = nil, includeDeviceHeader: Bool = false) async throws -> T {
@@ -244,7 +292,7 @@ enum SupabaseAuthClient {
         if lower.contains("email not confirmed") { return String(localized: "请先到邮箱完成验证，再登录云端账号。", locale: AppLanguageSettings.currentLocale) }
         if lower.contains("user already registered") { return String(localized: "该邮箱已注册，请直接登录。", locale: AppLanguageSettings.currentLocale) }
         if lower.contains("password should be at least") { return String(localized: "密码长度不足，请至少输入 6 位。", locale: AppLanguageSettings.currentLocale) }
-        if lower.contains("rate limit") { return String(localized: "操作过于频繁，请稍后再试。", locale: AppLanguageSettings.currentLocale) }
+        if lower.contains("rate limit") || lower.contains("only request this after") || lower.contains("over_email_send_rate_limit") { return String(localized: "操作过于频繁，请稍后再试。", locale: AppLanguageSettings.currentLocale) }
         return String(localized: "云端账号操作失败，请稍后重试。", locale: AppLanguageSettings.currentLocale)
     }
 

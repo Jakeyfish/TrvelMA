@@ -43,9 +43,33 @@ final class AuthViewModel {
         return entitlement.edition == .sync
     }
 
+    var canQueryFlights: Bool {
+        canUseCurrentCloudEdition && (productEdition == .cloud || productEdition == .sync)
+    }
+
     var shouldBlockCloudClient: Bool {
         isCloudAccount && entitlementLookupCompleted && !canUseCurrentCloudEdition
     }
+    /// Expired users can renew without mounting editable business views. Unknown,
+    /// revoked and unverified sessions must not be sent into a payment flow.
+    var canManageCloudPurchases: Bool {
+        isLoggedIn && isCloudAccount && entitlementLookupCompleted
+            && !entitlementLookupFailed && !requiresCloudReauthentication && !deviceLimitReached
+            && cloudAccessToken != nil && serverEntitlement != nil
+            && serverEntitlement?.status != .revoked
+    }
+    var canReadExpiredArchive: Bool {
+        guard isCloudAccount, entitlementLookupCompleted, !requiresCloudReauthentication,
+              !entitlementLookupFailed, let entitlement = serverEntitlement,
+              [.active, .grace, .expired].contains(entitlement.status),
+              entitlement.edition == .cloud || entitlement.edition == .sync,
+              let raw = entitlement.expiresAt else { return false }
+        let formatter = ISO8601DateFormatter()
+        formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        guard let end = formatter.date(from: raw) ?? ISO8601DateFormatter().date(from: raw) else { return false }
+        return end <= .now
+    }
+
     private var entitlementLoadedForEmail = ""
     private var isForegroundEntitlementCheckInProgress = false
 
@@ -64,8 +88,16 @@ final class AuthViewModel {
             requiresCloudReauthentication = true
             return nil
         }
+        let refreshingEmail = Self.normalize(currentEmail)
+        let refreshingScope = DataOwnership.activeScope
+        func isCurrentRefresh() -> Bool {
+            isCloudAccount && Self.normalize(currentEmail) == refreshingEmail
+                && DataOwnership.activeScope == refreshingScope
+                && SecureCloudSession.load(key: "auth.cloud.refreshToken") == refreshToken
+        }
         do {
             let response = try await SupabaseAuthClient.refreshSession(refreshToken: refreshToken)
+            guard isCurrentRefresh() else { return nil }
             guard let access = response.accessToken, let refresh = response.refreshToken else {
                 entitlementLogger.error("Session refresh response did not contain both tokens")
                 return nil
@@ -81,6 +113,7 @@ final class AuthViewModel {
             }
             return access
         } catch {
+            guard isCurrentRefresh() else { return nil }
             if let authError = error as? SupabaseAuthClient.AuthError,
                case let .response(statusCode, _) = authError {
                 entitlementLogger.error("Session refresh failed with HTTP status \(statusCode, privacy: .public)")
@@ -252,6 +285,57 @@ final class AuthViewModel {
         return diagnostic.domain == NSURLErrorDomain && diagnostic.code != NSURLErrorCancelled
     }
 
+    @MainActor func preparePurchaseManager() async throws -> StorePurchaseManager {
+        guard isCloudAccount else {
+            guard !BillingReleaseConfiguration.sandboxAcceptanceBuild else {
+                throw SupabaseAuthClient.AuthError.message(AppLocalization.text("此测试版本仅限开发测试账号使用。"))
+            }
+            let store = StorePurchaseManager(salesEnabled: BillingReleaseConfiguration.salesEnabled)
+            await store.load()
+            return store
+        }
+        let email = Self.normalize(currentEmail)
+        guard let token = await refreshCloudAccessToken() ?? cloudAccessToken else {
+            throw SupabaseAuthClient.AuthError.message(AppLocalization.text("请重新登录后购买或恢复购买。"))
+        }
+        let account = try await SupabaseAuthClient.fetchPurchaseAccount(accessToken: token)
+        if BillingReleaseConfiguration.sandboxAcceptanceBuild,
+           account.id != BillingReleaseConfiguration.sandboxOwnerID {
+            throw SupabaseAuthClient.AuthError.message(AppLocalization.text("此测试版本仅限开发测试账号使用。"))
+        }
+        guard isCloudAccount, Self.normalize(currentEmail) == email, Self.normalize(account.email) == email else {
+            throw SupabaseAuthClient.AuthError.message(AppLocalization.text("购买签名未通过验证，没有变更权限。"))
+        }
+        let store = StorePurchaseManager(salesEnabled: BillingReleaseConfiguration.salesEnabled, cloudVerifier: { [weak self] signed, expectedID in
+            guard let self, self.isCloudAccount, Self.normalize(self.currentEmail) == email,
+                  let token = await self.refreshCloudAccessToken() ?? self.cloudAccessToken else {
+                throw SupabaseAuthClient.AuthError.message(AppLocalization.text("购买签名未通过验证，没有变更权限。"))
+            }
+            let current = try await SupabaseAuthClient.fetchPurchaseAccount(accessToken: token)
+            guard self.isCloudAccount, Self.normalize(self.currentEmail) == email,
+                  current.id == expectedID, Self.normalize(current.email) == email else {
+                throw SupabaseAuthClient.AuthError.message(AppLocalization.text("购买签名未通过验证，没有变更权限。"))
+            }
+            try await SupabaseAuthClient.verifyCloudStoreTransaction(accessToken: token, signedTransaction: signed)
+            guard self.isCloudAccount, Self.normalize(self.currentEmail) == email else { return }
+            await self.retryServerEntitlementLookup()
+        }, cloudPurchasePreflight: { [weak self] expectedID in
+            guard let self, self.isCloudAccount, Self.normalize(self.currentEmail) == email,
+                  let token = await self.refreshCloudAccessToken() ?? self.cloudAccessToken else {
+                throw SupabaseAuthClient.AuthError.message(AppLocalization.text("请重新登录后购买或恢复购买。"))
+            }
+            let current = try await SupabaseAuthClient.fetchPurchaseAccount(accessToken: token)
+            let grant = try await SupabaseAuthClient.fetchAccountEntitlement(accessToken: token)
+            guard self.isCloudAccount, Self.normalize(self.currentEmail) == email,
+                  current.id == expectedID, Self.normalize(current.email) == email,
+                  case .granted(let entitlement) = grant, entitlement.status != .revoked else {
+                throw SupabaseAuthClient.AuthError.message(AppLocalization.text("购买签名未通过验证，没有变更权限。"))
+            }
+        })
+        await store.load(accountID: account.id)
+        return store
+    }
+
     func retryServerEntitlementLookup() async {
         entitlementLoadedForEmail = ""
         await loadServerEntitlementIfNeeded()
@@ -350,36 +434,26 @@ final class AuthViewModel {
     func registerCloud(email: String, salutation: String, phone: String, password: String) async -> String? {
         let normalizedEmail = Self.normalize(email)
         guard Self.isValidEmail(normalizedEmail) else { return Self.localized("请输入有效的邮箱地址。") }
-        guard phone.filter(\.isNumber).count >= 6 else { return Self.localized("请输入有效的手机号。") }
-        guard password.count >= 6 else { return Self.localized("密码至少需要 6 位。") }
+        guard phone.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || phone.filter(\.isNumber).count >= 6 else { return Self.localized("请输入有效的手机号。") }
+        guard password.count >= 8 else { return Self.localized("密码至少需要 8 位。") }
         do {
-            let response = try await SupabaseAuthClient.signUp(
+            _ = try await SupabaseAuthClient.signUp(
                 email: normalizedEmail,
                 password: password,
                 salutation: salutation.trimmingCharacters(in: .whitespacesAndNewlines),
                 phone: phone
             )
-            guard let accessToken = response.accessToken, let refreshToken = response.refreshToken else {
-                return Self.localized("注册成功。请先到邮箱完成验证，再返回登录。")
-            }
-            let accessSaved = SecureCloudSession.save(accessToken, key: "auth.cloud.accessToken")
-            let refreshSaved = SecureCloudSession.save(refreshToken, key: "auth.cloud.refreshToken")
-            guard accessSaved && refreshSaved else {
-                SecureCloudSession.delete(key: "auth.cloud.accessToken")
-                SecureCloudSession.delete(key: "auth.cloud.refreshToken")
-                return Self.localized("账号已创建，但无法在此设备安全保存登录状态。请重新登录。")
-            }
-            currentEmail = response.user?.email ?? normalizedEmail
-            currentSalutation = response.user?.userMetadata?.salutation ?? ""
-            currentPhone = response.user?.userMetadata?.phone ?? phone
-            DataOwnership.activateCloud(email: currentEmail)
-            isCloudAccount = true
-            isLoggedIn = true
-            saveSession(for: currentEmail, salutation: currentSalutation, phone: currentPhone, isCloud: true)
-            return nil
+            return Self.localized("注册成功。请先到邮箱完成验证，再返回登录。")
         } catch {
             return Self.cloudErrorMessage(error)
         }
+    }
+
+    func resendCloudVerification(email: String) async -> String? {
+        let email = Self.normalize(email)
+        guard Self.isValidEmail(email) else { return Self.localized("请输入有效的邮箱地址。") }
+        do { try await SupabaseAuthClient.resendSignupConfirmation(email: email); return nil }
+        catch { return Self.cloudErrorMessage(error) }
     }
 
     func sendCloudPasswordRecovery(email: String) async -> String? {
@@ -447,8 +521,10 @@ final class AuthViewModel {
 
     func logout() {
         if isCloudAccount, let accessToken = SecureCloudSession.load(key: "auth.cloud.accessToken") {
-            Task { await Self.remoteLogout(accessToken: accessToken) }
-            Task { await SupabaseAuthClient.releaseCurrentDevice(accessToken: accessToken) }
+            Task {
+                await SupabaseAuthClient.releaseCurrentDevice(accessToken: accessToken)
+                await Self.remoteLogout(accessToken: accessToken)
+            }
         }
         isLoggedIn = false
         currentEmail = ""
@@ -639,7 +715,9 @@ final class AuthViewModel {
     }
 
     private static func remoteLogout(accessToken: String) async {
-        var request = URLRequest(url: SupabaseAuthClient.endpoint(path: "/auth/v1/logout"))
+        var request = URLRequest(url: SupabaseAuthClient.endpoint(
+            path: "/auth/v1/logout", queryItems: [URLQueryItem(name: "scope", value: "local")]
+        ))
         request.httpMethod = "POST"
         request.setValue(SupabaseAuthClient.publishableKey, forHTTPHeaderField: "apikey")
         request.setValue("Bearer \(accessToken)", forHTTPHeaderField: "Authorization")

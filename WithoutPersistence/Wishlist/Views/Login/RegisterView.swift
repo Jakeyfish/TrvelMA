@@ -6,7 +6,7 @@ struct RegisterView: View {
     @Environment(AuthViewModel.self) private var auth
     @Environment(\.modelContext) private var modelContext
     @Environment(\.dismiss) private var dismiss
-    @AppStorage("auth.accountMode.cloud") private var useCloudAccount = false
+    @AppStorage("auth.accountMode.cloud") private var useCloudAccount = true
 
     @State private var email = ""
     @State private var salutation = ""
@@ -34,7 +34,7 @@ struct RegisterView: View {
                         .autocorrectionDisabled()
                     SystemIMETextField(
                         text: $phone,
-                        placeholder: "手机号",
+                        placeholder: useCloudAccount ? "手机号（选填）" : "手机号",
                         keyboardType: .phonePad,
                         textContentType: .telephoneNumber
                     )
@@ -43,7 +43,7 @@ struct RegisterView: View {
                 Section {
                     passwordField(title: "密码", value: $password)
                     passwordField(title: "检验密码", value: $confirmPassword)
-                    HStack {
+                    if !useCloudAccount { HStack {
                         SystemIMETextField(
                             text: $verificationCode,
                             placeholder: "验证码",
@@ -59,6 +59,10 @@ struct RegisterView: View {
                         } label: {
                             Text(LocalizedStringKey(codeRequested ? "重新获取" : "获取验证码"))
                         }
+                    } }
+                    if useCloudAccount {
+                        Text("注册后请到邮箱点击验证链接，再返回登录。邮箱验证完成后可试用云端版 14 天，最多 4 台设备。")
+                            .font(.footnote).foregroundStyle(.secondary)
                     }
                 }
 
@@ -68,7 +72,7 @@ struct RegisterView: View {
                             .font(.footnote)
                             .foregroundStyle(isError ? Color.red : Color.secondary)
                     }
-                } else if isShowingCodeNotice {
+                } else if isShowingCodeNotice && !useCloudAccount {
                     Section {
                         Text(String(format: String(localized: "演示模式验证码：%@（尚未接入短信/邮件发送）", locale: AppLanguageSettings.currentLocale), locale: AppLanguageSettings.currentLocale, arguments: [auth.demoVerificationCode]))
                             .font(.footnote)
@@ -77,6 +81,17 @@ struct RegisterView: View {
                 }
 
                 Section {
+                    if useCloudAccount {
+                        Button("重发验证邮件") {
+                            isSubmitting = true
+                            Task {
+                                let error = await auth.resendCloudVerification(email: email)
+                                isError = error != nil
+                                message = error ?? "如果该邮箱需要验证，将收到验证邮件。请留意垃圾邮件，勿频繁重发。"
+                                isSubmitting = false
+                            }
+                        }.disabled(isSubmitting)
+                    }
                     Button("提交") { submit() }
                         .frame(maxWidth: .infinity, alignment: .center)
                         .disabled(isSubmitting)

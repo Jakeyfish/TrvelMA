@@ -48,7 +48,7 @@ struct ContentView: View {
                 WalletView()
                     .toolbar(UIDevice.current.userInterfaceIdiom == .pad ? .hidden : .visible, for: .tabBar)
                     .tabItem {
-                        tabLabel("钱包", systemImage: "wallet.bifold.fill")
+                        tabLabel("财务", systemImage: "wallet.bifold.fill")
                     }
                     .tag(MainTab.wallet)
 
@@ -113,7 +113,7 @@ struct ContentView: View {
         case .home: title = "主页"
         case .trips: title = "行程"
         case .card: title = "名片"
-        case .wallet: title = "钱包"
+        case .wallet: title = "财务"
         case .customers: title = "客户"
         }
         return localizedTabTitle(title)
@@ -137,7 +137,7 @@ struct ContentView: View {
             case "主页": localizedTitle = "主頁"
             case "行程": localizedTitle = "行程"
             case "名片": localizedTitle = "名片"
-            case "钱包": localizedTitle = "錢包"
+            case "财务": localizedTitle = "財務"
             case "客户": localizedTitle = "客戶"
             default: localizedTitle = title
             }
@@ -145,8 +145,8 @@ struct ContentView: View {
             switch title {
             case "主页": localizedTitle = "Home"
             case "行程": localizedTitle = "Trips"
-            case "名片": localizedTitle = "Contacts"
-            case "钱包": localizedTitle = "Wallet"
+            case "名片": localizedTitle = "Business Card"
+            case "财务": localizedTitle = "Finance"
             case "客户": localizedTitle = "Customers"
             default: localizedTitle = title
             }
@@ -154,8 +154,8 @@ struct ContentView: View {
             switch title {
             case "主页": localizedTitle = "Inicio"
             case "行程": localizedTitle = "Viajes"
-            case "名片": localizedTitle = "Contactos"
-            case "钱包": localizedTitle = "Cartera"
+            case "名片": localizedTitle = "Tarjeta de presentación"
+            case "财务": localizedTitle = "Finanzas"
             case "客户": localizedTitle = "Clientes"
             default: localizedTitle = title
             }
@@ -163,8 +163,8 @@ struct ContentView: View {
             switch title {
             case "主页": localizedTitle = "ホーム"
             case "行程": localizedTitle = "旅行"
-            case "名片": localizedTitle = "連絡先"
-            case "钱包": localizedTitle = "ウォレット"
+            case "名片": localizedTitle = "名刺"
+            case "财务": localizedTitle = "財務"
             case "客户": localizedTitle = "顧客"
             default: localizedTitle = title
             }
@@ -172,8 +172,8 @@ struct ContentView: View {
             switch title {
             case "主页": localizedTitle = "홈"
             case "行程": localizedTitle = "여행"
-            case "名片": localizedTitle = "연락처"
-            case "钱包": localizedTitle = "지갑"
+            case "名片": localizedTitle = "명함"
+            case "财务": localizedTitle = "재무"
             case "客户": localizedTitle = "고객"
             default: localizedTitle = title
             }
@@ -358,6 +358,7 @@ private struct CustomerBrowseView: View {
     let customer: CustomerProfileSnapshot
     private let registryCustomerID: String
     private let registryOwnerScope: String
+    @State private var isShowingEditor = false
     @State private var isConfirmingDelete = false
     @State private var errorMessage: String?
 
@@ -527,15 +528,16 @@ private struct CustomerBrowseView: View {
                     .font(.system(size: 11, weight: .semibold))
             }
         }
+        .sheet(isPresented: $isShowingEditor) {
+            NavigationStack { CustomerDetailView(profile: currentCustomer) }
+        }
         .navigationTitle("客户资料")
         .navigationBarTitleDisplayMode(.inline)
         .toolbar(.visible, for: .navigationBar)
         .toolbar {
             if !hasPendingRemoteDeletion {
                 ToolbarItem(placement: .topBarTrailing) {
-                    NavigationLink {
-                        CustomerDetailView(profile: currentCustomer)
-                    } label: {
+                    Button { isShowingEditor = true } label: {
                         Label("编辑", systemImage: "pencil")
                     }
                 }
@@ -1206,10 +1208,59 @@ private struct AddressDraft: Identifiable {
     var isDefault: Bool = false
 }
 
+struct AddressSuggestionScrollRequest: Equatable {
+    let id: String
+    let query: String
+    let resultCount: Int
+    let isSearching: Bool
+}
+
+struct AddressSuggestionScrollPreference: PreferenceKey {
+    static let defaultValue: AddressSuggestionScrollRequest? = nil
+    static func reduce(value: inout AddressSuggestionScrollRequest?, nextValue: () -> AddressSuggestionScrollRequest?) {
+        if let next = nextValue() { value = next }
+    }
+}
+
+/// Keep the first two address suggestions above tall and third-party keyboards.
+/// The target is a row, not the entire results panel, so the text field stays visible.
+struct AddressSuggestionScrollView<Content: View>: View {
+    private let content: Content
+    @State private var request: AddressSuggestionScrollRequest?
+    @State private var keyboardVisible = false
+
+    init(@ViewBuilder content: () -> Content) { self.content = content() }
+
+    var body: some View {
+        ScrollViewReader { proxy in
+            ScrollView { content }
+                .safeAreaInset(edge: .bottom, spacing: 0) {
+                    if keyboardVisible && request != nil {
+                        Color.clear.frame(height: 44).allowsHitTesting(false)
+                    }
+                }
+                .scrollDismissesKeyboard(.never)
+                .onPreferenceChange(AddressSuggestionScrollPreference.self) { next in
+                    request = next
+                    guard keyboardVisible, let next else { return }
+                    withAnimation(.easeOut(duration: 0.2)) { proxy.scrollTo(next.id, anchor: .bottom) }
+                }
+                .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardDidChangeFrameNotification)) { notification in
+                    guard let frame = notification.userInfo?[UIResponder.keyboardFrameEndUserInfoKey] as? CGRect else { return }
+                    keyboardVisible = frame.minY < UIScreen.main.bounds.maxY
+                    guard keyboardVisible, let request else { return }
+                    withAnimation(.easeOut(duration: 0.2)) { proxy.scrollTo(request.id, anchor: .bottom) }
+                }
+                .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardDidHideNotification)) { _ in keyboardVisible = false }
+        }
+    }
+}
+
 struct AddressSuggestionField: View {
     @Binding var text: String
     @ObservedObject var searcher: AddressAutocompleteSearcher
-    @FocusState private var isFocused: Bool
+    @State private var isFocused = false
+    @State private var suggestionAnchor = UUID().uuidString
     var placeholder = "输入地址，可搜索地点"
     let isActive: Bool
     let onFocus: () -> Void
@@ -1233,20 +1284,34 @@ struct AddressSuggestionField: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
-            TextField(placeholder, text: $text)
-                .textInputAutocapitalization(.sentences)
-                .autocorrectionDisabled(false)
-                .focused($isFocused)
-                .keyboardDoneToolbar()
+            SystemIMETextField(text: $text, placeholder: placeholder, isFocused: $isFocused)
                 .frame(minWidth: 0, maxWidth: .infinity, alignment: .leading)
-                .onChange(of: text) { _, value in
-                    searcher.searchQuery = value
+                .onChange(of: isFocused) { _, focused in
+                    guard focused else { return }
                     onFocus()
+                    searcher.searchQuery = text
                 }
-            if isActive && !searcher.completions.isEmpty {
-                ForEach(Array(searcher.completions.prefix(5)), id: \.self) { completion in
+                .onChange(of: text) { _, value in
+                    guard isFocused else { return }
+                    onFocus()
+                    searcher.searchQuery = value
+                }
+            if isActive && isFocused {
+                if searcher.isSearching {
+                    ProgressView("正在查找地址…").padding(.vertical, 8)
+                        .id(searcher.completions.isEmpty ? suggestionAnchor : suggestionAnchor + "-loading")
+                } else if searcher.errorMessage != nil {
+                    Text("地址联想暂不可用，请检查网络后重试。").font(.caption).id(suggestionAnchor)
+                    Button("重试") { searcher.retry() }
+                } else if searcher.completions.isEmpty {
+                    Text("未找到地址，请补充城市或门牌号。").font(.caption).id(suggestionAnchor)
+                }
+                ForEach(Array(searcher.completions.prefix(5).enumerated()), id: \.offset) { index, completion in
                     Button {
                         let value = [completion.title, completion.subtitle].filter { !$0.isEmpty }.joined(separator: ", ")
+                        // Commit any native composition before replacing the value.
+                        UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder), to: nil, from: nil, for: nil)
+                        isFocused = false
                         onSelect(value)
                     } label: {
                         VStack(alignment: .leading, spacing: 2) {
@@ -1255,12 +1320,16 @@ struct AddressSuggestionField: View {
                         }
                         .frame(maxWidth: .infinity, alignment: .leading)
                         .padding(.vertical, 6)
+                        .frame(minHeight: 44)
+                        .contentShape(Rectangle())
                     }
                     .buttonStyle(.plain)
+                    .id(index == min(1, searcher.completions.count - 1) ? suggestionAnchor : suggestionAnchor + "-row-\(index)")
                 }
             }
         }
         .frame(minWidth: 0, maxWidth: .infinity, alignment: .leading)
+        .preference(key: AddressSuggestionScrollPreference.self, value: isActive && isFocused ? AddressSuggestionScrollRequest(id: suggestionAnchor, query: searcher.searchQuery, resultCount: searcher.completions.count, isSearching: searcher.isSearching) : nil)
     }
 }
 

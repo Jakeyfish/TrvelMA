@@ -1,0 +1,118 @@
+{
+  "status": "metadata-and-148-storefront-availability-saved-not-submitted-for-review",
+  "subscription_group_id": "22545785",
+  "group_localizations": {
+    "zh-Hans": "云端版",
+    "zh-Hant": "雲端版",
+    "en-US": "Cloud Edition",
+    "ja": "クラウド版",
+    "ko": "클라우드 버전",
+    "es-ES": "Edición en la nube"
+  },
+  "products": {
+    "local": {
+      "product_id": "com.yunshengtech.travelmanager.local.lifetime",
+      "apple_id": "6830699358",
+      "us_price": "29.99",
+      "localizations": {
+        "zh-Hans": {
+          "name": "本地版买断",
+          "description": "一次购买，管理本机行程、客户和财务。不含云端同步及在线航班查询。"
+        },
+        "zh-Hant": {
+          "name": "本地版買斷",
+          "description": "一次購買，管理本機行程、客戶和財務。不含雲端同步及線上航班查詢。"
+        },
+        "en-US": {
+          "name": "Local Lifetime",
+          "description": "One-time local access. No cloud sync or flight lookup."
+        },
+        "ja": {
+          "name": "端末版（買い切り）",
+          "description": "一度の購入で端末内の行程・顧客・会計を管理。クラウド同期とオンライン便検索は含みません。"
+        },
+        "ko": {
+          "name": "로컬 영구 이용",
+          "description": "한 번 구매로 기기 내 일정·고객·재무 관리. 클라우드 동기화·온라인 항공편 조회 제외."
+        },
+        "es-ES": {
+          "name": "Edición local permanente",
+          "description": "Pago único. Sin nube ni consulta de vuelos."
+        }
+      }
+    },
+    "monthly": {
+      "product_id": "com.yunshengtech.travelmanager.cloud.monthly",
+      "apple_id": "6830703150",
+      "us_price": "9.99",
+      "localizations": {
+        "zh-Hans": {
+          "name": "云端版月付",
+          "description": "每月自动续订。云端同步、在线航班查询，最多4台设备。"
+        },
+        "zh-Hant": {
+          "name": "雲端版月付",
+          "description": "每月自動續訂。雲端同步、線上航班查詢，最多4台裝置。"
+        },
+        "en-US": {
+          "name": "Cloud Monthly",
+          "description": "Auto-renews monthly. Sync & flights, up to 4 devices."
+        },
+        "ja": {
+          "name": "クラウド版（月額）",
+          "description": "毎月自動更新。クラウド同期とオンライン便検索。最大4台の端末。"
+        },
+        "ko": {
+          "name": "클라우드 월간",
+          "description": "매월 자동 갱신. 클라우드 동기화와 항공편 조회, 최대 4대 기기."
+        },
+        "es-ES": {
+          "name": "Nube mensual",
+          "description": "Renovación mensual. Nube y vuelos, hasta 4 equipos."
+        }
+      }
+    },
+    "yearly": {
+      "product_id": "com.yunshengtech.travelmanager.cloud.yearly",
+      "apple_id": "6830703130",
+      "us_price": "99.99",
+      "localizations": {
+        "zh-Hans": {
+          "name": "云端版年付",
+          "description": "每年自动续订。云端同步、在线航班查询，最多4台设备。"
+        },
+        "zh-Hant": {
+          "name": "雲端版年付",
+          "description": "每年自動續訂。雲端同步、線上航班查詢，最多4台裝置。"
+        },
+        "en-US": {
+          "name": "Cloud Yearly",
+          "description": "Auto-renews yearly. Sync & flights, up to 4 devices."
+        },
+        "ja": {
+          "name": "クラウド版（年額）",
+          "description": "毎年自動更新。クラウド同期とオンライン便検索。最大4台の端末。"
+        },
+        "ko": {
+          "name": "클라우드 연간",
+          "description": "매년 자동 갱신. 클라우드 동기화와 항공편 조회, 최대 4대 기기."
+        },
+        "es-ES": {
+          "name": "Nube anual",
+          "description": "Renovación anual. Nube y vuelos, hasta 4 equipos."
+        }
+      }
+    }
+  },
+  "availability_policy": "Match existing app storefronts; do not expand regions. Annual installment option remains disabled.",
+  "family_sharing": false,
+  "subscription_multi_seat": false,
+  "verified_product_locale_counts": {
+    "local": 6,
+    "monthly": 6,
+    "yearly": 6
+  },
+  "verified_group_locale_count": 6,
+  "verified_storefront_count": 148,
+  "paid_apps_agreement_status": "active"
+}
