@@ -1,4 +1,8 @@
-# Billing 1.1 Apple draft status
+# Billing 1.1 Apple 操作历史
+
+当前状态以 [1.1发布状态](billing-1.1-current-status.md) 为准。以下保留按时间累积的历史记录；旧段落的待办、测试数量和部署状态不是当前结论。
+
+## 早期商品准备记录
 
 Production billing remains disabled. No backend deployment. Stable 1.0(11) review unchanged.
 

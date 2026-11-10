@@ -1,19 +1,17 @@
-# StoreKit 本地准备与验证
+# StoreKit 本地验证
 
-TrvelMA.storekit包含本地买断、同组月付/年付三个本地商品。它在App源码目录外，不随生产App打包，未改变用户的运行方案。
+当前整体状态见 [1.1发布状态](../docs/billing-1.1-current-status.md)，历史Apple配置不以本文作为在线状态证明。
 
-客户端基础已实现：StorePurchaseManager加载商品、处理购买状态、currentEntitlements、恢复及交易更新；PurchasePlansView为准备界面，未接正式导航。默认salesEnabled=false；云端验证闭包默认nil，没有可由用户设置打开生产销售的开关。
+`TrvelMA.storekit` 包含本地非消耗型买断及同组月付/年付商品，仅供隔离测试，不随生产App打包。界面价格使用StoreKit本地化价格。默认正式销售及普通购买入口关闭；只有明确的Debug沙盒构建和开发账号可使用真实沙盒入口。
 
-2026-11-02在独立StoreKitQA模拟器宿主通过5项Xcode本地交易测试：
+2026-11-10最近一次本地StoreKit测试16项通过，覆盖本地购买/恢复/退款、重复买断阻止、全新管理器恢复不赋予云端权限、待批准、云端服务端验证前置检查、原未完成交易重试、付款前/验签中账号切换及错误账号拒绝。2026-11-02的5项是早期历史结果。
 
-1. 本地买断、恢复及退款后撤销。
-2. 缺少服务端验证器时拒绝云端购买。
-3. 客户端本地购买流程。
-4. 待批准期间不发权益，批准后恢复。
-5. 云端恢复检查账号与已验证交易ID，错误账号拒绝。
+从仓库根目录运行：
 
-测试夹具每例resetToDefaultState，防止Ask to Buy状态跨例残留。Transaction.updates与显式恢复可能重复送达同一交易；断言交易身份和账号，不把回调必须只一次当作协议保证。未来服务端必须按transactionID幂等，不能重复发权益。
+```sh
+python3 WithoutPersistence/scripts/verify-sync-regressions.py --storekit
+```
 
-运行：`python3 WithoutPersistence/scripts/verify-sync-regressions.py --storekit`（仓库根目录，需模拟器及Xcode）。测试使用独立宿主及本地假交易，不改用户App内的真实购买。
+测试需要Xcode与已启动的iOS模拟器，使用隔离宿主和本地假交易，不修改用户App真实购买。共享模拟器的回归串行运行。每例重置SKTestSession；重复送达按交易身份和账号验证，不要求回调恰好一次。
 
-尚未完成：App Store Connect正式商品与App Apple ID、真实Sandbox、服务器JWS验证/持久权益、服务器通知、真实退款续费宽限期/跨平台权益、正式销售入口及用户迁移授权门槛。通过上述本地测试不等于支付已经上线。正式销售保持关闭。
+Apple商品已建档，沙盒验签后端已部署，但真实原交易重试、Apple通知、跨设备授权、旧用户迁移和收费门禁仍未全部闭环。不能将16项本地通过报告为真实Sandbox或生产收费通过。

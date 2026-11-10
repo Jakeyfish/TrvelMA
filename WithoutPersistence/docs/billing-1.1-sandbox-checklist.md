@@ -1,6 +1,6 @@
 # Billing 1.1 Sandbox release gate
 
-Production remains disabled until all gates pass. Preserve stable 1.0(11).
+Current status: [1.1 release status](billing-1.1-current-status.md). The items below are release requirements, not a list of completed tests. Production remains disabled until all gates pass. Preserve the published 1.0 and submitted 1.0.1(13).
 
 - Apple agreement active (bank available and tax in use are already verified).
 - Three product IDs match StoreProductCatalog; monthly/yearly same service level.
