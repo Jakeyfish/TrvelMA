@@ -1,0 +1,91 @@
+{
+  "status": "draft-not-applied",
+  "app_id": "6830031504",
+  "prepared_date": "2026-11-10",
+  "keywords_selection": "qualitative relevance hypotheses; no measured volume or rank data",
+  "localizations": {
+    "zh-Hans": {
+      "name": "云盛行程管家－接送机与司机订单管理",
+      "subtitle": "客户资料、航班查询、费用结算与旅行社对账",
+      "keywords": "包车,预约,机场,记账,收入,支出,提醒,停车费,小费",
+      "promotional_text": "把接送机订单、客户资料和费用明细集中管理。查看航班资料、设置行程提醒，并为旅行社未结算订单生成对账单。",
+      "description_opening": "面向接送机司机与小型接待业务：安排客人和接载时间，保存客户联系方式、航班资料与费用明细。记录收入支出，整理旅行社订单和对账单。在线航班查询及多设备访问需要有效云端权限。",
+      "screenshot_headlines": [
+        "每天接送，一眼看清",
+        "客人资料，随单查看",
+        "费用收支，算清净收入",
+        "旅行社订单，集中对账"
+      ]
+    },
+    "zh-Hant": {
+      "name": "雲盛行程管家－接送機與司機訂單管理",
+      "subtitle": "客戶資料、航班查詢、費用結算與旅行社對帳",
+      "keywords": "包車,預約,機場,記帳,收入,支出,提醒,停車費,小費",
+      "promotional_text": "集中管理接送機訂單、客戶資料和費用明細。查看航班資料、設定行程提醒，並為旅行社未結算訂單產生對帳單。",
+      "description_opening": "為接送機司機及小型接待業務整理預約、接載時間、客戶聯絡方式、航班資料與費用。記錄收支，管理旅行社訂單與對帳單。線上航班查詢及跨裝置存取需有效雲端權限。",
+      "screenshot_headlines": [
+        "每日接送，一眼看清",
+        "客戶資料，隨單查看",
+        "費用收支，算清淨收入",
+        "旅行社訂單，集中對帳"
+      ]
+    },
+    "en-US": {
+      "name": "Yunsheng: Driver Trip Manager",
+      "subtitle": "Clients, Flights & Expenses",
+      "keywords": "chauffeur,airport,transfer,pickup,dropoff,booking,reminder,statement,income,tips,parking",
+      "promotional_text": "Plan airport transfers, organize customer details, and track trip income and expenses. Prepare travel-agency statements for reconciliation.",
+      "description_opening": "For airport transfer drivers and small transport businesses: organize bookings, pickup times, customer contacts, flight details and trip finances. Record fares, tips and expenses, and prepare travel-agency statements. Online flight lookup and multi-device access require eligible cloud access.",
+      "screenshot_headlines": [
+        "Your daily transfers at a glance",
+        "Customer contacts with each trip",
+        "See income after trip expenses",
+        "Reconcile travel-agency bookings"
+      ]
+    },
+    "es-ES": {
+      "name": "Yunsheng: Agenda de conductor",
+      "subtitle": "Clientes, vuelos y gastos",
+      "keywords": "aeropuerto,traslado,reserva,recogida,recordatorio,ingresos,propina,estacionamiento,cuentas",
+      "promotional_text": "Organiza traslados al aeropuerto, datos de clientes e ingresos y gastos. Prepara estados de cuenta para agencias de viajes.",
+      "description_opening": "Para conductores de traslados al aeropuerto y pequeños negocios: organiza reservas, horarios, contactos, datos de vuelos e ingresos y gastos. Prepara estados de cuenta para agencias de viajes. La consulta de vuelos y el acceso entre dispositivos requieren acceso a la nube vigente.",
+      "screenshot_headlines": [
+        "Tus traslados de un vistazo",
+        "Contactos en cada servicio",
+        "Ingresos después de gastos",
+        "Cuentas para agencias de viajes"
+      ]
+    },
+    "ja": {
+      "name": "雲盛行程管家－送迎・予約管理",
+      "subtitle": "顧客情報・フライト検索・収支・旅行会社精算",
+      "keywords": "空港,運転手,料金,貸切,予定,通知,駐車代,チップ,明細",
+      "promotional_text": "空港送迎の予約、顧客情報、収支をまとめて管理。フライト情報の確認、予定の通知、旅行会社向け精算明細の作成に対応。",
+      "description_opening": "空港送迎の運転手と小規模な送迎事業向けに、予約、送迎時刻、顧客の連絡先、フライト情報、収支を整理します。運賃、チップ、経費を記録し、旅行会社向け精算明細を作成できます。オンライン便検索と複数端末からのアクセスには有効なクラウド利用権が必要です。",
+      "screenshot_headlines": [
+        "毎日の送迎をひと目で確認",
+        "顧客の連絡先を予約と一緒に",
+        "経費を引いた収入を確認",
+        "旅行会社の予約をまとめて精算"
+      ]
+    },
+    "ko": {
+      "name": "Yunsheng 기사 일정·수입 관리",
+      "subtitle": "고객 정보·항공편 조회·비용 정산",
+      "keywords": "공항,픽업,샌딩,예약,알림,주차비,팁,여행사,명세서",
+      "promotional_text": "공항 픽업 예약, 고객 정보와 수입·지출을 한곳에서 관리하세요. 항공편 정보 확인, 일정 알림, 여행사 정산 명세서 작성을 지원합니다.",
+      "description_opening": "공항 픽업 기사와 소규모 운송 사업자를 위해 예약, 픽업 시간, 고객 연락처, 항공편 정보와 수입·지출을 정리합니다. 요금, 팁, 비용을 기록하고 여행사 정산 명세서를 작성할 수 있습니다. 온라인 항공편 조회와 여러 기기 접속에는 유효한 클라우드 이용 권한이 필요합니다.",
+      "screenshot_headlines": [
+        "매일의 운행을 한눈에",
+        "예약과 함께 고객 연락처 확인",
+        "비용을 뺀 순수입 확인",
+        "여행사 예약을 모아 정산"
+      ]
+    }
+  },
+  "target_version": "1.1",
+  "target_build": 14,
+  "integration_status": "included-in-1.1-release-materials",
+  "store_application_status": "not-applied",
+  "app_display_name_changed": false
+}
