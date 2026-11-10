@@ -24,6 +24,8 @@ struct PurchasePlansView: View {
                     }
                     Text("本地版一次买断；云端版按月或按年订阅，最多4台设备。")
                     Text("本地版不含在线航班查询。")
+                    Text("恢复购买仅恢复使用权，不恢复或同步本机业务资料。")
+                        .font(.footnote).foregroundStyle(.secondary)
                     if !store.salesEnabled { Text("购买暂未开放，当前不会扣款。").foregroundStyle(.secondary) }
                     Text("注册验证后的14天试用不绑定付款方式，到期不会自动扣款。")
                 }
@@ -33,7 +35,10 @@ struct PurchasePlansView: View {
                         if product.id == StoreProductCatalog.monthly { Text(AppLocalization.format("%@ / 月，自动续费", product.displayPrice)) }
                         else if product.id == StoreProductCatalog.yearly { Text(AppLocalization.format("%@ / 年，自动续费", product.displayPrice)) }
                         else { Text(AppLocalization.format("%@，一次买断", product.displayPrice)) }
-                        Button("购买") { Task { await store.purchase(product) } }
+                        Button { Task { await store.purchase(product) } } label: {
+                            if product.id == StoreProductCatalog.local && store.hasLocalPurchase { Text("已购买") }
+                            else { Text("购买") }
+                        }
                             .disabled(isPreparing || store.isBusy || !store.canPurchase(product))
                     }
                 }

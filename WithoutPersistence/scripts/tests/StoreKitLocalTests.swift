@@ -259,3 +259,63 @@ extension StoreKitLocalIntegrationTests {
         XCTAssertFalse(other.hasLocalPurchase)
     }
 }
+
+
+extension StoreKitLocalIntegrationTests {
+    @MainActor func testOwnedLocalProductCannotStartAnotherPurchase() async throws {
+        let session = try session()
+        defer { session.clearTransactions() }
+        let store = StorePurchaseManager(salesEnabled: true)
+        await store.load()
+        let product = try XCTUnwrap(store.products.first { $0.id == StoreProductCatalog.local })
+        await store.purchase(product)
+        XCTAssertTrue(store.hasLocalPurchase)
+        XCTAssertFalse(store.canPurchase(product))
+        let count = try session.allTransactions().count
+        await store.purchase(product)
+        XCTAssertEqual(try session.allTransactions().count, count)
+        try session.refundTransaction(identifier: try XCTUnwrap(try session.allTransactions().first).identifier)
+        await store.load()
+        XCTAssertFalse(store.hasLocalPurchase)
+        XCTAssertTrue(store.canPurchase(product))
+    }
+
+    @MainActor func testFreshManagerRestoresLocalPurchaseWithoutGrantingCloudAccess() async throws {
+        let session = try session()
+        defer { session.clearTransactions() }
+        _ = try await session.buyProduct(identifier: StoreProductCatalog.local)
+        let fresh = StorePurchaseManager(salesEnabled: true)
+        await fresh.load()
+        await fresh.restore()
+        XCTAssertTrue(fresh.hasLocalPurchase)
+        let auth = AuthViewModel()
+        XCTAssertFalse(auth.isCloudAccount)
+        XCTAssertFalse(auth.canQueryFlights)
+        XCTAssertFalse(auth.canUseCurrentCloudEdition)
+    }
+}
+
+
+extension StoreKitLocalIntegrationTests {
+    @MainActor func testAccountSwitchDuringVerificationLeavesTransactionUnfinished() async throws {
+        let session = try session()
+        defer { session.clearTransactions() }
+        let owner = UUID(), other = UUID()
+        var switchAccount: (() async -> Void)?
+        let store = StorePurchaseManager(salesEnabled: true, cloudVerifier: { _, id in
+            XCTAssertEqual(id, owner)
+            await switchAccount?()
+        }, cloudPurchasePreflight: { _ in })
+        await store.load(accountID: owner)
+        switchAccount = { [weak store] in await store?.load(accountID: other) }
+        let product = try XCTUnwrap(store.products.first { $0.id == StoreProductCatalog.monthly })
+        await store.purchase(product)
+        XCTAssertNotEqual(store.message, AppLocalization.text("购买已验证。"))
+        var matching = 0
+        for await result in Transaction.unfinished {
+            if case .verified(let transaction) = result, transaction.appAccountToken == owner { matching += 1 }
+        }
+        XCTAssertGreaterThan(matching, 0)
+        XCTAssertFalse(store.hasLocalPurchase)
+    }
+}

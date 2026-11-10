@@ -85,6 +85,7 @@ enum StoreProductCatalog {
 
     func canPurchase(_ product: Product) -> Bool {
         salesEnabled && StoreProductCatalog.all.contains(product.id)
+            && !(product.id == StoreProductCatalog.local && hasLocalPurchase)
             && (!StoreProductCatalog.isCloud(product.id) || (cloudVerifier != nil && cloudPurchasePreflight != nil && accountID != nil))
     }
 
