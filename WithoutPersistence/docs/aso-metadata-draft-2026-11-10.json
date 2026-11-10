@@ -15,7 +15,8 @@
         "客人资料，随单查看",
         "费用收支，算清净收入",
         "旅行社订单，集中对账"
-      ]
+      ],
+      "description": "为接送机司机和小型接待业务整理预约、客户与费用，让每天的接载安排更清楚。\n\n管理行程\n记录客人、接载日期时间、起始点、停靠点和目的地，按日期查找待执行与历史行程。支持旅行社订单号；将支持格式的订单粘贴到智能输入框，核对识别结果后再保存。\n\n客户与联系方式\n保存客户电话、其他联系方式和常用地址。从关联行程查看电话，并通过系统拨号或短信入口联系客人；不会自动拨号或发送短信。\n\n航班与提醒\n具有有效云端权限时可查询航班、选择航段并保存可用的机场、航站楼和时间资料。本地版不含在线航班查询，可手动录入并查看已保存资料。航班覆盖和更新取决于第三方服务，请向航空公司或机场确认重要变更。行程提醒依赖设备通知权限及系统设置。\n\n收支与旅行社对账\n记录车费、小费和费用项目，查看收支与净收入。“仅保存”保留结算资料，确认结算时再改变收款状态。选择旅行社未结算订单生成只读对账单，并导出PDF或CSV。生成对账单不会自动结清订单；对账单费用按绝对值横向合计，与净收入口径不同。已取消行程不纳入经营统计。\n\n本地与云端\n本机资料在设备保存；有效云端账号可在iPhone、iPad和Web访问资料，具体功能取决于授权。验证邮箱后的免费云端试用为14天，最多4台设备，不绑定付款方式，到期不会自动扣款。到期后的已有资料访问依照账号及设备权限；导出包含记录和图片路径，不打包图片原文件。\n\n恢复购买恢复使用权，不恢复或同步本机业务资料。不要将恢复购买当成业务资料备份。\n\n支持：https://trvelma.pages.dev/support\n隐私政策：https://trvelma.pages.dev/privacy.html\n使用条款：https://www.apple.com/legal/internet-services/itunes/dev/stdeula/"
     },
     "zh-Hant": {
       "name": "雲盛行程管家－接送機與司機訂單管理",
@@ -28,7 +29,8 @@
         "客戶資料，隨單查看",
         "費用收支，算清淨收入",
         "旅行社訂單，集中對帳"
-      ]
+      ],
+      "description": "為接送機司機和小型接待業務整理預約、客戶與費用，讓每天的接載安排更清楚。\n\n行程安排\n記錄客人、接載日期時間、起點、停靠點和目的地，按日期查找待執行與歷史行程。支援旅行社訂單號；將支援格式的訂單貼到智慧輸入框，核對辨識結果後再儲存。\n\n客戶聯絡\n儲存電話、其他聯絡方式和常用地址。從關聯行程查看電話，透過系統撥號或簡訊入口聯絡客人；不會自動撥號或傳送簡訊。\n\n航班與提醒\n有效雲端權限可查詢航班、選擇航段並儲存可用的機場、航廈與時間資料。本地版不含線上航班查詢，可手動輸入並查看已儲存資料。航班涵蓋與更新取決於第三方服務，重要變更請向航空公司或機場確認。行程提醒依裝置通知權限與系統設定運作。\n\n收支與旅行社對帳\n記錄車資、小費與費用，查看收支及淨收入。「僅儲存」保留結算資料，確認結算才改變收款狀態。選取旅行社未結算訂單產生唯讀對帳單，匯出PDF或CSV。產生對帳單不會自動結清訂單；對帳單費用採絕對值橫向合計，與淨收入計算不同。取消的行程不納入營運統計。\n\n本地與雲端\n本機資料儲存在裝置；有效雲端帳號可在iPhone、iPad及Web存取資料，功能依授權而定。驗證電子郵件後可免費試用雲端14天，最多4台裝置，不綁付款方式，到期不會自動扣款。到期後舊資料的存取依帳號及裝置權限；匯出包含記錄與圖片路徑，不打包圖片原始檔。\n\n恢復購買僅恢復使用權，不會恢復或同步本機業務資料，不能取代資料備份。\n\n支援：https://trvelma.pages.dev/support\n隱私權政策：https://trvelma.pages.dev/privacy.html\n使用條款：https://www.apple.com/legal/internet-services/itunes/dev/stdeula/"
     },
     "en-US": {
       "name": "Yunsheng: Driver Trip Manager",
@@ -41,7 +43,8 @@
         "Customer contacts with each trip",
         "See income after trip expenses",
         "Reconcile travel-agency bookings"
-      ]
+      ],
+      "description": "Organize airport-transfer bookings, customer contacts and trip finances for your driving business.\n\nPLAN YOUR TRIPS\nKeep pickup dates and times, guests, stops and destinations together. Find upcoming and past trips by date. Save travel-agency order numbers, or paste a supported order format and review recognized details before saving.\n\nCONTACT YOUR GUESTS\nStore telephone numbers, other contact details and common addresses. Open the system phone or messaging app from a linked trip; the app does not automatically call or send messages.\n\nFLIGHTS AND REMINDERS\nEligible cloud accounts can look up flights, select segments and save available airport, terminal and schedule information. Local mode excludes online flight lookup but supports manual entry and saved information. Third-party coverage and updates vary; confirm important changes with the airline or airport. Reminders depend on notification permissions and device settings.\n\nFINANCES AND AGENCY STATEMENTS\nRecord fares, tips and expenses, and review net income. Save settlement details without marking paid, or settle when payment is confirmed. Select unpaid agency bookings to export a read-only PDF or CSV statement. Creating a statement does not settle bookings. Statement fees are added as absolute amounts, which differs from net-income calculations. Cancelled trips are excluded from business totals.\n\nLOCAL AND CLOUD ACCESS\nLocal records stay on the device. Eligible cloud accounts can access records on iPhone, iPad and the web. Verified new accounts receive a separate 14-day cloud trial for up to four devices, with no payment method required and no automatic charge. Access after expiry follows account and device permissions. Exports contain records and image paths, not original image files.\n\nRestoring purchases restores access, not device business data, and is not a backup service.\n\nSupport: https://trvelma.pages.dev/support\nPrivacy: https://trvelma.pages.dev/privacy.html\nTerms: https://www.apple.com/legal/internet-services/itunes/dev/stdeula/"
     },
     "es-ES": {
       "name": "Yunsheng: Agenda de conductor",
@@ -54,7 +57,8 @@
         "Contactos en cada servicio",
         "Ingresos después de gastos",
         "Cuentas para agencias de viajes"
-      ]
+      ],
+      "description": "Organiza reservas de traslados al aeropuerto, contactos e ingresos y gastos para tu actividad como conductor.\n\nRESERVAS Y CLIENTES\nGuarda fechas y horas de recogida, pasajeros, paradas, destinos y números de pedido de agencias. Consulta servicios pendientes y anteriores por fecha. Pega pedidos de formatos compatibles y revisa los datos reconocidos antes de guardar. Conserva teléfonos y direcciones habituales. Abre las apps del sistema para llamar o enviar mensajes desde un servicio vinculado; no se realizan llamadas ni se envían mensajes automáticamente.\n\nVUELOS Y RECORDATORIOS\nLas cuentas con acceso a la nube vigente pueden consultar vuelos, elegir tramos y guardar los datos disponibles de aeropuertos, terminales y horarios. El modo local permite introducir y ver datos guardados, pero no consultar vuelos en línea. La cobertura y las actualizaciones dependen de terceros; confirma cambios importantes con la aerolínea o el aeropuerto. Los recordatorios dependen de los permisos de notificación y de los ajustes del dispositivo.\n\nFINANZAS Y AGENCIAS\nRegistra tarifas, propinas y gastos para revisar los ingresos netos. Guarda datos de liquidación sin marcar el servicio como pagado, o liquídalo al confirmar el cobro. Selecciona pedidos pendientes de agencias y exporta estados de cuenta de solo lectura en PDF o CSV. Generarlos no liquida los pedidos. Las comisiones y gastos del estado se suman en valor absoluto, a diferencia del cálculo del ingreso neto. Los servicios cancelados no cuentan en los totales del negocio.\n\nACCESO LOCAL Y EN LA NUBE\nLos registros locales permanecen en el dispositivo. Las cuentas autorizadas pueden acceder desde iPhone, iPad y la web. Tras verificar el correo, las cuentas nuevas reciben una prueba independiente de la nube de 14 días, hasta cuatro dispositivos, sin método de pago ni cargos automáticos. El acceso tras caducar depende de los permisos de cuenta y dispositivo. La exportación incluye registros y rutas de imágenes, no los archivos originales.\n\nRestaurar compras recupera el acceso, no los datos del dispositivo, y no sustituye una copia de seguridad.\n\nAyuda: https://trvelma.pages.dev/support\nPrivacidad: https://trvelma.pages.dev/privacy.html\nCondiciones: https://www.apple.com/legal/internet-services/itunes/dev/stdeula/"
     },
     "ja": {
       "name": "雲盛行程管家－送迎・予約管理",
@@ -67,7 +71,8 @@
         "顧客の連絡先を予約と一緒に",
         "経費を引いた収入を確認",
         "旅行会社の予約をまとめて精算"
-      ]
+      ],
+      "description": "空港送迎の運転手や小規模な送迎事業のために、予約、顧客情報、収支をまとめて管理します。\n\n行程と顧客\n送迎日時、乗客、経由地、目的地、旅行会社の注文番号を記録し、予定と過去の行程を日付で確認できます。対応形式の注文を貼り付け、読み取り結果を確認してから保存できます。電話番号やよく使う住所を管理し、関連する予約からシステムの電話・メッセージアプリを開けます。自動で発信・送信することはありません。\n\nフライトと通知\n有効なクラウド利用権がある場合、便の検索、区間選択、取得できた空港・ターミナル・時刻情報の保存が可能です。端末版はオンライン便検索を含まず、手入力と保存済み情報の表示に対応します。情報の範囲と更新は第三者サービスに依存します。重要な変更は航空会社や空港へご確認ください。予定の通知は端末の通知許可とシステム設定に従います。\n\n収支と旅行会社向け明細\n運賃、チップ、経費を記録し、差引収入を確認できます。精算情報だけを保存し、入金を確認してから精算済みにできます。旅行会社の未精算注文を選び、読み取り専用の精算明細をPDF・CSVで出力できます。明細作成だけでは入金済みになりません。明細の費用は絶対値で加算するため、差引収入とは計算方法が異なります。キャンセルした行程は事業集計に含まれません。\n\n端末とクラウド\n端末内の記録は端末に保存されます。有効なクラウドアカウントはiPhone・iPad・Webから記録にアクセスできます。新規アカウントはメール確認後、最大4台で14日間の独立したクラウド無料試用を利用でき、支払方法の登録や自動課金はありません。期限後のアクセスはアカウントと端末の権限によります。出力には記録と画像パスが含まれ、元の画像ファイルは含まれません。\n\n購入の復元で戻るのは利用権です。端末内の業務データは復元・同期されず、バックアップの代わりにはなりません。\n\nサポート：https://trvelma.pages.dev/support\nプライバシー：https://trvelma.pages.dev/privacy.html\n利用規約：https://www.apple.com/legal/internet-services/itunes/dev/stdeula/"
     },
     "ko": {
       "name": "Yunsheng 기사 일정·수입 관리",
@@ -80,12 +85,14 @@
         "예약과 함께 고객 연락처 확인",
         "비용을 뺀 순수입 확인",
         "여행사 예약을 모아 정산"
-      ]
+      ],
+      "description": "공항 픽업 기사와 소규모 운송 사업자를 위해 예약, 고객 정보와 수입·지출을 한곳에서 관리합니다.\n\n일정과 고객\n픽업 날짜와 시간, 승객, 경유지, 목적지, 여행사 주문 번호를 기록하고 예정 및 과거 운행을 날짜별로 확인하세요. 지원되는 형식의 주문을 붙여 넣고 인식 결과를 확인한 뒤 저장할 수 있습니다. 전화번호와 자주 쓰는 주소를 보관하고 연결된 예약에서 시스템 전화 또는 메시지 앱을 열 수 있습니다. 자동으로 전화를 걸거나 메시지를 보내지 않습니다.\n\n항공편과 알림\n유효한 클라우드 권한이 있으면 항공편을 조회하고 구간을 선택해 제공되는 공항, 터미널, 시간 정보를 저장할 수 있습니다. 로컬 모드는 온라인 조회를 포함하지 않으며 직접 입력과 저장된 정보 보기를 지원합니다. 정보 범위와 갱신은 외부 서비스에 따라 다르므로 중요한 변경은 항공사나 공항에 확인하세요. 알림은 기기의 권한과 시스템 설정을 따릅니다.\n\n재무와 여행사 정산\n요금, 팁, 비용을 기록하고 순수입을 확인하세요. 정산 정보만 저장하거나 입금을 확인한 뒤 정산 상태를 바꿀 수 있습니다. 여행사의 미정산 주문을 선택해 읽기 전용 명세서를 PDF 또는 CSV로 내보낼 수 있습니다. 명세서 생성만으로 입금 처리되지는 않습니다. 명세서 비용은 절댓값으로 더하므로 순수입과 계산 방식이 다릅니다. 취소된 운행은 사업 통계에 포함하지 않습니다.\n\n로컬과 클라우드\n로컬 기록은 기기에 저장됩니다. 권한이 있는 클라우드 계정은 iPhone, iPad, 웹에서 기록에 접속할 수 있습니다. 신규 계정은 이메일 인증 후 최대 4대 기기에서 별도의 14일 클라우드 무료 체험을 제공받으며 결제 수단 등록이나 자동 청구는 없습니다. 만료 후 접근은 계정 및 기기 권한에 따릅니다. 내보내기는 기록과 이미지 경로를 포함하며 원본 이미지 파일은 포함하지 않습니다.\n\n구매 복원은 이용 권한만 복원하며 기기의 업무 데이터를 복원하거나 동기화하지 않습니다. 데이터 백업을 대신하지 않습니다.\n\n지원: https://trvelma.pages.dev/support\n개인정보 처리방침: https://trvelma.pages.dev/privacy.html\n이용 약관: https://www.apple.com/legal/internet-services/itunes/dev/stdeula/"
     }
   },
   "target_version": "1.1",
   "target_build": 14,
   "integration_status": "included-in-1.1-release-materials",
   "store_application_status": "not-applied",
-  "app_display_name_changed": false
+  "app_display_name_changed": false,
+  "description_status": "six-complete-drafts-pending-final-billing-policy-and-native-language-review"
 }
