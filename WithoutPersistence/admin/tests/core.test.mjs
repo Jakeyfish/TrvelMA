@@ -1,0 +1,6 @@
+import test from 'node:test';import assert from 'node:assert/strict';import {escapeHTML,effectiveStatus,expiryWarning,grantInput} from '../core.mjs';
+test('account text cannot inject HTML into management views',()=>{assert.equal(escapeHTML('<img src=x onerror="x">'), '&lt;img src=x onerror=&quot;x&quot;&gt;');});
+test('revocation wins over perpetual or paid expiry',()=>{assert.equal(effectiveStatus({status:'revoked',expires_at:null}),'revoked');});
+test('stored active state is not mistaken for valid expired access',()=>{assert.equal(effectiveStatus({status:'active',expires_at:'2020-01-01T00:00:00Z'}),'expired');assert.equal(effectiveStatus(null),'unlicensed');});
+test('expiry warning uses actual date, perpetual grant has no warning',()=>{assert.equal(expiryWarning(null),'');assert.equal(expiryWarning('2026-11-12T00:00:00Z',Date.parse('2026-11-11T00:00:00Z')),'1 天内到期');});
+test('grant form normalizes UTC expiry and validates integer quota and reason',()=>{const form=new Map(Object.entries({edition:'cloud',status:'active',devices:'4',expiry:'2030-01-01T12:00',reason:'人工验收授权'}));assert.equal(grantInput(form).p_expiry,'2030-01-01T12:00:00.000Z');form.set('devices','1.5');assert.throws(()=>grantInput(form),/设备额度/);form.set('devices','4');form.set('reason','x');assert.throws(()=>grantInput(form),/操作原因/);});
