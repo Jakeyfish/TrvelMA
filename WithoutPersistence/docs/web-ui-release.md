@@ -26,3 +26,14 @@
 完整本地基线及本轮布局前快照保存在协作交付目录，保留其他未提交工作。购买页隔离预览工具、后台需求等不属于本次Web提交。
 
 证据：同一交付目录的production-deployed.jpg、online-resource-version.json、release-manifest.json、web-177-tests.log、localizations.log。
+
+## 顶栏图标更新（2026-11-11）
+
+- 构建：20261111-ui-v3；代码提交 b92e198，测试空白修正 e0d1154；分支 codex/billing-1.1，仅本地提交，未推送 Git。
+- 用户资料移至右上角，连接状态绿/黄/红灯；刷新与退出采用图标并保留本地化 title/aria-label。
+- Cloudflare Production/main 部署：44a72a06-3a33-4a4d-81e0-4abb8a1ea70b；固定地址 https://44a72a06.trvelma.pages.dev/。
+- 66/66 文件上传成功，发布包全部文件 SHA-256 校验通过，三项主要资源与源码逐字节一致。
+- Web 177 项测试通过，六语言 292 键检查无错误；隔离 QA 检查桌面及 390px 手机宽度，无横向溢出。版本查询参数更新后未重复执行相同业务测试。
+- 线上登录页资源均为 ui-v3，控制台无错误；未登录审核账号，未在真实业务数据上操作。登录后顶栏的视觉验证来自隔离 QA，不能视为线上真实数据操作验收。
+- 回滚目标：上一部署 d89d1b98-a431-4fb1-8d98-c4b0dcb8a3e0；本次未执行回滚。
+- 发布包、SHA 清单、测试日志及截图位于协作目录 deliverables/2026-11-11-web-topbar/。
