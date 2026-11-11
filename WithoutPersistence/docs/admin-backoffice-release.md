@@ -83,3 +83,15 @@ verification/20261111_admin_disable.sql 禁用全部管理员及管理 RPC 执�
 - 原未完成验证的因子已成功完成验证，重复创建问题结项；未删除、替换或读取 TOTP 密钥，未代输验证码。
 - 已登录页面的工具读取仍报 browser.user unavailable，因此本轮没有继续操作其详情、设备释放或授权表单。真实管理写入验收仍未执行，不把已有隔离测试计作生产写入通过。
 - 本轮没有修改账号授权/设备/交易，无源码变更；不重复执行不变测试。
+
+## 应用名称移入侧栏（已发布）
+
+- 源码提交 8ed191c，分支 codex/billing-1.1；app.js/admin.css 调整应用选择位置，沿用权限与 MFA，不调整数据库。
+- 管理端应用列表移到左侧，选中应用高亮；“用户与授权”“操作日志”保留为当前应用功能入口。应用切换只接受服务端返回的可用应用，切换时清空搜索并重置分页。
+- 前端 12 项测试、JS 语法、diff 空白检查通过；隔离浏览器核对应用列表及用户/日志页面切换。无服务端变更，未重复运行数据库测试。
+- 发布包 admin-application-sidebar.zip：6 个文件逐项 SHA-256 校验通过，包内容与当前源码一致。
+- 自动上传连接恢复后由工具完成 6/6 上传和保存部署；生产部署 69c7583d-8bb4-4f40-8c57-f12beb98793f，已核对成为当前 Production/main。网址 https://yunsheng-admin.pages.dev/，固定网址 https://69c7583d.yunsheng-admin.pages.dev/。
+- 线上登录页正常加载，控制台无错误；新布局的已登录视觉验证来自隔离 QA。本轮未刷新用户的已登录会话、未代填凭据，也未操作真实业务数据。
+- 上一生产部署 bbbce389-199c-4dbe-b449-da23e4d603bf 为回滚目标，未执行回滚；未推送 Git。
+- 用户“提交”默认包含对应发布及线上核验的约定已加入项目和协作工作区 AGENTS.md，保留敏感操作当次确认要求。
+- 证据：application-sidebar.jpg、sidebar-production-deployed.jpg、release-manifest-sidebar.json。
