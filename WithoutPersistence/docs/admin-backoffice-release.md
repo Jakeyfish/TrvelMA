@@ -95,3 +95,13 @@ verification/20261111_admin_disable.sql 禁用全部管理员及管理 RPC 执�
 - 上一生产部署 bbbce389-199c-4dbe-b449-da23e4d603bf 为回滚目标，未执行回滚；未推送 Git。
 - 用户“提交”默认包含对应发布及线上核验的约定已加入项目和协作工作区 AGENTS.md，保留敏感操作当次确认要求。
 - 证据：application-sidebar.jpg、sidebar-production-deployed.jpg、release-manifest-sidebar.json。
+
+## 两级导航配色区分（已发布）
+
+- 源码 db19332，仅修改 admin/admin.css：应用选中项 #f2f3f7 底色、#35384b 文字和紫色左侧标记；功能页继续用 #efecff 高亮。
+- 隔离浏览器检查用户/日志页的实际 computed style，应用 rgb(242,243,247)、功能页 rgb(239,236,255)，两种状态持续区分；视觉截图已保存。仅 CSS 变更，未新增或重复执行业务测试；git diff --check 通过。
+- 发布包 admin-nav-color.zip，6 个文件 SHA 校验通过，静态包与源码一致；工具完成 6/6 上传及生产发布。
+- 新生产部署 eedb9bec-a4ae-463f-939c-69fdcc11648e，固定网址 https://eedb9bec.yunsheng-admin.pages.dev/；已核验成为 Production/main。
+- 线上登录页正常、控制台无错误，并从实际页面 CSSOM 读取到新的应用底色/文字与侧边标记样式，不仅依赖包版本判断。未登录或刷新用户原会话，无业务数据或权限变更。
+- 上一生产部署 69c7583d-8bb4-4f40-8c57-f12beb98793f 保留作回滚；未执行回滚，未推送 Git。
+- 证据：nav-color-preview.jpg、nav-color-deployed.jpg、release-manifest-nav-color.json。
