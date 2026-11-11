@@ -6,7 +6,7 @@
 - 独立 Cloudflare 项目：yunsheng-admin，网址 https://yunsheng-admin.pages.dev/。
 - 部署：a6006810-27d6-4a78-ac96-0eb33d19b1f6；固定地址 https://a6006810.yunsheng-admin.pages.dev/。
 - 5 个文件上传成功，线上登录页加载、控制台无错误。发布包 SHA 校验和主要资源源码一致性检查通过。
-- 正式后台尚未可用：管理数据库迁移未执行，未创建管理员，未授予任何现有账号后台权限。已向用户请求迁移最终确认和管理员邮箱。
+- 管理数据库迁移已按用户本次最终确认执行成功；5 张表启用 RLS、6 个接口存在，未创建管理员、未授予任何账号后台权限。后台完整管理功能仍待账号设置与集成验收。
 
 ## 本地实现与验证
 
@@ -34,3 +34,14 @@
 verification/20261111_admin_disable.sql 禁用全部管理员及管理 RPC 执行权限，保留审计与变更历史。已发生授权变更需要按审计和预期版本有条件补偿，不以删除管理表回滚业务数据。
 
 证据目录：协作工作区 deliverables/2026-11-11-admin/。前端 ZIP 与迁移 SQL 分开；数据库脚本不进入静态包。
+
+## 正式迁移启用核验
+
+- 用户已指定独立管理员邮箱 18857179866@139.com，并明确确认启用后台迁移。
+- SQL Editor 执行完整迁移，返回 Success. No rows returned；核验 private_tables=5、tables_with_rls=5、management_functions=6、administrators=0。
+- anon 对 admin_context 的执行权限为 false；authenticated 对 admin_private 的 USAGE 为 false。
+- 以事务内 authenticated 角色和空 JWT 调用真实 admin_context，捕获预期 ADMIN_MFA_REQUIRED；最终返回 MFA_DENIAL_CONFIRMED，随后 rollback，无业务数据变更。
+- 指定邮箱在 auth.users 尚无记录（requested_account=null）。已打开真实注册页，预填邮箱和“后台管理员”称呼，密码/提交/邮箱验证交由用户本人完成；没有代设密码或代建用户。
+- 尚未绑定管理员，尚未进行真实 MFA、管理员读取或受控写入验收。下一步须先完成注册，再核验 UUID 与邮箱验证状态，并取得具体应用读写授权确认。
+- 本次只新增管理结构与展示标签，不调整现有业务授权、设备或交易，不启用收费。
+- 证据：production-permissions.jpg、production-denial.jpg。未在聊天记录或交付文件保存密码/会话凭据。
