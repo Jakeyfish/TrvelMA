@@ -573,7 +573,7 @@ test('application shell localizes navigation and headings without translating ac
   assert.ok(header.includes('原文 QA'));
   assert.ok(header.includes('rectangle.portrait.and.arrow.right'));
   assert.ok(header.includes(`aria-label="${localized('退出登录',language)}"`));
-  assert.ok(!c.output.innerHTML.split('</aside>')[0].includes('原文 QA')); 
+  assert.ok(!c.output.innerHTML.split('</aside>')[0].includes('原文 QA'));
   assert.ok(c.output.innerHTML.includes('data-page="wallet"'));
   assert.equal(c.document.documentElement.lang,language);
  }
