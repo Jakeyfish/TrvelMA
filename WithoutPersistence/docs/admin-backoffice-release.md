@@ -45,3 +45,13 @@ verification/20261111_admin_disable.sql 禁用全部管理员及管理 RPC 执�
 - 尚未绑定管理员，尚未进行真实 MFA、管理员读取或受控写入验收。下一步须先完成注册，再核验 UUID 与邮箱验证状态，并取得具体应用读写授权确认。
 - 本次只新增管理结构与展示标签，不调整现有业务授权、设备或交易，不启用收费。
 - 证据：production-permissions.jpg、production-denial.jpg。未在聊天记录或交付文件保存密码/会话凭据。
+
+## 首次管理员授权（已确认并执行）
+
+- 用户最终确认邮箱 18857179866@139.com 的生产应用管理读写范围。
+- 注册已核验：UUID 4eabaadd-e345-4c83-bf92-8463b753a58a，email_verified=true。
+- 开通结果：enabled=true、app_id=trvelma-production、permission=write；bootstrap 审计恰好 1 条。没有全局/其他应用授权，没有变更业务账号或其授权。
+- 初始授权通过受监督 SQL 控制台执行；审计 actor 使用全零系统 UUID 哨兵，action=bootstrap_admin_by_owner_console，request_body 记录操作方式和数据库操作者。该记录不表示新管理员本人登录执行了自授权。
+- 开通前以合成邮箱在 PGlite 验证待执行脚本：未验证拒绝、成功限定范围开通及审计、重复开通拒绝、定向禁用通过。未把本地定向禁用操作用于生产。
+- 后台登录页已预填邮箱，验证器密钥设置、密码和验证码输入交由用户本人完成。真实 MFA、管理读取与受控写入集成验收仍待完成。
+- 本次无产品源码修改。证据：admin-email-verified.jpg、admin-scope-enabled.jpg、bootstrap-admin-pending.sql（已按确认执行，文件原名保留）、bootstrap-admin-disable.sql。
