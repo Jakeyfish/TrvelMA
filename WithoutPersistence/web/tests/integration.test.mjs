@@ -598,3 +598,27 @@ test('trip contact dropdown and detail expose SMS and telephone for typed phone 
  const html=vm.runInContext(`tripContactActionsHTML({customer_id:'qa',customer_contact:'WeChat-QA'})`,c);
  assert.match(html,/href="sms:\+15550000100"/);assert.match(html,/href="tel:\+15550000100"/);assert.doesNotMatch(html,/12345678|WeChat-QA/);assert.match(html,/data-symbol="phone.fill"/);assert.match(html,/data-symbol="message.fill"/);
 });
+
+test('home next-trip card uses earliest eligible trip and escapes customer and route text',()=>{
+ const c=boot();
+ vm.runInContext(`state.trips=[
+ {id:'later',customer_name:'Later',appointment_date:'2099-01-02T12:00:00Z',appointment_time:'2099-01-02T12:00:00Z'},
+ {id:'cancelled',customer_name:'Cancelled',is_cancelled:true,appointment_date:'2099-01-01T08:00:00Z'},
+ {id:'completed',customer_name:'Completed',is_completed:true,appointment_date:'2099-01-01T09:00:00Z'},
+ {id:'earliest',customer_name:'<script>QA</script>',location_start:'<img src=x>',location_end:'A & B',appointment_date:'2099-01-01T12:00:00Z',appointment_time:'2099-01-01T12:00:00Z'}
+ ];`,c);
+ const html=vm.runInContext('renderHome()',c),side=html.slice(html.indexOf('<aside class="panel home-next-trip"'));
+ assert.ok(side.includes('data-id="earliest"'));
+ assert.ok(side.includes('&lt;script&gt;QA&lt;/script&gt;'));
+ assert.ok(side.includes('&lt;img src=x&gt;'));
+ assert.ok(side.includes('A &amp; B'));
+ assert.ok(!side.includes('data-id="cancelled"'));
+ assert.ok(!side.includes('data-id="completed"'));
+ assert.ok(!side.includes('data-id="later"'));
+});
+test('empty home retains new-trip action without a fabricated next-trip card',()=>{
+ const c=boot();vm.runInContext('state.trips=[]',c);
+ const html=vm.runInContext('renderHome()',c);
+ assert.ok(html.includes('data-action="new-trip"'));
+ assert.ok(!html.includes('<aside class="panel home-next-trip"'));
+});

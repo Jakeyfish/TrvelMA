@@ -1,12 +1,12 @@
-import { localized } from "./localization.mjs?v=20261110-hotfix101-1";
+import { localized } from "./localization.mjs?v=20261110-ui-v2";
 const uiLanguage = () => normalizedLanguageCode((state.archiveMode ? state.archiveData?.user_settings?.[0]?.language_code : null) || state.settings?.language_code || readInterfaceLanguage());
 const ui = (key, ...args) => localized(key, uiLanguage(), ...args);
-import { telephoneNumber, tripTelephoneContacts, financialCategoryGroups, statementMoney, agencyStatementTrips, statementAgencyKey, buildAgencyStatement, pickupReminders, recognizePickup, matchPickupAgency, partsInZone, zonedISO, parseFlights, flightID, makeFlightSnapshot, readFlightSnapshot, routeMatches, compareTrips, settlementPayload } from './parity.mjs?v=20261110-hotfix101-1';
+import { telephoneNumber, tripTelephoneContacts, financialCategoryGroups, statementMoney, agencyStatementTrips, statementAgencyKey, buildAgencyStatement, pickupReminders, recognizePickup, matchPickupAgency, partsInZone, zonedISO, parseFlights, flightID, makeFlightSnapshot, readFlightSnapshot, routeMatches, compareTrips, settlementPayload } from './parity.mjs?v=20261110-ui-v2';
 let airportCrosswalk = [];
 const airportCrosswalkReady = fetch('./assets/airport-crosswalk.json').then(r => { if (!r.ok) throw Error('机场对照表不可用'); return r.json(); }).then(data => { airportCrosswalk = data.airports; }).catch(() => {});
 const SUPABASE_URL = "https://lbdfqzeiweqbsklklcqr.supabase.co";
 const SUPABASE_PUBLISHABLE_KEY = "sb_publishable_d4tmuPirsf8-wUDO0Frd7w_PcXME6rs";
-const WEB_BUILD = "20261110-hotfix101-1";
+const WEB_BUILD = "20261110-ui-v2";
 const SESSION_KEY = "yunsheng.web.session.v1";
 const OFFLINE_CACHE_PREFIX = "yunsheng.web.offline-cache.v1.";
 const OFFLINE_QUEUE_PREFIX = "yunsheng.web.offline-queue.v1.";
@@ -999,7 +999,7 @@ function renderApp() {
   document.documentElement.lang = uiLanguage();
   const [title, subtitle] = pageNames[state.page];
   document.getElementById("app").innerHTML = `
-    <div class="app-shell">
+    <div class="app-shell" data-page="${escapeHTML(state.page)}">
       <aside class="sidebar">
         <div class="brand-lockup"><span class="brand-mark">云</span><span>${escapeHTML(ui('云盛行程管家'))}</span></div>
         ${accountValidityHTML()}
@@ -1092,12 +1092,14 @@ function renderHome() {
       ${statCard("arrow.up.right", "本月净收入", currency(monthNet), "车费、小费及费用调整")}
       ${statCard("clock.fill", "未收款", currency(unpaid), "尚未结清的行程款项")}
     </div>
-    <section class="trip-dashboard home-trip-dashboard">
+    <div class="home-workspace"><section class="trip-dashboard home-trip-dashboard">
       ${renderDateStrip(dates, state.homeDate, upcoming, upcoming.length, !state.homeDate)}
       <div class="page-tools trip-search-tools"><label class="search-wrap">${appIcon("magnifyingglass")}<input class="search-input" data-search="home" value="${escapeHTML(state.search)}" placeholder="搜索客户、地点、航班"></label><button class="button primary" data-action="new-trip">${appIcon("plus")} 新增行程</button></div>
       <div class="section-heading"><h2>待执行行程</h2><small>${visible.length}</small></div>
       ${visible.length ? `<div class="trip-list">${visible.map(renderTripCard).join("")}</div>` : emptyState(state.search ? "没有找到行程" : "目前没有待执行行程", state.search ? "请更换搜索内容。" : "新增行程后会显示在这里。", "trip")}
-    </section>`;
+    </section>
+    ${upcoming.length ? `<aside class="panel home-next-trip"><div class="section-heading"><h2>${escapeHTML(ui('接载时间'))}</h2>${appIcon('clock.fill')}</div><div class="home-next-time">${timeOnly(upcoming[0].appointment_time)}</div><p class="home-next-date">${dateOnly(upcoming[0].appointment_date)}</p><strong>${escapeHTML(upcoming[0].customer_name || ui('未填写客户'))}</strong><span class="pill accent">${escapeHTML(upcoming[0].service_type || ui('行程'))}</span><div class="home-next-route"><p>${appIcon('mappin.and.ellipse')}${escapeHTML(upcoming[0].location_start || '—')}</p><p>${appIcon('flag.checkered')}${escapeHTML(upcoming[0].location_end || '—')}</p></div><button class="button small" data-action="view-trip" data-id="${escapeHTML(upcoming[0].id)}">${escapeHTML(ui('详细信息'))}${appIcon('chevron.right')}</button></aside>` : ''}
+    </div>`;
 }
 
 function filteredTrips() {
@@ -1249,9 +1251,9 @@ function openTripDetail(trip) {
   const expenses = (trip.expenses || []).map(item => '<div class="finance-row"><span>' + escapeHTML(item.title) + (item.is_addition ? ' ＋' : ' −') + '</span><strong>' + currency(item.amount) + '</strong></div>').join("");
   const actions = '<button class="button small" data-action="copy-trip" data-id="' + trip.id + '">复制行程</button>' + (pending ? '<button class="button small" data-action="edit-trip" data-id="' + trip.id + '">编辑</button><button class="button small complete-action" data-action="toggle-complete" data-id="' + trip.id + '">已完成</button><button class="button small danger" data-action="cancel-trip" data-id="' + trip.id + '">取消行程</button><button class="button small danger" data-action="delete-trip" data-id="' + trip.id + '">删除</button>' : trip.is_cancelled ? '<button class="button small" data-action="restore-trip" data-id="' + trip.id + '">恢复行程</button>' : trip.is_completed ? '<button class="button small" data-action="restore-trip" data-id="' + trip.id + '">恢复待执行</button>' : '') + (!trip.is_paid ? '<button class="button small settle-action" data-action="toggle-paid" data-id="' + trip.id + '">财务结算</button>' : "");
   showModal("行程详情", '<div class="detail-summary"><div><strong>' + escapeHTML(trip.customer_name || "未填写客户") + '</strong><small>' + dateOnly(trip.appointment_date) + ' · ' + timeOnly(trip.appointment_time) + ' · ' + escapeHTML(trip.service_type || "接机") + '</small></div><strong>' + currency(trip.price) + '</strong></div>' +
-    detailSection("行程信息", "", fields + (trip.order_source === '旅行社订单' ? `<div class="detail-grid"><div><small>旅行社订单号</small><strong>${escapeHTML(trip.travel_agency_order_number || '—')}</strong></div><div><small>旅行社</small><strong>${escapeHTML(trip.travel_agency_name || '—')} · ${escapeHTML(trip.travel_agency_code || '—')}</strong></div></div>` : '')) + flight +
+    '<div class="detail-columns"><div class="detail-column">' + detailSection("行程信息", "", fields + (trip.order_source === '旅行社订单' ? `<div class="detail-grid"><div><small>旅行社订单号</small><strong>${escapeHTML(trip.travel_agency_order_number || '—')}</strong></div><div><small>旅行社</small><strong>${escapeHTML(trip.travel_agency_name || '—')} · ${escapeHTML(trip.travel_agency_code || '—')}</strong></div></div>` : '')) + '</div><div class="detail-column">' + flight +
     detailSection("财务结算", "", '<div class="detail-grid"><div><small>行程费用</small><strong>' + currency(trip.price) + '</strong></div><div><small>小费</small><strong>' + currency(trip.tip) + '</strong></div><div><small>净收入</small><strong>' + currency(netIncome(trip)) + '</strong></div></div>' + expenses) +
-    (trip.memo ? '<p class="trip-memo">' + escapeHTML(trip.memo) + '</p>' : '') + '<div class="detail-actions">' + actions + '</div>', "editor-modal detail-modal");
+    '</div></div>' + (trip.memo ? '<p class="trip-memo">' + escapeHTML(trip.memo) + '</p>' : '') + '<div class="detail-actions">' + actions + '</div>', "editor-modal detail-modal");
 }
 
 function renderCustomers() {
@@ -1330,7 +1332,7 @@ function renderWallet() {
             return `<circle cx="100" cy="100" r="${radius}" fill="none" stroke="${colors[index % colors.length]}" stroke-opacity="${opacity}" stroke-width="32" stroke-linecap="round" stroke-dasharray="${dash} ${circumference - dash}" stroke-dashoffset="${offset}"/>`;
           }).join("");
         })()
-      : `<circle cx="100" cy="100" r="80" fill="none" stroke="${depth ? "#a57b5c" : "#ded1c1"}" stroke-opacity="${depth ? 0.78 : 0.94}" stroke-width="24"/>`;
+      : `<circle cx="100" cy="100" r="80" fill="none" stroke="${depth ? "#d4d8e5" : "#e7eaf2"}" stroke-opacity="${depth ? 0.78 : 0.94}" stroke-width="24"/>`;
     return `<svg class="wallet-chart-svg" viewBox="0 0 200 200" aria-hidden="true"><g transform="rotate(-90 100 100)">${ring}</g></svg>`;
   };
   const dateTitle = period === "week" ? `${start.getFullYear()} 年\n${start.getMonth() + 1}/${start.getDate()} – ${new Date(end.getTime() - 86400000).getMonth() + 1}/${new Date(end.getTime() - 86400000).getDate()}` : period === "day" ? `${start.getFullYear()}年${start.getMonth() + 1}月${start.getDate()}日` : period === "month" ? `${start.getFullYear()}年${start.getMonth() + 1}月` : `${start.getFullYear()}年`;
@@ -2086,11 +2088,13 @@ function renderSettlementModal(trip) {
   const total = draft.price + draft.tip + draft.expenses.reduce((sum, item) => sum + (item.is_addition ? 1 : -1) * Number(item.amount || 0), 0);
   const route = [trip.location_start, ...(trip.stops || []).map(item => item.address), trip.location_end].filter(Boolean).join(" → ") || "—";
   showModal("财务结算", `<form id="settlementForm" class="editor-form settlement-form" data-id="${trip.id}">
+    <div class="editor-columns settlement-columns"><div class="editor-column">
     <div class="settlement-trip-summary"><span class="form-emblem">＄</span><div><strong>${escapeHTML(trip.customer_name || "未填写客户")}</strong><p>${escapeHTML(trip.service_type || "行程")} · ${dateOnly(trip.appointment_date)} ${timeOnly(trip.appointment_time)}</p><small>${escapeHTML(route)}</small></div></div>
     ${formSection("财务信息", "净收入按行程费用 + 小费 ± 费用明细自动汇总", `<div class="field"><label for="settlement-price">行程费用</label><input id="settlement-price" name="price" type="number" min="0" step="0.01" value="${escapeHTML(draft.price)}" required></div><div class="field"><label for="settlement-tip">小费</label><input id="settlement-tip" name="tip" type="number" min="0" step="0.01" value="${escapeHTML(draft.tip)}" required></div>`)}
+    </div><div class="editor-column">
     <section class="form-section"><div class="form-section-title"><div><h3>费用明细</h3><p>例如居间费、高速通行费或其他调整</p></div><button type="button" class="button small" data-action="add-expense">${appIcon("plus")} 添加费用</button></div><div class="settlement-expense-list">${expenseFields || `<p class="settlement-empty">暂无费用明细，可按需添加。</p>`}</div></section>
-    <div class="settlement-net"><span>净收入</span><strong id="settlement-net-value">${currency(total)}</strong></div>
-    <div class="form-actions"><button type="button" class="button" data-action="close-modal">取消</button><button type="submit" class="button" data-settlement-mode="save">${escapeHTML(ui("仅保存"))}</button><button type="submit" class="button primary" data-settlement-mode="settle">${escapeHTML(ui("结算"))}</button></div></form>`, "editor-modal settlement-modal");
+    </div></div><div class="settlement-net"><span>净收入</span><strong id="settlement-net-value">${currency(total)}</strong></div>
+    <div class="form-actions"><button type="button" class="button" data-action="close-modal">取消</button><button type="submit" class="button" data-settlement-mode="save">${escapeHTML(ui("仅保存"))}</button><button type="submit" class="button primary" data-settlement-mode="settle">${escapeHTML(ui("结算"))}</button></div></form>`, "editor-modal settlement-modal workspace-editor");
 }
 
 function captureSettlementDraft(form) {
@@ -2125,12 +2129,14 @@ async function submitSettlement(form, markPaid = true) {
 function openCustomerForm(customer = null) {
   const language = [["zh-Hans", "简体中文"], ["zh-Hant", "繁體中文"], ["en", "English"], ["es", "Español"], ["ja", "日本語"], ["ko", "한국어"]];
   showModal(customer ? "编辑客户" : "新增客户", `<form id="customerForm" class="editor-form customer-form" data-id="${customer?.id || ""}">
-    <div class="form-intro"><span class="form-emblem">${appIcon("person.fill")}</span><div><strong>${customer ? "更新客户资料" : "建立客户档案"}</strong><p>整理联系人信息，后续行程可以快速关联。</p></div></div>
+    <div class="editor-columns"><div class="editor-column">
     ${formSection("基本资料", "客户身份与沟通偏好", `${formField("客户名称 · 必填", "name", customer?.name || "", "text", { required: true, placeholder: "输入客户姓名" })}${customerCategoryPicker(customer?.category || 1, customer?.travel_agency_code || "", customer?.travel_agency_name || "")}${formField("语言喜好", "language_preference", customer?.language_preference || "zh-Hans", "text", { select: language })}${formField("称呼 / 来源", "source", customer?.source || "", "text", { placeholder: "选填" })}${formField("邮箱", "email", customer?.email || "", "email", { placeholder: "name@example.com" })}`)}
+    </div><div class="editor-column">
     ${formSection("联系方式", "可添加多条，并指定一个默认联系方式", `<div class="field span-2"><div class="dynamic-row-heading"><strong>联系方式</strong><button type="button" class="button small" data-action="add-customer-contact">${appIcon("plus")} 添加联系方式</button></div><div class="customer-contact-rows">${(customer ? contactRows(customer.id) : [{ contact_type: "电话", value: "", is_default: true }]).map((item, index) => customerContactField(item, index)).join("")}</div></div>`)}
+    </div><div class="editor-column">
     ${formSection("常用地址", "可保存多个接送地址，并指定一个默认地址", `<div class="field span-2"><div class="dynamic-row-heading"><strong>常用地址</strong><button type="button" class="button small" data-action="add-customer-address">${appIcon("plus")} 添加地址</button></div><div class="customer-address-rows">${(customer ? addressRows(customer.id) : [{ label: "家", address: "", is_default: true }]).map((item, index) => customerAddressField(item, index)).join("")}</div></div>`)}
     ${formSection("备注", "记录与服务相关的补充信息", formField("备注", "remark", customer?.remark || "", "textarea", { span: true, placeholder: "添加备注…" }))}
-    </form>`, "editor-modal customer-editor-modal");
+    </div></div></form>`, "editor-modal customer-editor-modal workspace-editor");
 }
 
 function customerContactField(item = {}, index = 0) {
@@ -2144,13 +2150,13 @@ function customerAddressField(item = {}, index = 0) {
 }
 
 function openAgencyForm(agency = null) {
-  showModal(agency ? "编辑旅行社" : "新增旅行社", `<form id="agencyForm" data-id="${agency?.id || ""}"><div class="form-grid">
+  showModal(agency ? "编辑旅行社" : "新增旅行社", `<form id="agencyForm" class="agency-editor-form" data-id="${agency?.id || ""}"><div class="form-grid">
     ${formField("旅行社代码 · 必填", "agency_code", agency?.agency_code || "", "text", { required: true })}
     ${formField("旅行社名称 · 必填", "name", agency?.name || "", "text", { required: true })}
     ${formField("联系人", "contact_person", agency?.contact_person || "")}
     ${formField("联系电话", "phone", agency?.phone || "", "tel")}
     ${formField("办公地址", "office_address", agency?.office_address || "", "text", { span: true })}
-  </div>${modalActions()}</form>`);
+  </div>${modalActions()}</form>`, "editor-modal agency-editor-modal");
 }
 
 function tripRouteFields(trip) {
@@ -2193,18 +2199,25 @@ function openTripForm(trip = null, copying = false) {
   const statusLabel = !copying && trip?.is_cancelled ? "已取消" : !copying && trip?.is_completed ? "已完成" : "待执行";
   showModal(trip && !copying ? "编辑行程" : copying ? "复制行程" : "新增行程", `<form id="tripForm" class="editor-form trip-form" data-id="${trip && !copying ? trip.id : crypto.randomUUID()}" data-original-updated-at="${escapeHTML(!copying ? trip?.updated_at || '' : '')}">
 
-    ${formSection("行程类型", "", serviceTypePicker(trip?.service_type || "接机"))}
-    <section class="form-section smart-input-section"><label for="smart-order-text">智能输入</label><textarea id="smart-order-text" name="smart_order_text" rows="4" placeholder="粘贴途风接机订单"></textarea><small>智能识别录入</small><button type="button" class="button" data-action="recognize-pickup">识别订单</button><p data-smart-feedback></p></section>
+    <div class="editor-columns">
+    <div class="editor-column">
+    ${formSection("行程类型", "", serviceTypePicker(trip?.service_type || "接机"), "trip-type-section")}
+    <details class="smart-order-disclosure"><summary>智能输入</summary><section class="form-section smart-input-section"><label for="smart-order-text">智能输入</label><textarea id="smart-order-text" name="smart_order_text" rows="4" placeholder="粘贴途风接机订单"></textarea><small>智能识别录入</small><button type="button" class="button" data-action="recognize-pickup">识别订单</button><p data-smart-feedback></p></section></details>
     <input type="hidden" name="flight_selection_snapshot" value="${escapeHTML(JSON.stringify(!copying ? trip?.flight_selection_snapshot || null : null))}">
     <datalist id="tripAddressSuggestions">${addressRows(trip?.customer_id || "").map(address => `<option value="${escapeHTML(address.address)}">${escapeHTML(address.label || "常用地址")}</option>`).join("")}</datalist>
-
-    ${formSection("订单来源", "", orderSourcePicker(trip?.order_source || "普通客户", trip?.travel_agency_code || "", trip?.travel_agency_name || "", copying ? "" : trip?.travel_agency_order_number || ""))}
+    ${formSection("订单来源", "", orderSourcePicker(trip?.order_source || "普通客户", trip?.travel_agency_code || "", trip?.travel_agency_name || "", copying ? "" : trip?.travel_agency_order_number || ""), "trip-source-section")}
     ${formSection("客户", "", `${tripCustomerField(trip?.customer_id || "", trip?.customer_name || "")}${formField("联系方式", "customer_contact", trip?.customer_contact || "", "text", {span:true,placeholder:"电话或其他联系方式"})}${formField("人数", "customer_count", trip?.customer_count || "1", "number")}${formField("行李", "customer_stuff", trip?.customer_stuff || "0", "number")}`, "trip-customer-section")}
-    ${formSection("行程详情", "", `${formField("接载日期", "appointment_date", pickupDate, "date", {required:true})}${formField("接载时间", "appointment_time", pickupTime, "time", {required:true})}${tripRouteFields(trip)}<div class="span-2">${tripFlightSection(trip, copying, pickupDate)}</div>`, "trip-details-section")}
-    ${formSection("费用与备注", "", `${formField("行程费用", "price", trip?.price ?? 0, "number")}${formField("备注", "memo", trip?.memo || "", "textarea", {span:true,placeholder:"接载说明或其他备注…"})}<input type="hidden" name="tip" value="${escapeHTML(copying ? 0 : trip?.tip ?? 0)}">`)}
-    ${formSection("状态信息", "", `<div class="field"><label>行程状态</label><div class="readonly-status">${statusLabel}</div></div>${tripPaidSelector(!copying && trip?.is_paid)}`)}
+    </div>
+    <div class="editor-column">
+    ${formSection("行程详情", "", `${formField("接载日期", "appointment_date", pickupDate, "date", {required:true})}${formField("接载时间", "appointment_time", pickupTime, "time", {required:true})}${tripRouteFields(trip)}`, "trip-details-section")}
+    ${formSection("航班信息", "", `<div class="span-2">${tripFlightSection(trip, copying, pickupDate)}</div>`, "trip-flight-panel")}
+    </div>
+    <div class="editor-column">
+    ${formSection("费用与备注", "", `${formField("行程费用", "price", trip?.price ?? 0, "number")}${formField("备注", "memo", trip?.memo || "", "textarea", {span:true,placeholder:"接载说明或其他备注…"})}<input type="hidden" name="tip" value="${escapeHTML(copying ? 0 : trip?.tip ?? 0)}">`, "trip-finance-section")}
+    ${formSection("状态信息", "", `<div class="field"><label>行程状态</label><div class="readonly-status">${statusLabel}</div></div>${tripPaidSelector(!copying && trip?.is_paid)}`, "trip-state-section")}
     ${reminderFields(trip, pickupDate, pickupTime, copying)}
-    </form>`, "editor-modal trip-editor-modal");
+    </div>
+    </div></form>`, "editor-modal trip-editor-modal workspace-editor");
   const savedFlight = !copying && trip ? readFlightSnapshot(trip, airportCrosswalk) : null;
   if (savedFlight) {
     const result = document.querySelector('#tripForm [data-flight-result]');

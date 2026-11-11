@@ -7,7 +7,7 @@ import argparse,hashlib,json,shutil,tempfile,zipfile
 parser=argparse.ArgumentParser(description=__doc__);parser.add_argument('--archive',type=Path,required=True);args=parser.parse_args()
 root=Path(__file__).resolve().parents[1]/'web'
 base=Path(tempfile.mkdtemp(prefix='trvelma-cloudflare-release-'));dist=base/'dist';dist.mkdir()
-files=['index.html','app.js','parity.mjs','localization.mjs','styles.css','privacy.html','support.html','assets/airport-crosswalk.json']
+files=['index.html','app.js','parity.mjs','localization.mjs','styles.css','workspace.css','privacy.html','support.html','assets/airport-crosswalk.json']
 files += [str(path.relative_to(root)) for path in sorted((root/'assets/icons').glob('*.png')) if path.stem.replace('-', '').isalnum()]
 files.append('assets/icons/manifest.json')
 manifest={}

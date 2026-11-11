@@ -5,7 +5,7 @@ transport are replaced in the temporary copy. No auth, live cloud or browser acc
 """
 from pathlib import Path
 import shutil,tempfile,argparse,http.server,os
-parser=argparse.ArgumentParser(description=__doc__);parser.add_argument('--port',type=int,default=4187);parser.add_argument('--screen',choices=['contact','trips','finance','flight','detail','new-flight','copy-flight'],default='trips');args=parser.parse_args()
+parser=argparse.ArgumentParser(description=__doc__);parser.add_argument('--port',type=int,default=4187);parser.add_argument('--screen',choices=['home','contact','trips','finance','flight','detail','new-flight','copy-flight'],default='trips');args=parser.parse_args()
 root=Path(__file__).resolve().parents[1]/'web';base=Path(tempfile.mkdtemp(prefix='trvelma-web-qa-'));shutil.copytree(root,base,dirs_exist_ok=True)
 p=base/'app.js';s=p.read_text();index=s.rfind('initialize();');assert index>0
 s=s[:index]+'''
@@ -46,6 +46,9 @@ await airportCrosswalkReady;
 state.page='trips';renderApp();
 document.body.insertAdjacentHTML('afterbegin','<aside style="position:fixed;bottom:0;left:0;z-index:9999;background:#fff3bc;padding:8px">隔离 QA · 内存数据 · 云端请求已阻断 · 刷新重置</aside>');
 '''
+if args.screen == 'home':
+ s=s.replace("const qaTrips=[];", """const qaTrips=[0,1,2].map((i)=>({id:'qa-home-'+i,customer_name:['QA 陈女士','QA 林先生','QA 王先生'][i],appointment_date:new Date(Date.now()+86400000*(i+1)).toISOString(),appointment_time:new Date(Date.now()+86400000*(i+1)).toISOString(),service_type:i===1?'送机':'接机',location_start:i===1?'QA Pasadena Hotel':'LAX Terminal B',location_end:i===1?'LAX Terminal B':'QA Pasadena Hotel',price:[90,120,110][i],tip:0,is_paid:false,is_completed:false,stops:[],expenses:[],customer_count:3,customer_stuff:4}));""")
+ s=s.replace("state.page='trips';renderApp();", "state.trips=structuredClone(qaTrips);state.page='home';renderApp();")
 if args.screen == 'contact':
  s=s.replace("const qaTrips=[];", "const qaTrips=[{id:'44444444-4444-4444-8444-444444444444',customer_id:'22222222-2222-4222-8222-222222222222',customer_name:'QA Guest',customer_contact:'WeChat-QA',appointment_date:new Date().toISOString(),appointment_time:new Date().toISOString(),service_type:'接机',location_start:'QA Airport',location_end:'QA Hotel',price:90,tip:10,is_paid:true,is_completed:true,stops:[],expenses:[{title:'Extra',amount:5,is_addition:true},{title:'Parking',amount:8,is_addition:false}]}];")
  s=s.replace('state.contacts=[];', "state.contacts=[{id:'qa-phone',customer_id:qaCustomer.id,contact_type:'电话',value:'+1 (555) 000-0100',is_default:false},{id:'qa-wechat',customer_id:qaCustomer.id,contact_type:'微信',value:'WeChat-QA',is_default:true}];")
