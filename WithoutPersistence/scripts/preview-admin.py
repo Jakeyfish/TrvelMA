@@ -4,7 +4,7 @@ from pathlib import Path
 import shutil,tempfile,http.server,functools,argparse
 p=argparse.ArgumentParser();p.add_argument('--port',type=int,default=4280);args=p.parse_args()
 source=Path(__file__).resolve().parents[1]/'admin';root=Path(tempfile.mkdtemp(prefix='trvelma-admin-qa-'))
-for name in ['index.html','admin.css','admin.js','core.mjs']:shutil.copy2(source/name,root/name)
+for name in ['index.html','admin.css','admin.js','core.mjs','mfa.mjs']:shutil.copy2(source/name,root/name)
 s=(root/'admin.js').read_text();assert s.endswith('login();\n')
 s=s[:-len('login();\n')]+'''
 window.fetch=async()=>{throw Error('QA 网络已阻断');};

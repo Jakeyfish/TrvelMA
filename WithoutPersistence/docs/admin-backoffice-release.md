@@ -55,3 +55,14 @@ verification/20261111_admin_disable.sql 禁用全部管理员及管理 RPC 执�
 - 开通前以合成邮箱在 PGlite 验证待执行脚本：未验证拒绝、成功限定范围开通及审计、重复开通拒绝、定向禁用通过。未把本地定向禁用操作用于生产。
 - 后台登录页已预填邮箱，验证器密钥设置、密码和验证码输入交由用户本人完成。真实 MFA、管理读取与受控写入集成验收仍待完成。
 - 本次无产品源码修改。证据：admin-email-verified.jpg、admin-scope-enabled.jpg、bootstrap-admin-pending.sql（已按确认执行，文件原名保留）、bootstrap-admin-disable.sql。
+
+## MFA 重复创建修复（待上传）
+
+- 用户截图显示同名 factor 已存在；代码原先仅接受 verified TOTP，重登会忽略已有 unverified 因子，随后固定 friendly_name 再 enroll 触发冲突。
+- 新增 mfa.mjs：从已认证 /auth/v1/user 获取因子，优先已验证 TOTP，否则恢复同名未验证管理 TOTP。enroll 前重查；并发名称冲突后重查恢复。没有删除、替换、重新生成现有用户因子或降低 MFA 要求。
+- 登录/继续设置均复用该逻辑，恢复后直接进入六位验证码页面。密钥仍仅在首次设置页面临时显示，不写缓存或日志。
+- 前端 12/12 测试通过，包含原始待验证因子恢复、并发重名、网络失败不创建替代因子、原验证因子优先。JS 语法检查通过；服务端授权无变化，未重复运行不变的数据库测试。
+- 修复包 admin-mfa-resume.zip，6 个静态文件，独立后台项目 yunsheng-admin；尚未上传/部署，不是线上已修复。
+- 浏览器 Playwright 绑定报告 browser.user unavailable；原生 Tab 能操作页面但无法操作文件选择器，聊天宿主应用被安全规则禁止控制。CLI 未发现已配置的 Cloudflare 登录。上传文件需用户本人接手，未绕过限制。
+- 下一步：用户选择 ZIP，继续保存并部署，再由用户输入现有验证器生成的验证码完成真实 MFA 验收。
+- 官方行为参考：https://supabase.com/docs/reference/javascript/auth-mfa-enroll （创建未验证因子），https://supabase.com/docs/guides/auth/debugging/error-codes （名称冲突）。

@@ -4,7 +4,7 @@ from pathlib import Path
 import argparse,tempfile,json,hashlib,zipfile
 p=argparse.ArgumentParser();p.add_argument('--archive',type=Path,required=True);a=p.parse_args()
 root=Path(__file__).resolve().parents[1]/'admin';dist=Path(tempfile.mkdtemp(prefix='trvelma-admin-release-'))/'dist';dist.mkdir()
-files=['index.html','admin.css','admin.js','core.mjs'];manifest={}
+files=['index.html','admin.css','admin.js','core.mjs','mfa.mjs'];manifest={}
 for name in files:
  data=(root/name).read_bytes()
  if any(x in data for x in [b'sb_secret_',b'PRIVATE KEY-----',b'QA-NOT-A-REAL-TOKEN']):raise SystemExit('Unsafe release content')

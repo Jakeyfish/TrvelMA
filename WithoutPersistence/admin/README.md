@@ -7,7 +7,7 @@
 - `node --test admin/tests/*.test.mjs`（从 WithoutPersistence 目录）
 - `cd supabase/admin-tests && npm ci --ignore-scripts && npm test`：PGlite 中执行当前授权、设备、Apple 台账及后台迁移，使用合成资料。不是线上 Postgres/PostgREST 或真实 MFA 集成验证。
 - `python3 scripts/preview-admin.py --port 4280`：实际渲染器 + 合成资料 + 阻断外网，不包含真实会话。
-- `python3 scripts/package-admin.py --archive /absolute/output.zip`：仅 5 个静态文件，独立 Cloudflare 项目；不得使用业务站点 trvelma 项目覆盖发布。
+- `python3 scripts/package-admin.py --archive /absolute/output.zip`：仅 6 个静态文件，独立 Cloudflare 项目；不得使用业务站点 trvelma 项目覆盖发布。
 
 ## 服务端部署前置
 
@@ -32,3 +32,5 @@ Auth 会话强制退出、账号删除、密码重置、生产收费、退款均
 正式启用尚需：管理员身份与 TOTP、生产迁移最终授权、线上拒绝测试、真实 MFA 和受控写入验收。独立静态登录页面可先部署为未启用状态，但不得称为后台已可用。
 
 认证设计参考官方文档：[Supabase MFA](https://supabase.com/docs/guides/auth/auth-mfa)、[TOTP](https://supabase.com/docs/guides/auth/auth-mfa/totp)。实际生产 MFA 链路仍待管理员本人设置后验证。
+
+重复/中断设置恢复：重新登录时读取本账号 MFA 因子，继续验证原同名未验证因子；不删除或替换手机里已保存的密钥。
