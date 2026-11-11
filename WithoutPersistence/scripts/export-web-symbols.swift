@@ -14,7 +14,7 @@ let names = [
     "minus.circle.fill", "xmark", "chevron.right", "chevron.down", "chevron.up", "chevron.left",
     "arrow.clockwise", "chart.pie.fill", "list.bullet.rectangle", "qrcode", "qrcode.viewfinder",
     "trash", "arrow.down.left", "arrow.up.right", "person.2", "tray.full", "t.square",
-    "dollarsign.circle", "checkmark.circle", "bell.badge", "questionmark.circle", "eye", "eye.slash", "phone.fill", "message.fill"
+    "dollarsign.circle", "checkmark.circle", "bell.badge", "questionmark.circle", "eye", "eye.slash", "phone.fill", "message.fill", "rectangle.portrait.and.arrow.right"
 ]
 guard CommandLine.arguments.count == 2 else { fatalError("Usage: export-web-symbols.swift OUTPUT_DIRECTORY") }
 let output = URL(fileURLWithPath: CommandLine.arguments[1], isDirectory: true)

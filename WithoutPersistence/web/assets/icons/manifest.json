@@ -1,13 +1,13 @@
 {
-  "canvas_points": [
+  "canvas_points" : [
     32,
     32
   ],
-  "pixels": [
+  "pixels" : [
     96,
     96
   ],
-  "symbols": [
+  "symbols" : [
     "house.fill",
     "books.vertical",
     "person.text.rectangle.fill",
@@ -61,6 +61,7 @@
     "eye",
     "eye.slash",
     "phone.fill",
-    "message.fill"
+    "message.fill",
+    "rectangle.portrait.and.arrow.right"
   ]
 }

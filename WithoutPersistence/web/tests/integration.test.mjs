@@ -549,9 +549,14 @@ test('localized settings save keeps storage enums, owner and currency semantics 
  assert.equal(c.notices[0],localized('设置已保存。','es'));
 });
 test('connection badge translates offline and queued counts without changing queued records',()=>{
- const c=boot();c.badge={textContent:'',classList:{toggle:()=>{}}};
+ const c=boot();c.badge={textContent:'',attrs:{},classes:{},setAttribute(name,value){this.attrs[name]=value},classList:{toggle:(name,value)=>{c.badge.classes[name]=value}}};
  vm.runInContext(`document.querySelector=()=>badge;state.settings={language_code:'en'};queuedOperationCount=()=>2;state.offline=true;renderConnectionStatus();`,c);
  assert.equal(c.badge.textContent,'Offline · Pending sync: 2');
+ assert.equal(c.badge.attrs['aria-label'],c.badge.textContent);
+ assert.equal(c.badge.classes.offline,true);
+ vm.runInContext(`state.offline=false;renderConnectionStatus();`,c);
+ assert.equal(c.badge.classes.pending,true);
+ assert.equal(c.badge.attrs.title,'Pending sync: 2');
  vm.runInContext(`state.offline=false;queuedOperationCount=()=>0;renderConnectionStatus();`,c);
  assert.equal(c.badge.textContent,'Cloud connected');
 });
@@ -563,6 +568,12 @@ test('application shell localizes navigation and headings without translating ac
   c.productionRenderApp();
   for(const key of ['总览','行程','客户','名片','旅行社','财务','设置','工作台','账户偏好和本位币','刷新'])assert.ok(c.output.innerHTML.includes(localized(key,language)),`${language}: ${key}`);
   assert.ok(c.output.innerHTML.includes('原文 QA'));
+  const header=c.output.innerHTML.split('<header')[1].split('</header>')[0];
+  assert.ok(header.includes('class="topbar-user"'));
+  assert.ok(header.includes('原文 QA'));
+  assert.ok(header.includes('rectangle.portrait.and.arrow.right'));
+  assert.ok(header.includes(`aria-label="${localized('退出登录',language)}"`));
+  assert.ok(!c.output.innerHTML.split('</aside>')[0].includes('原文 QA')); 
   assert.ok(c.output.innerHTML.includes('data-page="wallet"'));
   assert.equal(c.document.documentElement.lang,language);
  }

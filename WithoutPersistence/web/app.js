@@ -1,12 +1,12 @@
-import { localized } from "./localization.mjs?v=20261110-ui-v2";
+import { localized } from "./localization.mjs?v=20261111-ui-v3";
 const uiLanguage = () => normalizedLanguageCode((state.archiveMode ? state.archiveData?.user_settings?.[0]?.language_code : null) || state.settings?.language_code || readInterfaceLanguage());
 const ui = (key, ...args) => localized(key, uiLanguage(), ...args);
-import { telephoneNumber, tripTelephoneContacts, financialCategoryGroups, statementMoney, agencyStatementTrips, statementAgencyKey, buildAgencyStatement, pickupReminders, recognizePickup, matchPickupAgency, partsInZone, zonedISO, parseFlights, flightID, makeFlightSnapshot, readFlightSnapshot, routeMatches, compareTrips, settlementPayload } from './parity.mjs?v=20261110-ui-v2';
+import { telephoneNumber, tripTelephoneContacts, financialCategoryGroups, statementMoney, agencyStatementTrips, statementAgencyKey, buildAgencyStatement, pickupReminders, recognizePickup, matchPickupAgency, partsInZone, zonedISO, parseFlights, flightID, makeFlightSnapshot, readFlightSnapshot, routeMatches, compareTrips, settlementPayload } from './parity.mjs?v=20261111-ui-v3';
 let airportCrosswalk = [];
 const airportCrosswalkReady = fetch('./assets/airport-crosswalk.json').then(r => { if (!r.ok) throw Error('机场对照表不可用'); return r.json(); }).then(data => { airportCrosswalk = data.airports; }).catch(() => {});
 const SUPABASE_URL = "https://lbdfqzeiweqbsklklcqr.supabase.co";
 const SUPABASE_PUBLISHABLE_KEY = "sb_publishable_d4tmuPirsf8-wUDO0Frd7w_PcXME6rs";
-const WEB_BUILD = "20261110-ui-v2";
+const WEB_BUILD = "20261111-ui-v3";
 const SESSION_KEY = "yunsheng.web.session.v1";
 const OFFLINE_CACHE_PREFIX = "yunsheng.web.offline-cache.v1.";
 const OFFLINE_QUEUE_PREFIX = "yunsheng.web.offline-queue.v1.";
@@ -265,6 +265,8 @@ function renderConnectionStatus() {
   badge.classList.toggle("pending", !offline && count > 0);
   const pending = count ? ui('%ld 项待同步', count) : '';
   badge.textContent = offline ? ui('离线') + (pending ? ` · ${pending}` : '') : pending || ui('云端已连接');
+  badge.setAttribute('title', badge.textContent);
+  badge.setAttribute('aria-label', badge.textContent);
 }
 
 function writeOfflineCache(snapshot, userID = state.user?.id) {
@@ -946,7 +948,7 @@ function renderPendingSyncBlocker() {
   document.getElementById("app").innerHTML = `<main class="offline-start"><section class="panel"><h1>还有修改等待同步</h1><p>${escapeHTML(message)}队列中的 ${count} 项修改仍保存在本机；保持当前账号登录，联网后可以继续重试。</p><button class="button primary" data-action="retry-offline-load">重试同步</button><button class="button" data-action="signout">退出登录</button></section></main>`;
 }
 
-const appSymbolNames = new Set(["house.fill", "books.vertical", "person.text.rectangle.fill", "wallet.bifold.fill", "person.crop.rectangle.badge.plus.fill", "building.2.fill", "gearshape.fill", "airplane", "airplane.arrival", "airplane.departure", "car.fill", "clock.fill", "figure.wave", "ellipsis.circle.fill", "checkmark.circle.fill", "checkmark", "book.closed", "location.north.fill", "arrow.triangle.turn.up.right.diamond.fill", "arrow.up.arrow.down", "mappin.and.ellipse", "mappin", "flag.checkered", "person.fill", "suitcase.fill", "calendar", "magnifyingglass", "plus", "plus.circle", "minus.circle.fill", "xmark", "chevron.right", "chevron.down", "chevron.up", "chevron.left", "arrow.clockwise", "chart.pie.fill", "list.bullet.rectangle", "qrcode", "qrcode.viewfinder", "trash", "arrow.down.left", "arrow.up.right", "person.2", "tray.full", "t.square", "dollarsign.circle", "checkmark.circle", "bell.badge", "questionmark.circle", "eye", "eye.slash", "phone.fill", "message.fill"]);
+const appSymbolNames = new Set(["house.fill", "books.vertical", "person.text.rectangle.fill", "wallet.bifold.fill", "person.crop.rectangle.badge.plus.fill", "building.2.fill", "gearshape.fill", "airplane", "airplane.arrival", "airplane.departure", "car.fill", "clock.fill", "figure.wave", "ellipsis.circle.fill", "checkmark.circle.fill", "checkmark", "book.closed", "location.north.fill", "arrow.triangle.turn.up.right.diamond.fill", "arrow.up.arrow.down", "mappin.and.ellipse", "mappin", "flag.checkered", "person.fill", "suitcase.fill", "calendar", "magnifyingglass", "plus", "plus.circle", "minus.circle.fill", "xmark", "chevron.right", "chevron.down", "chevron.up", "chevron.left", "arrow.clockwise", "chart.pie.fill", "list.bullet.rectangle", "qrcode", "qrcode.viewfinder", "trash", "arrow.down.left", "arrow.up.right", "person.2", "tray.full", "t.square", "dollarsign.circle", "checkmark.circle", "bell.badge", "questionmark.circle", "eye", "eye.slash", "phone.fill", "message.fill", "rectangle.portrait.and.arrow.right"]);
 function appIcon(name) {
   const symbol = appSymbolNames.has(name) ? name : "questionmark.circle";
   return `<span class="app-symbol" data-symbol="${symbol}" aria-hidden="true" style="--app-symbol-image:url('./assets/icons/${symbol.replaceAll('.', '-')}.png')"></span>`;
@@ -1005,10 +1007,10 @@ function renderApp() {
         ${accountValidityHTML()}
         <div class="nav-label">${escapeHTML(ui('工作台'))}</div>
         <nav class="nav-list">${navItems.map(([key, icon, label]) => `<button class="nav-item ${state.page === key ? "active" : ""}" data-action="navigate" data-page="${key}"><span class="nav-icon">${appIcon(icon)}</span><span>${escapeHTML(ui(label))}</span></button>`).join("")}</nav>
-        <div class="sidebar-bottom"><span class="avatar">${escapeHTML((state.user?.user_metadata?.salutation || state.user?.email || "云").slice(0, 1))}</span><span class="user-copy"><strong>${escapeHTML(state.user?.user_metadata?.salutation || ui("已登录"))}</strong><small>${escapeHTML(state.user?.email || "")}</small></span></div>
+
       </aside>
       <main class="main ${state.page === "wallet" ? "finance-main" : ""}">
-        <header class="topbar"><div><h1>${escapeHTML(ui(title))}</h1><p>${escapeHTML(ui(subtitle))}</p></div><div class="top-actions"><span class="connection">${escapeHTML(ui('云端已连接'))}</span><button class="button quiet small" data-action="refresh-data">${appIcon("arrow.clockwise")} ${escapeHTML(ui('刷新'))}</button><button class="button quiet small" data-action="signout">${escapeHTML(ui('退出登录'))}</button></div></header>
+        <header class="topbar"><div><h1>${escapeHTML(ui(title))}</h1><p>${escapeHTML(ui(subtitle))}</p></div><div class="top-actions"><span class="connection" role="status" aria-live="polite">${escapeHTML(ui('云端已连接'))}</span><button class="button quiet small top-icon-button" data-action="refresh-data" title="${escapeHTML(ui('刷新'))}" aria-label="${escapeHTML(ui('刷新'))}">${appIcon("arrow.clockwise")}</button><button class="button quiet small top-icon-button" data-action="signout" title="${escapeHTML(ui('退出登录'))}" aria-label="${escapeHTML(ui('退出登录'))}">${appIcon("rectangle.portrait.and.arrow.right")}</button><div class="topbar-user"><span class="avatar">${escapeHTML((state.user?.user_metadata?.salutation || state.user?.email || "云").slice(0, 1))}</span><span class="user-copy"><strong>${escapeHTML(state.user?.user_metadata?.salutation || ui("已登录"))}</strong><small>${escapeHTML(state.user?.email || "")}</small></span></div></div></header>
         <section id="pageContent">${renderPage()}</section>
       </main>
     </div>`;
