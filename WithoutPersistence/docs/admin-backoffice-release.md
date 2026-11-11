@@ -66,3 +66,12 @@ verification/20261111_admin_disable.sql 禁用全部管理员及管理 RPC 执�
 - 浏览器 Playwright 绑定报告 browser.user unavailable；原生 Tab 能操作页面但无法操作文件选择器，聊天宿主应用被安全规则禁止控制。CLI 未发现已配置的 Cloudflare 登录。上传文件需用户本人接手，未绕过限制。
 - 下一步：用户选择 ZIP，继续保存并部署，再由用户输入现有验证器生成的验证码完成真实 MFA 验收。
 - 官方行为参考：https://supabase.com/docs/reference/javascript/auth-mfa-enroll （创建未验证因子），https://supabase.com/docs/guides/auth/debugging/error-codes （名称冲突）。
+
+## MFA 修复前端已由用户部署
+
+- 用户手动完成上传/部署后，Cloudflare 生产列表已核验最新部署 bbbce389-199c-4dbe-b449-da23e4d603bf，固定地址 https://bbbce389.yunsheng-admin.pages.dev/，替代 a6006810。
+- 独立后台登录页正常加载，已预填管理员邮箱，密码与六位验证码仍由用户本人输入；未代设/替换 TOTP 因子。
+- 修复代码提交 99e9ae4；对应前端 12 项测试已在上一轮通过，本轮未重复运行不变测试。
+- 尝试独立下载 5 个线上静态资源做哈希比对被 HTTP 403 拒绝，未获得线上哈希；直接在浏览器打开 mfa.mjs 也被客户端阻止。未绕过限制，不能声称逐文件线上哈希验证通过。
+- 本轮已验证 Cloudflare 生产部署与登录页加载；实际未验证因子恢复和真实 MFA 进入用户列表仍待用户操作确认。
+- 证据：mfa-resume-production.jpg。
