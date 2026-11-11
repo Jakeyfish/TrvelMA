@@ -154,3 +154,17 @@ test('verified deleted-account notification is acknowledged, purchase is not rec
   const purchase = await purchaseHandler(() => deps)(request(purchaseBody));
   assert.deepEqual(await purchase.json(), ignored);
 });
+
+test('verification diagnostics categorize known key errors without logging transaction or arbitrary error text',async()=>{
+ const original=console.warn,logs=[];console.warn=(...args)=>logs.push(args.join(' '));
+ try {
+  for(const message of ['"alg" parameter "ES256" requires curve "prime256v1".','secret-fixture-token raw-private-payload']) {
+   const {deps}=fixture();deps.verifier.verifyAndDecodeTransaction=async()=>{throw Object.assign(Error(),{status:1,cause:Error(message)});};
+   const response=await purchaseHandler(()=>deps)(request({signedTransaction:'signed-fixture-secret'}));
+   assert.equal(response.status,400);
+   assert.deepEqual(await response.json(),{error:'PURCHASE_VERIFICATION_FAILED'});
+  }
+  assert.ok(logs[0].includes('jwt-curve'));
+  const output=logs.join('\n');assert.ok(!output.includes('signed-fixture-secret'));assert.ok(!output.includes('raw-private-payload'));assert.ok(!output.includes('secret-fixture-token'));
+ } finally {console.warn=original;}
+});

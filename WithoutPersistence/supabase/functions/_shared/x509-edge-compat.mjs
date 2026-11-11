@@ -40,7 +40,18 @@ export function edgeCompatibleCertificate(Native, { Buffer, X509 }) {
         if (!unavailable(error, 'verify')) throw error;
         // jsrsasign is already used by Apple's official library. Verify the
         // complete certificate signature; never replace this with issuer names.
-        return parser(this).verifySignature(publicKey.export({ type: 'spki', format: 'pem' }));
+        const certificate = parser(this);
+        const algorithm = certificate.getSignatureAlgorithmField();
+        const keyType = publicKey.asymmetricKeyType;
+        // Node returns false for a valid but incompatible issuer key. jsrsasign
+        // throws a string instead (e.g. ECDSA certificate with an RSA root),
+        // which would abort Apple's root search before the matching root.
+        // Reject only known algorithm/key mismatches; never turn parser,
+        // signature or unexpected runtime errors into a successful verification.
+        const knownKey = ['rsa', 'rsa-pss', 'ec', 'dsa', 'ed25519', 'ed448'].includes(keyType);
+        if (knownKey && /withECDSA$/.test(algorithm) && keyType !== 'ec') return false;
+        if (knownKey && /withRSA(?:andMGF1)?$/.test(algorithm) && !['rsa', 'rsa-pss'].includes(keyType)) return false;
+        return certificate.verifySignature(publicKey.export({ type: 'spki', format: 'pem' }));
       }
     }
     get infoAccess() {

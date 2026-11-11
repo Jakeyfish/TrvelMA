@@ -46,6 +46,19 @@ function failure(error, fallback) {
   const diagnostic = {};
   if (error instanceof Error && /^[A-Z][A-Z0-9_]{1,63}$/.test(error.message)) diagnostic.code = error.message;
   if (Number.isInteger(error?.status)) diagnostic.verificationStatus = error.status;
+  const cause = error?.cause;
+  if (['JsonWebTokenError', 'TokenExpiredError', 'NotBeforeError', 'TypeError', 'Error'].includes(cause?.name)) diagnostic.causeType = cause.name;
+  const causeMessage = typeof cause?.message === 'string' ? cause.message : '';
+  const categories = [
+    ['jwt-signature', /^invalid signature$/],
+    ['jwt-algorithm', /^invalid algorithm$/],
+    ['jwt-curve', /^"alg" parameter "ES(?:256|384|512)" requires curve /],
+    ['jwt-key-material', /^secretOrPublicKey is not valid key material/],
+    ['jwt-key-type', /^secretOrPublicKey must be an asymmetric key/],
+    ['key-details', /Cannot read properties of undefined \(reading 'namedCurve'\)/],
+  ];
+  const causeCategory = categories.find(([, pattern]) => pattern.test(causeMessage));
+  if (causeCategory) diagnostic.causeCategory = causeCategory[0];
   if (typeof error?.cause?.code === 'string' && /^[A-Z][A-Z0-9_]{1,63}$/.test(error.cause.code)) diagnostic.causeCode = error.cause.code;
   const missingFeature = /^Not implemented: ([A-Za-z0-9_. ]{1,120})/.exec(error?.cause?.message || '');
   if (missingFeature) diagnostic.missingFeature = missingFeature[1];

@@ -5,6 +5,7 @@ import { Buffer } from 'node:buffer';
 import jsrsasign from 'jsrsasign';
 import { readFileSync } from 'node:fs';
 import { SignedDataVerifier, Environment } from '@apple/app-store-server-library';
+import { installEdgeECKeyCurveAliases } from '../functions/_shared/key-curve-edge-compat.mjs';
 import { edgeCompatibleCertificate } from '../functions/_shared/x509-edge-compat.mjs';
 const fixtures = JSON.parse(readFileSync(new URL('./fixtures/apple-x509/certificates.json',import.meta.url)));
 const bytes = name => Buffer.from(fixtures[name + '_BASE64_ENCODED'], 'base64');
@@ -72,6 +73,14 @@ test('full ES256 JWS passes forced Edge APIs; tampering, app and environment mis
  const dir=mkdtempSync(join(tmpdir(),'trvelma-public-test-pki-'));
  const run=(...args)=>execFileSync('/usr/bin/openssl',args,{cwd:dir,stdio:'pipe'});
  const original=crypto.X509Certificate;crypto.X509Certificate=Compat;
+ const sample=new Native(bytes('REAL_APPLE_ROOT')).publicKey;
+ let prototype=Object.getPrototypeOf(sample);
+ while(!Object.getOwnPropertyDescriptor(prototype,'asymmetricKeyDetails')) prototype=Object.getPrototypeOf(prototype);
+ const detailsDescriptor=Object.getOwnPropertyDescriptor(prototype,'asymmetricKeyDetails');
+ Object.defineProperty(prototype,'asymmetricKeyDetails',{...detailsDescriptor,get(){const value=detailsDescriptor.get.call(this);return this.asymmetricKeyType==='ec'?{...value,namedCurve:({'prime256v1':'p256','secp384r1':'p384','secp521r1':'p521'}[value.namedCurve]||value.namedCurve)}:value;}});
+ assert.equal(sample.asymmetricKeyDetails.namedCurve,'p384');
+ assert.equal(typeof installEdgeECKeyCurveAliases(sample),'function');
+ assert.equal(sample.asymmetricKeyDetails.namedCurve,'secp384r1');
  try {
   run('req','-x509','-newkey','ec','-pkeyopt','ec_paramgen_curve:prime256v1','-pkeyopt','ec_param_enc:named_curve','-nodes','-keyout','root.key','-out','root.pem','-subj','/CN=Isolated Test Root','-days','1');
   for(const name of ['intermediate','leaf'])run('req','-new','-newkey','ec','-pkeyopt','ec_paramgen_curve:prime256v1','-pkeyopt','ec_param_enc:named_curve','-nodes','-keyout',name+'.key','-out',name+'.csr','-subj','/CN=Isolated Test '+name);
@@ -95,5 +104,19 @@ test('full ES256 JWS passes forced Edge APIs; tampering, app and environment mis
   await assert.rejects(()=>verifyPurchase({signedTransaction:sign({...payload,bundleId:'wrong.app'}),ownerID:owner},deps));
   await assert.rejects(()=>verifyPurchase({signedTransaction:sign({...payload,environment:'Production'}),ownerID:owner},deps));
   assert.equal(writes,1,'Only the fully verified matching transaction can persist');
- } finally {crypto.X509Certificate=original;rmSync(dir,{recursive:true,force:true});}
+ } finally {Object.defineProperty(prototype,'asymmetricKeyDetails',detailsDescriptor);crypto.X509Certificate=original;rmSync(dir,{recursive:true,force:true});}
+});
+
+test('real Apple EC intermediate rejects earlier RSA roots without aborting matching G3 root search',()=>{
+ const text=readFileSync(new URL('../functions/_shared/apple-root-certificates.ts',import.meta.url),'utf8');
+ const roots=[...text.matchAll(/['"]([A-Za-z0-9+/=]{100,})['"]/g)].map(match=>new Native(Buffer.from(match[1],'base64')));
+ assert.equal(roots.length,3);
+ const native=new Native(bytes('REAL_APPLE_INTERMEDIATE'));
+ const adapted=new Compat(native.raw);
+ const expected=roots.map(root=>native.verify(root.publicKey));
+ assert.deepEqual(expected,[false,false,true]);
+ assert.deepEqual(roots.map(root=>adapted.verify(root.publicKey)),expected);
+ assert.ok(roots.some(root=>adapted.verify(root.publicKey)&&adapted.issuer===root.subject));
+ const altered=Buffer.from(native.raw);altered[altered.length-1]^=1;
+ assert.equal(new Compat(altered).verify(roots[2].publicKey),false);
 });
