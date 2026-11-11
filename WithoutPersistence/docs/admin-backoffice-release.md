@@ -75,3 +75,11 @@ verification/20261111_admin_disable.sql 禁用全部管理员及管理 RPC 执�
 - 尝试独立下载 5 个线上静态资源做哈希比对被 HTTP 403 拒绝，未获得线上哈希；直接在浏览器打开 mfa.mjs 也被客户端阻止。未绕过限制，不能声称逐文件线上哈希验证通过。
 - 本轮已验证 Cloudflare 生产部署与登录页加载；实际未验证因子恢复和真实 MFA 进入用户列表仍待用户操作确认。
 - 证据：mfa-resume-production.jpg。
+
+## 真实 MFA 与用户列表验收通过
+
+- 用户本人反馈：重新登录并完成验证码验证后，已进入用户列表。该部分标记为用户手工确认，不表述为工具代操作通过。
+- 独立服务端只读核验：verified_totp=1、administrator_enabled=true，bindings 仅 trvelma-production/write，bootstrap_audits=1。
+- 原未完成验证的因子已成功完成验证，重复创建问题结项；未删除、替换或读取 TOTP 密钥，未代输验证码。
+- 已登录页面的工具读取仍报 browser.user unavailable，因此本轮没有继续操作其详情、设备释放或授权表单。真实管理写入验收仍未执行，不把已有隔离测试计作生产写入通过。
+- 本轮没有修改账号授权/设备/交易，无源码变更；不重复执行不变测试。
