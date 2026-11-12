@@ -20,4 +20,14 @@
 
 当前：代码待提交，生产部署待执行；完成后追加实际提交与部署凭证，不把上传中视作上线。
 
+## 实际发布结果
+
+- 代码提交：1c2bd7b（Fix Web entitlement refresh and preserve drafts across expiry），未 Git 推送。
+- Cloudflare Production/main：fb867a6b-6405-4983-ad04-03988eb9d93a，详情页状态 success，洛杉矶时间 2026-11-12 14:00。生产地址 https://trvelma.pages.dev/，固定部署地址 https://fb867a6b.trvelma.pages.dev/。
+- 上传阶段 66/66 成功；部署资产页列 65 个静态文件（上传包另含 _headers 配置）。发布 ZIP 全部文件与独立测试快照的 SHA-256 已本地核验。
+- 线上 DOM 实际引用 app.js、styles.css、workspace.css 的 20261112-expiry-v1 查询版本；已到期 QA 账号打开及“重新检查授权”均正确显示只读归档、客户 1 条，无新增/编辑业务入口，控制台错误 0。
+- 线上 JS 直接导航读取被浏览器限制，未绕过；不声称已完成线上所有资源的逐字节哈希回读。线上验证依据是生产 success、新构建资源 URL、真实归档操作及控制台。
+- 在线 active→expired 与草稿恢复使用隔离夹具验证，未为了复测而再次修改生产账号授权。无生产数据库或收费开关变更，联系方式去重仍只保留在工作区。
+- 凭证：协作目录 deliverables/2026-11-12-web-expiry-release/，含 180 项测试、生产 ZIP 与本地 SHA 清单、部署成功与线上归档截图及线上验证记录。
+
 回退基线：生产旧构建 20261111-ui-v3，Cloudflare 部署 44a72a06-3a33-4a4d-81e0-4abb8a1ea70b。出现问题可回滚到该部署；不涉及数据库回退或删除数据。
