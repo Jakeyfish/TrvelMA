@@ -5,7 +5,7 @@ transport are replaced in the temporary copy. No auth, live cloud or browser acc
 """
 from pathlib import Path
 import shutil,tempfile,argparse,http.server,os
-parser=argparse.ArgumentParser(description=__doc__);parser.add_argument('--port',type=int,default=4187);parser.add_argument('--screen',choices=['home','contact','trips','finance','flight','detail','new-flight','copy-flight'],default='trips');args=parser.parse_args()
+parser=argparse.ArgumentParser(description=__doc__);parser.add_argument('--port',type=int,default=4187);parser.add_argument('--screen',choices=['home','contact','trips','finance','flight','detail','new-flight','copy-flight','expiry'],default='trips');args=parser.parse_args()
 root=Path(__file__).resolve().parents[1]/'web';base=Path(tempfile.mkdtemp(prefix='trvelma-web-qa-'));shutil.copytree(root,base,dirs_exist_ok=True)
 p=base/'app.js';s=p.read_text();index=s.rfind('initialize();');assert index>0
 s=s[:index]+'''
@@ -66,6 +66,22 @@ if args.screen == 'copy-flight':
  s=s.replace('state.trips=[qaFlightTrip];openTripForm(qaFlightTrip);', "qaFlightTrip.tip=12;qaFlightTrip.is_paid=true;qaFlightTrip.is_completed=true;qaTrips.push(structuredClone(qaFlightTrip));state.trips=[qaFlightTrip];openTripForm(qaFlightTrip,true);")
 if args.screen == 'new-flight':
  s=s.replace('state.trips=[qaFlightTrip];openTripForm(qaFlightTrip);', 'state.trips=[];openTripForm();')
+if args.screen == 'expiry':
+ s=s.replace("state.page='trips';renderApp();", """
+let qaExpired=false;
+ensureAccountDevice=async()=>{};
+request=async(table)=>{
+ if(table==='account_entitlements')return [{edition:'cloud',status:qaExpired?'expired':'active',expires_at:new Date(Date.now()+(qaExpired?-60000:86400000)).toISOString(),max_devices:4}];
+ if(table==='rpc/read_expired_account_archive')return {read_only:true,trips:[],customers:[qaCustomer],travel_agencies:[]};
+ throw Error('QA blocked unsupported request: '+table);
+};
+loadData=async()=>{state.customers=[qaCustomer];state.trips=[];};
+state.page='customers';renderApp();
+document.body.insertAdjacentHTML('afterbegin','<aside style="position:fixed;top:0;left:0;z-index:9999;background:#fff3bc;padding:8px"><button id="qa-expire">QA 模拟到期</button> <button id="qa-renew">QA 模拟恢复</button> <button id="qa-foreground">QA 模拟切回</button><span id="qa-phase">有效</span></aside>');
+document.getElementById('qa-expire').addEventListener('click',()=>{qaExpired=true;document.getElementById('qa-phase').textContent='已模拟到期，请点正式刷新或切回页面';});
+document.getElementById('qa-renew').addEventListener('click',()=>{qaExpired=false;document.getElementById('qa-phase').textContent='已模拟恢复，请点重新检查授权';});
+document.getElementById('qa-foreground').addEventListener('click',()=>{void refreshOnForeground();});
+""")
 p.write_text(s)
 index=base/'index.html';html=index.read_text().replace('<script type="module"', '''<script>const qaFetch=window.fetch.bind(window);window.fetch=(url,options)=>{const u=new URL(url,location.href);if(u.origin!==location.origin)return Promise.reject(Error('QA blocked remote request'));return qaFetch(url,options);};</script><script type="module"''');index.write_text(html)
 print(f'QA root: {base}\nURL: http://localhost:{args.port}',flush=True)

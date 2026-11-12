@@ -224,6 +224,7 @@ button:disabled { cursor: not-allowed; opacity: .55; }
 .empty { text-align: center; padding: 50px 20px; color: var(--muted); border: 1px dashed #344154; border-radius: var(--radius); }
 .empty strong { color: var(--text); display: block; margin-bottom: 6px; }
 .modal-backdrop { position: fixed; inset: 0; z-index: 10; background: #05080dcc; backdrop-filter: blur(8px); display: grid; place-items: center; padding: 20px; }
+#modal-root[hidden], #picker-backdrop[hidden] { display: none !important; }
 .modal { width: min(100%, 620px); max-height: min(90vh, 900px); overflow: auto; background: #2a2722; border: 1px solid #484138; border-radius: 20px; padding: 22px; box-shadow: 0 30px 90px #0007; }
 .editor-modal { width: min(100%, 780px); padding: 24px; background: radial-gradient(ellipse at 100% 0%, #684a3444, transparent 40%), #2a2722; border-color: #484138; }
 .editor-modal .modal-head { position: sticky; top: -24px; z-index: 2; margin: -24px -24px 18px; padding: 19px 24px 15px; background: #2a2722ed; backdrop-filter: blur(16px); border-bottom: 1px solid #403a32; }

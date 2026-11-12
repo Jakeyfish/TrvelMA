@@ -1,12 +1,12 @@
-import { localized } from "./localization.mjs?v=20261111-ui-v3";
+import { localized } from "./localization.mjs?v=20261112-expiry-v1";
 const uiLanguage = () => normalizedLanguageCode((state.archiveMode ? state.archiveData?.user_settings?.[0]?.language_code : null) || state.settings?.language_code || readInterfaceLanguage());
 const ui = (key, ...args) => localized(key, uiLanguage(), ...args);
-import { telephoneNumber, tripTelephoneContacts, financialCategoryGroups, statementMoney, agencyStatementTrips, statementAgencyKey, buildAgencyStatement, pickupReminders, recognizePickup, matchPickupAgency, partsInZone, zonedISO, parseFlights, flightID, makeFlightSnapshot, readFlightSnapshot, routeMatches, compareTrips, settlementPayload } from './parity.mjs?v=20261111-ui-v3';
+import { telephoneNumber, tripTelephoneContacts, financialCategoryGroups, statementMoney, agencyStatementTrips, statementAgencyKey, buildAgencyStatement, pickupReminders, recognizePickup, matchPickupAgency, partsInZone, zonedISO, parseFlights, flightID, makeFlightSnapshot, readFlightSnapshot, routeMatches, compareTrips, settlementPayload } from './parity.mjs?v=20261112-expiry-v1';
 let airportCrosswalk = [];
 const airportCrosswalkReady = fetch('./assets/airport-crosswalk.json').then(r => { if (!r.ok) throw Error('机场对照表不可用'); return r.json(); }).then(data => { airportCrosswalk = data.airports; }).catch(() => {});
 const SUPABASE_URL = "https://lbdfqzeiweqbsklklcqr.supabase.co";
 const SUPABASE_PUBLISHABLE_KEY = "sb_publishable_d4tmuPirsf8-wUDO0Frd7w_PcXME6rs";
-const WEB_BUILD = "20261111-ui-v3";
+const WEB_BUILD = "20261112-expiry-v1";
 const SESSION_KEY = "yunsheng.web.session.v1";
 const OFFLINE_CACHE_PREFIX = "yunsheng.web.offline-cache.v1.";
 const OFFLINE_QUEUE_PREFIX = "yunsheng.web.offline-queue.v1.";
@@ -2862,7 +2862,7 @@ document.addEventListener("click", async event => {
     else if (action === "statement-none") { statementSelection.clear(); renderApp(); }
     else if (action === "delete-cloud-account") showAccountDeletion();
     else if (action === "export-expired-archive") exportExpiredArchive();
-    else if (action === "retry-expired-archive") await initialize();
+    else if (action === "retry-expired-archive") await refreshAuthorizedWorkspace();
     else if (action === "auth-screen") {
       if(state.busy)return;
       authScreen=["login","register","recover"].includes(button.dataset.mode)?button.dataset.mode:"login";
@@ -2874,8 +2874,8 @@ document.addEventListener("click", async event => {
     else if (action === "toggle-trip-amounts") toggleTripAmounts(button.dataset.id);
     else if (action === "signout") await logout();
     else if (action === "refresh-data") {
-      if (queuedOperationCount() > 0 && navigator.onLine) await replayOfflineQueue();
-      await loadData(); renderApp(); showToast(state.offline ? "当前显示本机缓存，联网后会继续同步。" : "已从云端更新数据。");
+      const refreshed = await refreshAuthorizedWorkspace();
+      if (refreshed === 'workspace') showToast(state.offline ? "当前显示本机缓存，联网后会继续同步。" : "已从云端更新数据。");
     }
     else if (action === "retry-offline-load") await initialize();
     else if (action === "new-trip") openTripForm();
@@ -3102,15 +3102,45 @@ document.addEventListener("click", async event => {
 });
 
 let foregroundRefreshTask = null;
+function pauseEntitlementDrafts(paused) {
+  for (const id of ['modal-root','picker-backdrop']) {
+    const modal = document.getElementById(id);
+    if (!modal?.dataset) continue;
+    if (paused && !modal.hidden) {
+      modal.dataset.entitlementPaused = 'true'; modal.hidden = true; modal.inert = true;
+    } else if (!paused && modal.dataset.entitlementPaused === 'true') {
+      delete modal.dataset.entitlementPaused; modal.hidden = false; modal.inert = false;
+    }
+  }
+}
+async function refreshAuthorizedWorkspace() {
+  const ownerID = state.user?.id, generation = workspaceGeneration;
+  const wasArchive = state.archiveMode;
+  if (!ownerID) return;
+  await resolveProductEdition();
+  if (state.user?.id !== ownerID || generation !== workspaceGeneration) return;
+  if (state.archiveMode) {
+    // Supersede normal reads before RLS starts returning empty business lists.
+    loadSequence++;
+    pauseEntitlementDrafts(true);
+    renderExpiredArchive();
+    await loadExpiredArchive();
+    return 'archive';
+  }
+  if (queuedOperationCount() > 0 && navigator.onLine) await replayOfflineQueue();
+  if (state.user?.id !== ownerID || generation !== workspaceGeneration) return;
+  await loadData();
+  if (state.user?.id !== ownerID || generation !== workspaceGeneration) return;
+  pauseEntitlementDrafts(false);
+  if (wasArchive || !document.getElementById('modal-root')) renderApp(); else renderConnectionStatus();
+  return 'workspace';
+}
 async function refreshOnForeground() {
   if (!state.user || document.visibilityState === 'hidden' || !navigator.onLine || foregroundRefreshTask) return;
   const ownerID=state.user.id;
   foregroundRefreshTask=(async()=>{
     try {
-      if(queuedOperationCount()>0)await replayOfflineQueue();
-      await loadData();
-      if(state.user?.id!==ownerID)return;
-      if(!document.getElementById('modal-root'))renderApp(); else renderConnectionStatus();
+      await refreshAuthorizedWorkspace();
     } catch(error) {if(state.user?.id===ownerID){state.offline=isNetworkFailure(error);renderConnectionStatus();}}
     finally {foregroundRefreshTask=null;}
   })();
