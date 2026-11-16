@@ -777,11 +777,11 @@ body { background: var(--bg); color: var(--text); }
 .app-flight-time small { color: #6851ed; font-size: 9px; white-space: nowrap; }
 .app-flight-time > span { font-size: 11px; color: #8b8a94; }
 .app-flight-time.arrival { text-align: right; }.app-flight-time.arrival > div { justify-content: flex-end; }
-.app-flight-direction { flex: 0 0 48px; color: #6851ed; text-align: center; }
+.app-flight-direction { flex: 0 1 86px; min-width: 48px; color: #6851ed; text-align: center; }
 .app-flight-direction > div { display: flex; align-items: center; }
 .app-flight-direction i { height: 2px; flex: 1; background: #bcb1f6; border-radius: 2px; }
 .app-flight-direction span { font-size: 22px; line-height: 1; }
-.app-flight-direction small { font-size: 10px; font-weight: 600; }
+.app-flight-direction small { overflow-wrap: anywhere; font-size: 10px; font-weight: 600; }
 .app-flight-airports { display: grid; grid-template-columns: minmax(0,1fr) minmax(0,1fr); gap: 12px; }
 .app-flight-airports > div { display: grid; align-content: start; gap: 3px; min-width: 0; }
 .app-flight-airports > div:last-child { text-align: right; }

@@ -8,15 +8,15 @@ from pathlib import Path
 import argparse, json, plistlib, subprocess, tempfile, uuid, sys
 sys.dont_write_bytecode = True
 parser = argparse.ArgumentParser(description=__doc__)
-parser.add_argument("--screen", choices=["trip-contact", "customer", "settlement", "nickname", "qr", "flight", "completion", "completion-list", "flight-info", "flight-live-snapshot", "smart-input", "trip-address", "expense-items", "finance"], default="settlement")
+parser.add_argument("--screen", choices=["trip-contact", "customer", "settlement", "nickname", "qr", "flight", "completion", "completion-list", "flight-info", "flight-live-snapshot", "smart-input", "trip-address", "expense-items", "finance", "finance-flight"], default="settlement")
 parser.add_argument("--input-file", type=Path, help="Optional local text fixture for the memory-only smart-input screen")
 parser.add_argument("--live-address-lookup", action="store_true", help="Allow public MapKit queries in the isolated address preview")
 parser.add_argument("--shared-address-field", action="store_true", help="Preview the shared cloud editor address component")
 parser.add_argument("--no-launch", action="store_true", help="Build/install only; open the QA app manually")
 parser.add_argument("--customer-baseline", action="store_true", help="Use committed customer navigation for before/after reproduction")
 args = parser.parse_args()
-bundle_id = 'com.trvelma.acceptance.' + {'trip-contact':'trip-contact-preview','customer':'customer-preview','settlement':'settlement-preview','nickname':'nickname-preview','qr':'qr-preview','flight':'flight-preview','completion':'completion-preview','completion-list':'completion-list-preview','flight-info':'flight-info-preview','flight-live-snapshot':'flight-live-snapshot-preview','smart-input':'smart-input-preview','trip-address':'trip-address-preview','finance':'finance-preview','expense-items':'expense-items-preview'}[args.screen]
-display_name = {'trip-contact':'QA 行程联系','customer':'QA 客户编辑','settlement':'QA 结算预览','nickname':'QA 昵称预览','qr':'QA 二维码预览','flight':'QA 航段预览','completion':'QA 完成结算预览','completion-list':'QA 列表完成预览','flight-info':'QA 航站楼预览','flight-live-snapshot':'QA 同步快照预览','smart-input':'QA 途风识别预览','trip-address':'QA 地址键盘预览','finance':'QA 财务预览','expense-items':'QA 费用项目预览'}[args.screen]
+bundle_id = 'com.trvelma.acceptance.' + {'trip-contact':'trip-contact-preview','customer':'customer-preview','settlement':'settlement-preview','nickname':'nickname-preview','qr':'qr-preview','flight':'flight-preview','completion':'completion-preview','completion-list':'completion-list-preview','flight-info':'flight-info-preview','flight-live-snapshot':'flight-live-snapshot-preview','smart-input':'smart-input-preview','trip-address':'trip-address-preview','finance-flight':'finance-flight-preview','finance':'finance-preview','expense-items':'expense-items-preview'}[args.screen]
+display_name = {'trip-contact':'QA 行程联系','customer':'QA 客户编辑','settlement':'QA 结算预览','nickname':'QA 昵称预览','qr':'QA 二维码预览','flight':'QA 航段预览','completion':'QA 完成结算预览','completion-list':'QA 列表完成预览','flight-info':'QA 航站楼预览','flight-live-snapshot':'QA 同步快照预览','smart-input':'QA 途风识别预览','trip-address':'QA 地址键盘预览','finance-flight':'QA 财务航班快照','finance':'QA 财务预览','expense-items':'QA 费用项目预览'}[args.screen]
 
 root = Path(__file__).resolve().parents[1] / 'Wishlist'
 base = Path(tempfile.mkdtemp(prefix='trvelma-settlement-preview-'))
@@ -30,7 +30,7 @@ def obj(isa, **values):
 refs, builds = [], []
 for path in sorted(root.rglob('*.swift')):
     if path.name.startswith('._'): continue
-    if path.name in ['WishlistApp.swift', 'WishlistView.swift', 'BusinessCardView.swift'] or (args.screen in ['customer','trip-contact'] and path.name in ['AuthViewModel.swift', 'CloudCustomerDirectoryView.swift']) or (args.screen in ['smart-input','trip-address','finance'] and path.name in ['NewTripFormModel.swift','AuthViewModel.swift']):
+    if (args.screen == 'finance-flight' and path.name == 'WalletView.swift') or path.name in ['WishlistApp.swift', 'WishlistView.swift', 'BusinessCardView.swift'] or (args.screen in ['customer','trip-contact'] and path.name in ['AuthViewModel.swift', 'CloudCustomerDirectoryView.swift']) or (args.screen in ['smart-input','trip-address','finance'] and path.name in ['NewTripFormModel.swift','AuthViewModel.swift']):
         text = path.read_text()
         if args.screen == 'customer' and path.name == 'CloudCustomerDirectoryView.swift':
             if args.customer_baseline:
@@ -42,6 +42,8 @@ for path in sorted(root.rglob('*.swift')):
             text = text.replace('private struct FinancialSettlementView:', 'struct FinancialSettlementView:', 1)
             text = text.replace('private struct ExpenseItemManagementView:', 'struct ExpenseItemManagementView:', 1)
             text = text.replace('private struct TripBrowseView:', 'struct TripBrowseView:', 1)
+        elif path.name == 'WalletView.swift':
+            text = text.replace('                        DisclosureGroup {', '                        DisclosureGroup(isExpanded: .constant(true)) {', 1)
         elif path.name == 'AuthViewModel.swift':
             text = text.replace('    init() {\n        restoreSession()\n    }', '    init() {} // Isolated preview: no credential/session restore', 1)
         elif path.name == 'NewTripFormModel.swift':
@@ -109,6 +111,26 @@ if args.screen == 'finance':
     text = text.replace('booking.isCompleted = true', 'booking.ownerScope = DataOwnership.activeScope\n        booking.isCompleted = true')
     text = text.replace('form.customerName = "QA · 隔离结算界面"', 'form.customerName = "QA · 财务快照"')
     entry.write_text(text)
+if args.screen == 'finance-flight':
+    entry.write_text('''import SwiftUI
+@main struct FinanceFlightQAApp: App {
+    var body: some Scene {
+        WindowGroup {
+            FinancialTripSnapshotSheet(snapshot: FinancialTripSnapshotCollection(rows: [
+                FinancialTripSnapshotRow(id: "qa-finance-flight", date: Date(), time: Date(),
+                    guest: "QA · 航班快照", amount: "$100.00",
+                    details: FinancialTripSnapshotRow.details(service: "接机", start: "LAX", stops: [], end: "QA Hotel",
+                        flight: "BR15", completed: true, cancelled: false, paid: true, contact: "", passengers: "1", luggage: "0",
+                        agency: "", order: "", memo: "合成资料 · 无云端写入"),
+                    flightResult: VariFlightLookupResult(airlineName: "长荣航空股份有限公司", departureAirport: "TPE", arrivalAirport: "LAX",
+                        departureTerminal: "2", arrivalTerminal: "TBIT", departureTime: "2026-11-16 13:50:00",
+                        estimatedArrivalTime: "2026-11-16 16:35:00", baggageCarousel: nil, status: "落地"))
+            ]))
+            .environment(\.locale, Locale(identifier: "zh-Hans"))
+        }
+    }
+}
+''')
 if args.screen == 'nickname':
     from flight_editor_harness import block
     source = (root / 'Views/BusinessCardView.swift').read_text()

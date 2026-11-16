@@ -1,12 +1,13 @@
-import { localized } from "./localization.mjs?v=20261112-expiry-v1";
+import { statementPDF } from "./statement-pdf.mjs?v=20261116-finance-v1";
+import { localized } from "./localization.mjs?v=20261116-finance-v1";
 const uiLanguage = () => normalizedLanguageCode((state.archiveMode ? state.archiveData?.user_settings?.[0]?.language_code : null) || state.settings?.language_code || readInterfaceLanguage());
 const ui = (key, ...args) => localized(key, uiLanguage(), ...args);
-import { telephoneNumber, tripTelephoneContacts, financialCategoryGroups, statementMoney, agencyStatementTrips, statementAgencyKey, buildAgencyStatement, pickupReminders, recognizePickup, matchPickupAgency, partsInZone, zonedISO, parseFlights, flightID, makeFlightSnapshot, readFlightSnapshot, routeMatches, compareTrips, settlementPayload } from './parity.mjs?v=20261112-expiry-v1';
+import { flightDisplayName, flightStatusLabel, telephoneNumber, tripTelephoneContacts, financialCategoryGroups, statementMoney, agencyStatementTrips, statementAgencyKey, buildAgencyStatement, pickupReminders, recognizePickup, matchPickupAgency, partsInZone, zonedISO, parseFlights, flightID, makeFlightSnapshot, readFlightSnapshot, routeMatches, compareTrips, settlementPayload } from './parity.mjs?v=20261116-finance-v1';
 let airportCrosswalk = [];
 const airportCrosswalkReady = fetch('./assets/airport-crosswalk.json').then(r => { if (!r.ok) throw Error('机场对照表不可用'); return r.json(); }).then(data => { airportCrosswalk = data.airports; }).catch(() => {});
 const SUPABASE_URL = "https://lbdfqzeiweqbsklklcqr.supabase.co";
 const SUPABASE_PUBLISHABLE_KEY = "sb_publishable_d4tmuPirsf8-wUDO0Frd7w_PcXME6rs";
-const WEB_BUILD = "20261112-expiry-v1";
+const WEB_BUILD = "20261116-finance-v1";
 const SESSION_KEY = "yunsheng.web.session.v1";
 const OFFLINE_CACHE_PREFIX = "yunsheng.web.offline-cache.v1.";
 const OFFLINE_QUEUE_PREFIX = "yunsheng.web.offline-queue.v1.";
@@ -1226,10 +1227,10 @@ function flightResultHTML(number, flight = {}, fallback = {}) {
   const code = String(number || "").toUpperCase().match(/^([A-Z]{2,3}|[A-Z][0-9]|[0-9][A-Z])(?=\d)/)?.[1] || "";
   const departure = flight.departureTime || fallback.departureTime;
   const arrival = flight.estimatedArrivalTime || fallback.estimatedArrivalTime;
-  return `<div class="app-flight-result" aria-label="航班查询结果">
-    <div class="app-flight-airline"><span class="app-flight-logo" aria-hidden="true">${code ? escapeHTML(code) : appIcon("airplane")}</span><div><strong>${escapeHTML(number || "—")}</strong>${flight.airlineName ? `<small>${escapeHTML(flight.airlineName)}</small>` : ""}</div></div>
-    <div class="app-flight-schedule"><div class="app-flight-time departure"><div><strong>${escapeHTML(timeDisplay(departure))}</strong><small>${escapeHTML(flightOffsetLabel(departure))}</small></div><span>起飞时间</span></div><div class="app-flight-direction" aria-label="计划航班方向"><div><i></i><span>${appIcon("airplane")}</span><i></i></div><small>计划</small></div><div class="app-flight-time arrival"><div><small>${escapeHTML(flightOffsetLabel(arrival))}</small><strong>${escapeHTML(timeDisplay(arrival))}</strong></div><span>预计到达时间</span></div></div>
-    <div class="app-flight-airports"><div><small>起飞机场</small><strong>${escapeHTML(flight.departureAirport || "—")}</strong><span>出发航站楼 ${escapeHTML(flight.departureTerminal?.trim() || "—")}</span></div><div><small>到达机场</small><strong>${escapeHTML(flight.arrivalAirport || "—")}</strong><span>到达航站楼 ${escapeHTML(flight.arrivalTerminal?.trim() || fallback.arrivalTerminal?.trim() || "—")}</span></div></div>
+  return `<div class="app-flight-result" aria-label="${escapeHTML(ui("航班查询结果"))}">
+    <div class="app-flight-airline"><span class="app-flight-logo" aria-hidden="true">${code ? escapeHTML(code) : appIcon("airplane")}</span><div><strong>${escapeHTML(number || "—")}</strong>${flight.airlineName ? `<small>${escapeHTML(flightDisplayName(flight.airlineName,"airline",uiLanguage()))}</small>` : ""}</div></div>
+    <div class="app-flight-schedule"><div class="app-flight-time departure"><div><strong>${escapeHTML(timeDisplay(departure))}</strong><small>${escapeHTML(flightOffsetLabel(departure))}</small></div><span>${escapeHTML(ui("起飞时间"))}</span></div><div class="app-flight-direction" aria-label="${escapeHTML(flightStatusLabel(flight.status,uiLanguage()))}"><div><i></i><span>${appIcon("airplane")}</span><i></i></div><small>${escapeHTML(flightStatusLabel(flight.status,uiLanguage()))}</small></div><div class="app-flight-time arrival"><div><small>${escapeHTML(flightOffsetLabel(arrival))}</small><strong>${escapeHTML(timeDisplay(arrival))}</strong></div><span>${escapeHTML(ui("预计到达时间"))}</span></div></div>
+    <div class="app-flight-airports"><div><small>${escapeHTML(ui("起飞机场"))}</small><strong>${escapeHTML(flightDisplayName(flight.departureAirport,"airport",uiLanguage()))}</strong><span>${escapeHTML(ui("出发航站楼"))} ${escapeHTML(flight.departureTerminal?.trim() || "—")}</span></div><div><small>${escapeHTML(ui("到达机场"))}</small><strong>${escapeHTML(flightDisplayName(flight.arrivalAirport,"airport",uiLanguage()))}</strong><span>${escapeHTML(ui("到达航站楼"))} ${escapeHTML(flight.arrivalTerminal?.trim() || fallback.arrivalTerminal?.trim() || "—")}</span></div></div>
   </div>`;
 }
 
@@ -1376,7 +1377,7 @@ function openAgencyStatement() {
   if (!trips.length) return;
   statementSnapshot = { ...buildAgencyStatement(trips, key => ui(key), uiLanguage()), title: ui('%@ 对账单', trips[0].travel_agency_name) };
   const report = statementSnapshot;
-  showModal(report.title, `<p class="statement-intro">${escapeHTML(ui('%ld 条行程 · 未结算 · 仅供核对', trips.length))}</p><div class="statement-table-scroll"><table class="statement-table"><thead><tr>${report.headers.map(v => `<th>${escapeHTML(v)}</th>`).join('')}</tr></thead><tbody>${report.rows.map(row => `<tr>${row.map(v => `<td>${escapeHTML(String(v || '—'))}</td>`).join('')}</tr>`).join('')}</tbody></table></div><div class="statement-summary"><small>${escapeHTML(ui('本次对账合计'))}</small><div>${Object.entries(report.totals).map(([code,total]) => `<p><strong>${escapeHTML(ui('合计：%@', statementMoney(total, code)))}</strong></p>`).join('')}</div></div><p class="statement-footnote">${escapeHTML(ui('仅供对账，未改变结算状态。'))}</p><div class="form-actions"><button class="button primary" data-action="statement-share">${escapeHTML(ui('分享图片'))}</button><button class="button" data-action="statement-export">${escapeHTML(ui('导出 CSV'))}</button><button class="button" data-action="close-modal">${escapeHTML(ui('关闭'))}</button></div>`, 'agency-statement-modal');
+  showModal(report.title, `<p class="statement-intro">${escapeHTML(ui('%ld 条行程 · 未结算 · 仅供核对', trips.length))}</p><div class="statement-table-scroll"><table class="statement-table"><thead><tr>${report.headers.map(v => `<th>${escapeHTML(v)}</th>`).join('')}</tr></thead><tbody>${report.rows.map(row => `<tr>${row.map(v => `<td>${escapeHTML(String(v || '—'))}</td>`).join('')}</tr>`).join('')}</tbody></table></div><div class="statement-summary"><small>${escapeHTML(ui('本次对账合计'))}</small><div>${Object.entries(report.totals).map(([code,total]) => `<p><strong>${escapeHTML(ui('合计：%@', statementMoney(total, code)))}</strong></p>`).join('')}</div></div><p class="statement-footnote">${escapeHTML(ui('仅供对账，未改变结算状态。'))}</p><div class="form-actions"><button class="button primary" data-action="statement-share">${escapeHTML(ui('分享 PDF（微信等）'))}</button><button class="button" data-action="statement-export">${escapeHTML(ui('导出 CSV'))}</button><button class="button" data-action="close-modal">${escapeHTML(ui('关闭'))}</button></div>`, 'agency-statement-modal');
 }
 async function shareAgencyStatement() {
   if (!statementSnapshot || statementOwner !== state.user?.id) return;
@@ -1386,7 +1387,7 @@ async function shareAgencyStatement() {
   ctx.font='14px sans-serif';
   const widths = report.headers.map((h,i) => i === 4 ? 260 : Math.max(72,Math.min(220,Math.max(...[h,...report.rows.map(r=>r[i])].flatMap(v=>String(v).split('\n')).map(v=>ctx.measureText(v).width))+24)));
   const width=widths.reduce((a,b)=>a+b,0)+48;
-  const files=[];
+  const pdfPages=[];
   function wrap(value, maxWidth) {
     const lines=[];
     for (const paragraph of String(value ?? '—').split('\n')) {
@@ -1421,20 +1422,20 @@ async function shareAgencyStatement() {
     cells.forEach((row,i)=>drawCellRow(row,heights[i],false,i));
     if(page===pages-1) {ctx.fillStyle='#775033';ctx.font='bold 18px sans-serif'; for(const [code,total] of Object.entries(report.totals)){y+=30;ctx.fillText(ui('合计：%@',statementMoney(total,code)),24,y);}}
     ctx.fillStyle='#847b70';ctx.font='12px sans-serif';ctx.fillText('仅供对账，未改变结算状态。',24,height-16);
-    const encoded=canvas.toDataURL('image/png').split(',')[1];
-    if(!encoded) throw Error(ui('对账单图片生成失败，请重新打开后重试。'));
+    const encoded=canvas.toDataURL('image/jpeg',0.92).split(',')[1];
+    if(!encoded) throw Error(ui('对账单 PDF 生成失败，请重新打开后重试。'));
     const binary=atob(encoded);const bytes=new Uint8Array(binary.length);
     for(let i=0;i<binary.length;i++)bytes[i]=binary.charCodeAt(i);
-    const blob=new Blob([bytes],{type:'image/png'});
-    files.push(new File([blob],`旅行社对账单-${page+1}.png`,{type:'image/png'}));
+    pdfPages.push({bytes,width,height,pixelWidth:canvas.width,pixelHeight:canvas.height});
   }
   if(statementOwner!==state.user?.id) return;
-  if(navigator.canShare?.({files})) {
+  const files=[new File([statementPDF(pdfPages)],'旅行社对账单.pdf',{type:'application/pdf'})];
+  if(navigator.share && navigator.canShare?.({files})) {
     try { await navigator.share({files,title:report.title}); return; }
     catch(error) {if(error.name==='AbortError') return;}
   }
   for(const file of files) {const url=URL.createObjectURL(file);const link=document.createElement('a');link.href=url;link.download=file.name;link.click();setTimeout(()=>URL.revokeObjectURL(url),1000);}
-  showToast(ui('已下载对账单图片，可在微信中选择图片发送。'));
+  showToast(ui('已下载对账单 PDF，可在微信中选择文件发送。'));
 }
 
 function exportAgencyStatement() {
@@ -1596,7 +1597,7 @@ async function hydrateAccountAssets() {
   for(const method of methods)await fill(method,'qrImagePath','qrImageData',()=>state.paymentMethods===methods&&methods.includes(method));
 }
 function renderPaymentMethods() {
-  return `<section class="panel account-asset-panel"><div class="section-heading"><h2>${appIcon("qrcode")} 收款方式</h2><button class="button small" data-action="add-payment-method">${appIcon("plus")} 添加</button></div>${state.paymentMethods.length ? `<div class="asset-list">${state.paymentMethods.map(method => `<article class="asset-row"><button class="asset-image-button" data-action="preview-payment-qr" data-id="${escapeHTML(method.id)}" ${method.qrImageData ? "" : "disabled"}>${method.qrImageData ? `<img src="${imageDataURL(method.qrImageData)}" alt="${escapeHTML(method.name || "收款二维码")}">` : `<span>添加二维码</span>`}</button><div class="asset-row-content"><label>收款方式名称<input data-payment-name="${escapeHTML(method.id)}" value="${escapeHTML(method.name || "")}" placeholder="例如：Zelle"></label><label class="button small asset-upload">${method.qrImageData ? "更换二维码" : "选择二维码图片"}<input type="file" accept="image/*" data-payment-image="${escapeHTML(method.id)}"></label></div><button class="button small danger" data-action="remove-payment-method" data-id="${escapeHTML(method.id)}" aria-label="删除收款方式">${appIcon("trash")}</button></article>`).join("")}</div>` : `<p class="empty-hint">添加收款方式名称和二维码，方便向客户展示。</p>`}</section>`;
+  return `<section class="panel account-asset-panel"><div class="section-heading"><h2>${appIcon("qrcode")} 收款方式</h2><button class="button small" data-action="add-payment-method">${appIcon("plus")} 添加</button></div>${state.paymentMethods.length ? `<div class="asset-list">${state.paymentMethods.map(method => `<article class="asset-row"><button class="asset-image-button" data-action="preview-payment-qr" data-id="${escapeHTML(method.id)}" ${method.qrImageData ? "" : "disabled"}>${method.qrImageData ? `<img src="${imageDataURL(method.qrImageData)}" alt="${escapeHTML(method.name || "收款二维码")}">` : `<span>添加二维码</span>`}</button><div class="asset-row-content"><label>收款方式名称<input data-payment-name="${escapeHTML(method.id)}" value="${escapeHTML(method.name || "")}" placeholder="例如：Zelle"></label><label class="button small asset-upload">${method.qrImageData ? "更换二维码" : "选择二维码图片"}<input type="file" accept="image/*" data-payment-image="${escapeHTML(method.id)}"></label>${method.qrImageData ? `<button class="button small" data-action="share-qr" data-kind="payment" data-id="${escapeHTML(method.id)}">${escapeHTML(ui("分享二维码"))}</button>` : ""}</div><button class="button small danger" data-action="remove-payment-method" data-id="${escapeHTML(method.id)}" aria-label="删除收款方式">${appIcon("trash")}</button></article>`).join("")}</div>` : `<p class="empty-hint">添加收款方式名称和二维码，方便向客户展示。</p>`}</section>`;
 }
 
 function renderBusinessCard() {
@@ -1942,7 +1943,7 @@ async function queryFlights(number, date) {
   return candidates;
 }
 function flightCandidateRows(candidates) {
-  return candidates.map((flight, index) => `<button type="button" class="picker-row app-flight-choice" data-action="select-flight-candidate" data-index="${index}"><span class="app-flight-choice-copy"><span class="app-flight-choice-route"><strong>${escapeHTML(flight.departureAirport || "—")} → ${escapeHTML(flight.arrivalAirport || "—")}</strong>${appIcon("chevron.right")}</span>${flight.airlineName ? `<small>${escapeHTML(flight.airlineName)}</small>` : ""}<span class="app-flight-choice-times">${flight.departureTime ? `<small>${appIcon("airplane.departure")} ${escapeHTML(timeDisplay(flight.departureTime))}</small>` : ""}${flight.estimatedArrivalTime ? `<small>${appIcon("airplane.arrival")} ${escapeHTML(timeDisplay(flight.estimatedArrivalTime))}</small>` : ""}</span></span></button>`).join("");
+  return candidates.map((flight, index) => `<button type="button" class="picker-row app-flight-choice" data-action="select-flight-candidate" data-index="${index}"><span class="app-flight-choice-copy"><span class="app-flight-choice-route"><strong>${escapeHTML(flightDisplayName(flight.departureAirport,"airport",uiLanguage()))} → ${escapeHTML(flightDisplayName(flight.arrivalAirport,"airport",uiLanguage()))}</strong>${appIcon("chevron.right")}</span>${flight.airlineName ? `<small>${escapeHTML(flightDisplayName(flight.airlineName,"airline",uiLanguage()))}</small>` : ""}<span class="app-flight-choice-times">${flight.departureTime ? `<small>${appIcon("airplane.departure")} ${escapeHTML(timeDisplay(flight.departureTime))}</small>` : ""}${flight.estimatedArrivalTime ? `<small>${appIcon("airplane.arrival")} ${escapeHTML(timeDisplay(flight.estimatedArrivalTime))}</small>` : ""}</span></span></button>`).join("");
 }
 
 function chooseFlight(candidates, select) {
@@ -2943,9 +2944,8 @@ document.addEventListener("click", async event => {
     else if (action === "build-information") showModal(escapeHTML(ui('版本信息')), `<p class="completion-prompt-copy">${escapeHTML(ui('Web 构建'))}<br><strong>${escapeHTML(WEB_BUILD)}</strong></p><div class="form-actions"><button class="button primary" data-action="close-modal">${escapeHTML(ui('关闭'))}</button></div>`, "completion-prompt-modal");
     else if (action === "edit-agency") openAgencyForm(state.agencies.find(item => item.id === button.dataset.id));
     else if (action === "navigate-saved-address") {
-      const encoded = encodeURIComponent(button.dataset.address || "");
-      const url = (getAccountPreference("navigation") || "appleMaps") === "googleMaps" ? `https://www.google.com/maps/dir/?api=1&destination=${encoded}&travelmode=driving` : `https://maps.apple.com/?daddr=${encoded}&dirflg=d`;
-      window.open(url, "_blank", "noopener");
+      const url = safeNavigationURL(button.dataset.address, getAccountPreference("navigation") || "appleMaps");
+      if (url) window.open(url, "_blank", "noopener");
     }
     else if (action === "close-modal") { pendingTripCompletion=null; document.getElementById("modal-root")?.remove(); state.pickupPreview=null; state.flightPicker=null; }
     else if (action === "close-picker") { document.getElementById("picker-backdrop")?.remove(); state.pickupPreview=null; state.flightPicker=null; }

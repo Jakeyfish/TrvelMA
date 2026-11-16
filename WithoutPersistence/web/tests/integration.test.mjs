@@ -4,12 +4,13 @@ import fs from 'node:fs';
 import vm from 'node:vm';
 import {webcrypto} from 'node:crypto';
 import * as parity from '../parity.mjs';
+import {statementPDF} from '../statement-pdf.mjs';
 import {localized} from '../localization.mjs';
 const source=fs.readFileSync(new URL('../app.js',import.meta.url),'utf8').replace(/^import .*?;\n/gm,'').replace(/initialize\(\);\s*$/,'');
 function boot(){
  const storage=new Map(),listeners={};
  class FormDataMock {constructor(form){this.values=form.values;}get(k){return this.values[k]??null;}*[Symbol.iterator](){yield*Object.entries(this.values);}}
- const c=vm.createContext({...parity,localized,FormData:FormDataMock,console,Date,Intl,URL,URLSearchParams,AbortController,Map,Set,structuredClone,crypto:webcrypto,Blob,Uint8Array,ArrayBuffer,TextEncoder,setTimeout:()=>0,clearTimeout:()=>{},atob,btoa,navigator:{onLine:true},localStorage:{getItem:k=>storage.get(k)||null,setItem:(k,v)=>storage.set(k,v),removeItem:k=>storage.delete(k)},window:{addEventListener:()=>{}},location:{hash:''},document:{documentElement:{lang:'zh-Hans'},visibilityState:'visible',addEventListener:(name,fn)=>{listeners[name]=fn;},getElementById:()=>null,querySelector:()=>null,querySelectorAll:()=>[],body:{insertAdjacentHTML:()=>{}}},fetch:async()=>({ok:true,json:async()=>({airports:[]})})});
+ const c=vm.createContext({...parity,localized,statementPDF,FormData:FormDataMock,console,Date,Intl,URL,URLSearchParams,AbortController,Map,Set,structuredClone,crypto:webcrypto,Blob,Uint8Array,ArrayBuffer,TextEncoder,setTimeout:()=>0,clearTimeout:()=>{},atob,btoa,navigator:{onLine:true},localStorage:{getItem:k=>storage.get(k)||null,setItem:(k,v)=>storage.set(k,v),removeItem:k=>storage.delete(k)},window:{addEventListener:()=>{}},location:{hash:''},document:{documentElement:{lang:'zh-Hans'},visibilityState:'visible',addEventListener:(name,fn)=>{listeners[name]=fn;},getElementById:()=>null,querySelector:()=>null,querySelectorAll:()=>[],body:{insertAdjacentHTML:()=>{}}},fetch:async()=>({ok:true,json:async()=>({airports:[]})})});
  vm.runInContext(source,c);
  c.productionRenderApp=vm.runInContext("renderApp",c);
  vm.runInContext(`state.user={id:'owner'};state.productEdition='cloud';state.entitlementResolved=true;ensureAccountDevice=async()=>{};showToast=()=>{};renderApp=()=>{};loadData=async()=>{};`,c);
@@ -650,4 +651,38 @@ test('empty home retains new-trip action without a fabricated next-trip card',()
  const html=vm.runInContext('renderHome()',c);
  assert.ok(html.includes('data-action="new-trip"'));
  assert.ok(!html.includes('<aside class="panel home-next-trip"'));
+});
+
+test('flight result follows language and provider status without fabricating scheduled state',()=>{
+ const c=boot();vm.runInContext("state.settings={language_code:'en'}",c);
+ const html=vm.runInContext(`flightResultHTML('BR15',{airlineName:'长荣航空股份有限公司',departureAirport:'TPE',arrivalAirport:'LAX',status:'延误'})`,c);
+ assert.match(html,/EVA Air/);assert.match(html,/Delayed/);assert.match(html,/Departure Time/);assert.match(html,/Los Angeles International Airport \(LAX\)/);
+ assert.doesNotMatch(html,/>计划</);
+ assert.match(vm.runInContext("flightResultHTML('BR15',{})",c),/Status unavailable/);
+ vm.runInContext("state.settings.language_code='ja'",c);
+ assert.match(vm.runInContext("flightResultHTML('BR15',{status:'落地'})",c),/到着済み/);
+});
+
+test('finance expanded snapshot uses the same flight result as a read-only trip card',()=>{
+ const c=boot();c.trip={id:'finance-flight',appointment_date:'2026-11-16T20:00:00Z',appointment_time:'2026-11-16T20:00:00Z',flight_info:'BR15',flight_date:'2026-11-16',service_type:'接机',location_start:'LAX',location_end:'QA Hotel',price:100,is_completed:true,is_paid:true,expenses:[],flight_selection_snapshot:parity.makeFlightSnapshot('BR15','2026-11-16',{airlineName:'EVA Air',departureAirport:'TPE',arrivalAirport:'LAX',departureTime:'2026-11-16 13:50:00',estimatedArrivalTime:'2026-11-16 16:35:00',status:'落地'})};
+ vm.runInContext(`state.trips=[trip];showModal=(title,html)=>{globalThis.snapshotHTML=html};openFinanceSnapshots('2026-11-16','2026-11-17')`,c);
+ const flightHTML=vm.runInContext('flightDetailsHTML(trip)',c);
+ assert.ok(c.snapshotHTML.includes(flightHTML));assert.match(c.snapshotHTML,/app-flight-schedule/);assert.match(c.snapshotHTML,/13:50/);assert.match(c.snapshotHTML,/已落地/);
+ assert.doesNotMatch(c.snapshotHTML,/data-action="(?:refresh-flight|edit-trip|delete-trip)"/);
+});
+
+test('statement share creates one PDF file directly and cancel does not download extra files',async()=>{
+ const c=boot();c.files=[];c.downloads=[];
+ c.File=class extends Blob {constructor(parts,name,options){super(parts,options);this.name=name;}};
+ vm.runInContext(`statementOwner='owner';statementSnapshot={title:'QA statement',headers:['日期','行程','合计'],rows:Array.from({length:20},()=>['2026-11-16','QA route','$100.00']),totals:{USD:2000}};
+ navigator.canShare=()=>true;navigator.share=async({files})=>{globalThis.shared=files;const error=new Error('cancel');error.name='AbortError';throw error;};
+ document.createElement=tag=>tag==='canvas'?{width:0,height:0,getContext:()=>({measureText:v=>({width:String(v).length*8}),scale(){},fillRect(){},fillText(){},beginPath(){},moveTo(){},lineTo(){},stroke(){}}),toDataURL:()=>'data:image/jpeg;base64,/9j/2Q=='}:{click:()=>downloads.push('download')};`,c);
+ await vm.runInContext('shareAgencyStatement()',c);
+ assert.equal(c.shared.length,1);assert.equal(c.shared[0].type,'application/pdf');assert.match(c.shared[0].name,/\.pdf$/);
+ assert.match(await c.shared[0].text(),/^%PDF-1.4/);assert.equal(c.downloads.length,0);
+});
+test('payment QR has an explicit share action only when an image is available',()=>{
+ const c=boot();vm.runInContext(`state.paymentMethods=[{id:'with',name:'QA',qrImageData:'AQ=='},{id:'without',name:'Empty'}]`,c);
+ const html=vm.runInContext('renderPaymentMethods()',c);assert.match(html,/data-action="share-qr" data-kind="payment" data-id="with"/);
+ assert.doesNotMatch(html,/data-action="share-qr" data-kind="payment" data-id="without"/);
 });

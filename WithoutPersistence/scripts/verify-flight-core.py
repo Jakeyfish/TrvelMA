@@ -24,6 +24,9 @@ loader = """private static let airportCodeCrosswalk: [AirportCodeCrosswalkAirpor
 }()
 """.replace("RESOURCE", resource)
 
+parser_methods = source[source.index("    private func extractFlights(from value:"):source.rfind("\n}")]
+parser_harness = "\nstruct FlightParserHarness {\nfunc parse(_ value: Any) -> [VariFlightLookupResult] { extractFlights(from: value) }\n" + parser_methods + "\n}\n"
+
 tests = r'''var checks = 0
 func check(_ ok: Bool, _ name: String) { checks += 1; if !ok { print("FAIL: \(name)"); exit(1) }; print("PASS: \(name)") }
 func result(_ dep: String, _ arr: String) -> VariFlightLookupResult {
@@ -61,10 +64,30 @@ check(VariFlightClient.explicitAirportCode(in: "Airport sfo") == "SFO", "airport
 check(VariFlightClient.explicitAirportCode(in: "lax") == "LAX", "bare lowercase code")
 check(VariFlightClient.explicitAirportCode(in: "Houston Airport") == nil, "ambiguous city has no single hint")
 check(!VariFlightClient.airportCodes(in: "Los Angeles International Airport").contains("LOS"), "Los is not mistaken for LOS")
+let parser = FlightParserHarness()
+for input: Any in [["FlightArr": "LAX", "FlightState": "延误"], "FlightArr: LAX, FlightState: 延误"] {
+ check(parser.parse(input).first?.status == "延误", "provider JSON/text status parsed")
+}
+check(parser.parse(["FlightArr": "LAX"]).first?.status == nil, "missing provider status stays missing")
+let locales = ["zh-Hans", "zh-Hant", "en", "es", "ja", "ko"].map(Locale.init(identifier:))
+for locale in locales {
+ check(!FlightPresentation.status("延误", locale: locale).isEmpty, "status localized: \(locale.identifier)")
+ check(FlightPresentation.status(nil, locale: locale) != FlightPresentation.status("计划", locale: locale), "missing status is not scheduled: \(locale.identifier)")
+ check(FlightPresentation.name("LAX", kind: "airport", locale: locale) != "LAX", "airport localized: \(locale.identifier)")
+}
+check(FlightPresentation.status("landed", locale: Locale(identifier: "en")) == "Landed", "landed status")
+check(FlightPresentation.status("4", locale: Locale(identifier: "en")) == "Status unavailable", "unverified numeric enum is not guessed")
+check(FlightPresentation.name("Tokyo", kind: "airport", locale: Locale(identifier: "ja")) == "Tokyo", "ambiguous city preserved")
+check(FlightPresentation.name("Unknown Carrier", kind: "airline", locale: Locale(identifier: "es")) == "Unknown Carrier", "unknown airline preserved")
+check(FlightPresentation.name("长荣航空股份有限公司", kind: "airline", locale: Locale(identifier: "en")) == "EVA Air", "provider airline alias")
+check(read.selected.status == nil, "legacy snapshot without status decodes")
+var live = selected; live.status = "延误"
+let liveRead = try JSONDecoder().decode(VariFlightLookupResult.self, from: JSONEncoder().encode(live))
+check(liveRead.status == "延误", "raw status snapshot round trip")
 print("TOTAL: \(checks) passed")
 '''
 
 with tempfile.TemporaryDirectory(prefix="trvelma-flight-check-") as temporary:
     target = Path(temporary) / "flight-check.swift"
-    target.write_text("import Foundation\n" + models + "\nstruct VariFlightClient {\n" + loader + methods + "\n}\n" + tests)
+    target.write_text("import Foundation\nimport CoreFoundation\n" + models + "\nstruct VariFlightClient {\n" + loader + methods + "\n}\n" + parser_harness + tests)
     subprocess.run(["swift", str(target)], check=True)

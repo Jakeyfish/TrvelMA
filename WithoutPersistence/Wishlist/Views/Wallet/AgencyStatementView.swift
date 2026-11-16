@@ -167,11 +167,14 @@ private struct AgencyStatementSheet: View {
             .navigationTitle("对账单").navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .topBarLeading) {
-                    Menu {
-                        if let pdfURL { ShareLink("分享 PDF（微信等）", item: pdfURL) }
-                        if let csvURL { ShareLink("导出 CSV", item: csvURL) }
-                    } label: { Label("分享", systemImage: "square.and.arrow.up") }
-                    .disabled(pdfURL == nil)
+                    if let pdfURL {
+                        ShareLink(item: pdfURL) { Label("分享", systemImage: "square.and.arrow.up") }
+                    } else {
+                        ProgressView()
+                    }
+                }
+                ToolbarItem(placement: .bottomBar) {
+                    if let csvURL { ShareLink("导出 CSV", item: csvURL) }
                 }
                 ToolbarItem(placement: .topBarTrailing) { Button("关闭") { dismiss() } }
             }

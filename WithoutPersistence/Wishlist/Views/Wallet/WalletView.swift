@@ -390,9 +390,8 @@ struct WalletView: View {
                     completed: trip.isCompleted, cancelled: trip.isCancelled, paid: trip.isPaid,
                     contact: trip.customerContact, passengers: trip.customerCount, luggage: trip.customerStuff,
                     agency: trip.orderSource == "旅行社订单" ? trip.travelAgencyName : "", order: trip.orderSource == "旅行社订单" ? trip.travelAgencyOrderNumber : "", memo: trip.memo)
-                    + FinancialTripSnapshotRow.flightDetails((try? JSONDecoder().decode(SavedFlightSelection.self, from: Data(trip.flightSelectionSnapshotJSON.utf8)))?.selected)
                     + [("小费", BaseCurrencyCatalog.format(trip.tip, countryCode: baseCurrencyCountry))]
-                    + trip.expenseAdjustments.map { ($0.title, "\($0.isAddition ? "+" : "−")\(BaseCurrencyCatalog.format(abs($0.amount), countryCode: baseCurrencyCountry))") })
+                    + trip.expenseAdjustments.map { ($0.title, "\($0.isAddition ? "+" : "−")\(BaseCurrencyCatalog.format(abs($0.amount), countryCode: baseCurrencyCountry))") }, flightResult: (try? JSONDecoder().decode(SavedFlightSelection.self, from: Data(trip.flightSelectionSnapshotJSON.utf8)))?.selected)
         }.sorted { $0.date == $1.date ? ($0.time == $1.time ? $0.id < $1.id : $0.time < $1.time) : $0.date < $1.date }
     }
 
@@ -653,6 +652,15 @@ private struct WalletPaymentMethodRow: View {
                 .navigationTitle(method.name.isEmpty ? localized("收款二维码", "Payment QR code", "Código QR de pago", "支払い用QRコード", "결제 QR 코드") : method.name)
                 .navigationBarTitleDisplayMode(.inline)
                 .toolbar {
+                    ToolbarItem(placement: .topBarLeading) {
+                        if let data = method.qrImageData, let image = UIImage(data: data) {
+                            ShareLink(item: Image(uiImage: image),
+                                      preview: SharePreview(method.name.isEmpty ? AppLocalization.text("收款二维码") : method.name,
+                                                            image: Image(uiImage: image))) {
+                                Label(AppLocalization.text("分享二维码"), systemImage: "square.and.arrow.up")
+                            }
+                        }
+                    }
                     ToolbarItem(placement: .topBarTrailing) {
                         Button(localized("完成", "Done", "Listo", "完了", "완료")) { isShowingQRPreview = false }
                     }
@@ -731,13 +739,7 @@ struct FinancialTripSnapshotRow: Identifiable {
     let amount: String
     let details: [(String, String)]
 
-    static func flightDetails(_ flight: VariFlightLookupResult?) -> [(String, String)] {
-        guard let flight else { return [] }
-        return [("起飞机场", flight.departureAirport ?? ""), ("到达机场", flight.arrivalAirport ?? ""),
-                ("出发航站楼", flight.departureTerminal ?? ""), ("到达航站楼", flight.arrivalTerminal ?? ""),
-                ("起飞时间", flight.departureTime ?? ""), ("预计到达时间", flight.estimatedArrivalTime ?? ""),
-                ("行李转盘", flight.baggageCarousel ?? "")].filter { !$0.1.isEmpty }
-    }
+    var flightResult: VariFlightLookupResult? = nil
 
     static func details(service: String, start: String, stops: [String], end: String,
                         flight: String, completed: Bool, cancelled: Bool, paid: Bool,
@@ -806,9 +808,6 @@ private struct FinancialSnapshotRecordCard: View {
     private var route: [(String, String)] {
         row.details.filter { $0.0 == "起始点" || $0.0.hasPrefix("停靠点") || $0.0 == "目的地" }
     }
-    private var flight: [(String, String)] {
-        row.details.filter { ["航班", "起飞机场", "到达机场", "出发航站楼", "到达航站楼", "起飞时间", "预计到达时间", "行李转盘"].contains($0.0) }
-    }
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             Label(value("类型"), systemImage: value("类型").contains("送") ? "airplane.departure" : "airplane.arrival")
@@ -832,13 +831,23 @@ private struct FinancialSnapshotRecordCard: View {
                     }
                 }
             }
-            if !flight.isEmpty {
+            if !value("航班").isEmpty || row.flightResult != nil {
                 VStack(alignment: .leading, spacing: 8) {
-                    Label(value("航班"), systemImage: "airplane").font(.subheadline.weight(.semibold)).foregroundStyle(Color.accentColor)
-                    ForEach(Array(flight.filter { $0.0 != "航班" }.enumerated()), id: \.offset) { _, field in
-                        HStack { Text(field.0).foregroundStyle(.secondary); Spacer(); Text(field.1) }.font(.caption)
+                    FlightInformationPanel(
+                        flightNumber: value("航班"), flightDate: row.date,
+                        result: row.flightResult ?? VariFlightLookupResult(
+                            airlineName: nil, departureAirport: nil, arrivalAirport: nil,
+                            departureTerminal: nil, arrivalTerminal: nil, departureTime: nil,
+                            estimatedArrivalTime: nil, baggageCarousel: nil),
+                        isLoading: false, error: nil, departureFallback: "", arrivalFallback: "",
+                        departureTimeZone: "", arrivalTimeZone: ""
+                    )
+                    if let baggage = row.flightResult?.baggageCarousel, !baggage.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                        LabeledContent("行李转盘", value: baggage).font(.caption).foregroundStyle(.secondary)
                     }
-                }.padding(12).background(Color(.tertiarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 14))
+                }
+                .padding(14)
+                .background(Color.accentColor.opacity(0.055), in: RoundedRectangle(cornerRadius: 16))
             }
             HStack(spacing: 8) {
                 Text(value("状态")).font(.caption).padding(.horizontal, 10).padding(.vertical, 6)

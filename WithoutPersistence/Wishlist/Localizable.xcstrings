@@ -1,6 +1,170 @@
 {
   "sourceLanguage" : "zh-Hans",
   "strings" : {
+  "出发航站楼": {
+    "extractionState": "manual",
+    "localizations": {
+      "zh-Hans": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "出发航站楼"
+        }
+      },
+      "en": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "Departure Terminal"
+        }
+      },
+      "es": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "Terminal de salida"
+        }
+      },
+      "ja": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "出発ターミナル"
+        }
+      },
+      "ko": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "출발 터미널"
+        }
+      },
+      "zh-Hant": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "出發航廈"
+        }
+      }
+    }
+  },
+  "航班查询结果": {
+    "extractionState": "manual",
+    "localizations": {
+      "zh-Hans": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "航班查询结果"
+        }
+      },
+      "zh-Hant": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "航班查詢結果"
+        }
+      },
+      "en": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "Flight results"
+        }
+      },
+      "es": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "Resultados de vuelos"
+        }
+      },
+      "ja": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "フライト検索結果"
+        }
+      },
+      "ko": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "항공편 조회 결과"
+        }
+      }
+    }
+  },
+  "对账单 PDF 生成失败，请重新打开后重试。": {
+    "extractionState": "manual",
+    "localizations": {
+      "zh-Hans": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "对账单 PDF 生成失败，请重新打开后重试。"
+        }
+      },
+      "zh-Hant": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "對帳單 PDF 產生失敗，請重新開啟後重試。"
+        }
+      },
+      "en": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "Could not create the statement PDF. Reopen it and try again."
+        }
+      },
+      "es": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "No se pudo crear el PDF del estado de cuenta. Vuelve a abrirlo e inténtalo de nuevo."
+        }
+      },
+      "ja": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "明細書PDFを作成できませんでした。開き直して再試行してください。"
+        }
+      },
+      "ko": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "명세서 PDF를 생성하지 못했습니다. 다시 열고 재시도하세요."
+        }
+      }
+    }
+  },
+  "已下载对账单 PDF，可在微信中选择文件发送。": {
+    "extractionState": "manual",
+    "localizations": {
+      "zh-Hans": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "已下载对账单 PDF，可在微信中选择文件发送。"
+        }
+      },
+      "zh-Hant": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "已下載對帳單 PDF，可在微信中選取檔案傳送。"
+        }
+      },
+      "en": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "Statement PDF downloaded. You can send it as a file in WeChat."
+        }
+      },
+      "es": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "PDF descargado. Puedes enviarlo como archivo en WeChat."
+        }
+      },
+      "ja": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "明細書PDFをダウンロードしました。WeChatでファイルとして送信できます。"
+        }
+      },
+      "ko": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "명세서 PDF가 다운로드되었습니다. WeChat에서 파일로 보낼 수 있습니다."
+        }
+      }
+    }
+  },
     "" : {},
     " · " : {},
     "：" : {},

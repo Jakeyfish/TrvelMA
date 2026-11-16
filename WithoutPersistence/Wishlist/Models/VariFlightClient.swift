@@ -12,6 +12,7 @@ struct VariFlightLookupResult: Codable, Hashable, Identifiable {
     let departureTime: String?
     let estimatedArrivalTime: String?
     let baggageCarousel: String?
+    var status: String? = nil
 
     var id: String {
         [airlineName, departureAirport, arrivalAirport, departureTime, estimatedArrivalTime]
@@ -88,6 +89,54 @@ private struct AirportCodeCrosswalkAirport: Decodable {
     let keywords: [String]
 }
 
+/// Presentation only: preserve provider values in snapshots and never infer live status from the clock.
+enum FlightPresentation {
+    static func languageIndex(_ locale: Locale) -> Int {
+        let id = locale.identifier.lowercased().replacingOccurrences(of: "_", with: "-")
+        if id.hasPrefix("zh") { return id.contains("hant") || id.contains("tw") || id.contains("hk") ? 1 : 0 }
+        if id.hasPrefix("es") { return 3 }; if id.hasPrefix("ja") { return 4 }; if id.hasPrefix("ko") { return 5 }; return 2
+    }
+    private static let names: [(String, [String], [String])] = [
+        ("airport", ["LAX", "洛杉矶", "洛杉磯", "Los Angeles International Airport"], ["洛杉矶国际机场", "洛杉磯國際機場", "Los Angeles International Airport", "Aeropuerto Internacional de Los Ángeles", "ロサンゼルス国際空港", "로스앤젤레스 국제공항"]),
+        ("airport", ["SFO", "旧金山", "舊金山", "San Francisco International Airport"], ["旧金山国际机场", "舊金山國際機場", "San Francisco International Airport", "Aeropuerto Internacional de San Francisco", "サンフランシスコ国際空港", "샌프란시스코 국제공항"]),
+        ("airport", ["TPE", "桃园", "桃園", "台北桃园", "台北桃園", "台湾桃园国际机场", "Taiwan Taoyuan International Airport"], ["台湾桃园国际机场", "臺灣桃園國際機場", "Taiwan Taoyuan International Airport", "Aeropuerto Internacional de Taiwán Taoyuan", "台湾桃園国際空港", "타이완 타오위안 국제공항"]),
+        ("airport", ["HKG", "香港", "香港国际机场", "Hong Kong International Airport"], ["香港国际机场", "香港國際機場", "Hong Kong International Airport", "Aeropuerto Internacional de Hong Kong", "香港国際空港", "홍콩 국제공항"]),
+        ("airport", ["PVG", "浦东", "浦東", "浦东机场", "Shanghai Pudong International Airport"], ["上海浦东国际机场", "上海浦東國際機場", "Shanghai Pudong International Airport", "Aeropuerto Internacional de Shanghái Pudong", "上海浦東国際空港", "상하이 푸둥 국제공항"]),
+        ("airport", ["NRT", "成田", "成田国际机场", "Narita International Airport"], ["成田国际机场", "成田國際機場", "Narita International Airport", "Aeropuerto Internacional de Narita", "成田国際空港", "나리타 국제공항"]),
+        ("airport", ["HND", "羽田", "Tokyo Haneda International Airport", "Tokyo Haneda Airport"], ["东京羽田机场", "東京羽田機場", "Tokyo Haneda Airport", "Aeropuerto de Tokio Haneda", "東京国際空港（羽田）", "도쿄 하네다 공항"]),
+        ("airline", ["BR", "长荣航空", "長榮航空", "长荣航空股份有限公司", "EVA Air"], ["长荣航空", "長榮航空", "EVA Air", "EVA Air", "エバー航空", "에바항공"]),
+        ("airline", ["CI", "中华航空", "中華航空", "China Airlines"], ["中华航空", "中華航空", "China Airlines", "China Airlines", "チャイナ エアライン", "중화항공"]),
+        ("airline", ["CX", "国泰航空", "國泰航空", "香港国泰航空有限公司", "Cathay Pacific"], ["国泰航空", "國泰航空", "Cathay Pacific", "Cathay Pacific", "キャセイパシフィック航空", "캐세이퍼시픽항공"]),
+        ("airline", ["JX", "星宇航空", "STARLUX Airlines"], ["星宇航空", "星宇航空", "STARLUX Airlines", "STARLUX Airlines", "スターラックス航空", "스타룩스항공"]),
+        ("airline", ["UA", "美国联合航空", "美國聯合航空", "United Airlines", "United"], ["美国联合航空", "美國聯合航空", "United Airlines", "United Airlines", "ユナイテッド航空", "유나이티드항공"]),
+        ("airline", ["MU", "中国东方航空", "中國東方航空", "China Eastern Airlines"], ["中国东方航空", "中國東方航空", "China Eastern Airlines", "China Eastern Airlines", "中国東方航空", "중국동방항공"])
+    ]
+    private static let statuses: [([String], [String])] = [
+        (["计划", "計劃", "scheduled", "planned"], ["计划", "計劃", "Scheduled", "Programado", "定刻予定", "예정"]),
+        (["延误", "延誤", "delayed", "delay"], ["延误", "延誤", "Delayed", "Retrasado", "遅延", "지연"]),
+        (["起飞", "起飛", "已起飞", "已起飛", "departed", "airborne", "en route", "enroute"], ["已起飞", "已起飛", "Departed", "Despegado", "出発済み", "출발"]),
+        (["到达", "到達", "抵达", "抵達", "落地", "已落地", "arrived", "landed"], ["已落地", "已降落", "Landed", "Aterrizado", "到着済み", "도착"]),
+        (["取消", "已取消", "cancelled", "canceled"], ["已取消", "已取消", "Cancelled", "Cancelado", "欠航", "취소"]),
+        (["备降", "備降", "diverted"], ["备降", "備降", "Diverted", "Desviado", "目的地変更", "회항"]),
+        (["返航", "returned"], ["返航", "返航", "Returned", "Regresado", "引き返し", "귀항"])
+    ]
+    static func name(_ raw: String?, kind: String, locale: Locale) -> String {
+        let original = raw?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        guard !original.isEmpty else { return "—" }
+        let match = names.first { $0.0 == kind && ($0.1 + $0.2).contains { $0.caseInsensitiveCompare(original) == .orderedSame } }
+        guard let match else { return original }
+        let display = match.2[languageIndex(locale)]
+        return kind == "airport" ? "\(display) (\(match.1[0]))" : display
+    }
+    static func status(_ raw: String?, locale: Locale) -> String {
+        let value = raw?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() ?? ""
+        if let match = statuses.first(where: { ($0.0 + $0.1).contains { $0.lowercased() == value } }) { return match.1[languageIndex(locale)] }
+        // Numeric provider enums have no verified mapping; never label them as scheduled.
+        if value.isEmpty || Double(value) != nil { return ["状态待确认", "狀態待確認", "Status unavailable", "Estado no disponible", "状況未確認", "상태 미확인"][languageIndex(locale)] }
+        return raw!.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+}
+
 struct FlightCandidatePicker: View {
     @Environment(\.dismiss) private var dismiss
     @Environment(\.locale) private var locale
@@ -107,13 +156,13 @@ struct FlightCandidatePicker: View {
                 } label: {
                     VStack(alignment: .leading, spacing: 6) {
                         HStack {
-                            Text(candidate.routeLabel.isEmpty ? "航段 \(index + 1)" : candidate.routeLabel)
+                            Text(candidate.routeLabel.isEmpty ? "航段 \(index + 1)" : [FlightPresentation.name(candidate.departureAirport, kind: "airport", locale: locale), FlightPresentation.name(candidate.arrivalAirport, kind: "airport", locale: locale)].joined(separator: " → "))
                                 .font(.headline)
                             Spacer()
                             Image(systemName: "chevron.right").font(.caption).foregroundStyle(.tertiary)
                         }
                         if let airline = candidate.airlineName, !airline.isEmpty {
-                            Text(airline).font(.subheadline).foregroundStyle(.secondary)
+                            Text(FlightPresentation.name(airline, kind: "airline", locale: locale)).font(.subheadline).foregroundStyle(.secondary)
                         }
                         HStack(spacing: 12) {
                             if let time = candidate.departureTime, !time.isEmpty {
@@ -728,7 +777,7 @@ struct VariFlightClient {
         VariFlightLookupResult(
             airlineName: fields[.airline], departureAirport: fields[.departureAirport], arrivalAirport: fields[.arrivalAirport],
             departureTerminal: fields[.departureTerminal], arrivalTerminal: fields[.arrivalTerminal],
-            departureTime: fields[.departure], estimatedArrivalTime: fields[.arrival], baggageCarousel: fields[.baggage]
+            departureTime: fields[.departure], estimatedArrivalTime: fields[.arrival], baggageCarousel: fields[.baggage], status: fields[.status]
         )
     }
 
@@ -748,7 +797,8 @@ struct VariFlightClient {
                     arrivalTerminal: previous.arrivalTerminal ?? result.arrivalTerminal,
                     departureTime: previous.departureTime ?? result.departureTime,
                     estimatedArrivalTime: previous.estimatedArrivalTime ?? result.estimatedArrivalTime,
-                    baggageCarousel: previous.baggageCarousel ?? result.baggageCarousel
+                    baggageCarousel: previous.baggageCarousel ?? result.baggageCarousel,
+                    status: result.status ?? previous.status
                 )
             } else {
                 positions[result.id] = merged.count
@@ -758,7 +808,7 @@ struct VariFlightClient {
         return merged
     }
 
-    private enum FlightField { case airline, departureAirport, arrivalAirport, departureTerminal, arrivalTerminal, departure, arrival, baggage }
+    private enum FlightField { case airline, departureAirport, arrivalAirport, departureTerminal, arrivalTerminal, departure, arrival, baggage, status }
 
     private func fields(from value: Any) -> [FlightField: String]? {
         if let string = value as? String {
@@ -788,6 +838,8 @@ struct VariFlightClient {
         for (key, value) in object.sorted(by: { $0.key < $1.key }) {
             let field: FlightField
             switch normalizedKey(key) {
+            case "flightstate", "flightstatus", "status", "航班状态", "航班狀態":
+                field = .status
             case "airline", "airlinename", "carrier", "carriername", "airlinetitle", "flightcompany":
                 field = .airline
             case "departureairport", "departureairportname", "depairport", "depairportname", "departurestation", "depname", "dep", "flightdept":
@@ -831,6 +883,7 @@ struct VariFlightClient {
 
     private func fieldsFromText(_ text: String) -> [FlightField: String]? {
         let patterns: [(FlightField, String)] = [
+            (.status, #"(?:FlightState|FlightStatus|航班状态|航班狀態|status)[\"']?\s*[:：]\s*[\"']?([^\"'\n,，;；}]+)"#),
             (.airline, #"(?:FlightCompany|航空公司|航司|airline(?:\s*name)?|carrier)[\"']?\s*[:：]\s*[\"']?([^\"'\n,，;；}]+)"#),
             (.departureAirport, #"(?:FlightDept|departureAirport|departureAirportName|depAirport|depAirportName|departureStation|起飞机场|出发机场|出发地|departure\s*airport|origin|from)[\"']?\s*[:：]\s*[\"']?([^\"'\n,，;；}]+)"#),
             (.arrivalAirport, #"(?:FlightArr|arrivalAirport|arrivalAirportName|arrAirport|arrAirportName|arrivalStation|到达机场|目的机场|到达地|arrival\s*airport|destination|to)[\"']?\s*[:：]\s*[\"']?([^\"'\n,，;；}]+)"#),

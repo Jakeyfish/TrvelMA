@@ -50,6 +50,7 @@ export function recognizePickup(raw, now = new Date()) {
   return {number:number.toUpperCase(),date,time,iso,inferredYear:!explicit,flight:flight.replaceAll(' ','').toUpperCase(),airport:'LAX',contact:guest.split(/[（(]/)[0].trim(),phone:digits?((phoneText.startsWith('+')||digits.startsWith('886')?'+':'')+digits):'',passengers:text.match(/(?:人数|人數)\s*[：:]\s*(\d+)\s*人/)?.[1]||guest.match(/[（(]\s*(\d+)\s*人/)?.[1]||'',luggage:text.match(/(\d+)\s*件\s*行李/)?.[1]||'',destination:address?[address[1],address[2]].filter(Boolean).join(', '):addressLine,reminders:pickupReminders(iso,now),rawText:raw};
 }
 const aliases={
+ status:["flightstate","flightstatus","status","航班状态","航班狀態"],
  airlineName:['airline','airlinename','carrier','carriername','airlinetitle','flightcompany'],
  departureAirport:['departureairport','departureairportname','depairport','depairportname','departurestation','depname','dep','flightdept','起飞机场','出发机场','origin','from'],
  arrivalAirport:['arrivalairport','arrivalairportname','arrairport','arrairportname','arrivalstation','arrname','arr','flightarr','到达机场','目的机场','destination','to'],
@@ -152,4 +153,26 @@ export function tripTelephoneContacts(trip, contacts, customerIDs = []) {
   const candidates = linked ? contacts.filter(c => c.customer_id === trip.customer_id && ['电话','電話','phone','telephone','tel'].includes(String(c.label || c.contact_type || '').toLowerCase())).map(c => c.value) : [trip.customer_contact];
   const seen = new Set();
   return candidates.filter(value => { const n = telephoneNumber(value); if (!n || seen.has(n)) return false; seen.add(n); return true; }).map(value => String(value).trim());
+}
+
+// Presentation only. Keep original provider fields and persisted snapshots unchanged.
+const flightNames = [["airport", ["LAX", "洛杉矶", "洛杉磯", "Los Angeles International Airport"], ["洛杉矶国际机场", "洛杉磯國際機場", "Los Angeles International Airport", "Aeropuerto Internacional de Los Ángeles", "ロサンゼルス国際空港", "로스앤젤레스 국제공항"]], ["airport", ["SFO", "旧金山", "舊金山", "San Francisco International Airport"], ["旧金山国际机场", "舊金山國際機場", "San Francisco International Airport", "Aeropuerto Internacional de San Francisco", "サンフランシスコ国際空港", "샌프란시스코 국제공항"]], ["airport", ["TPE", "桃园", "桃園", "台北桃园", "台北桃園", "台湾桃园国际机场", "Taiwan Taoyuan International Airport"], ["台湾桃园国际机场", "臺灣桃園國際機場", "Taiwan Taoyuan International Airport", "Aeropuerto Internacional de Taiwán Taoyuan", "台湾桃園国際空港", "타이완 타오위안 국제공항"]], ["airport", ["HKG", "香港", "香港国际机场", "Hong Kong International Airport"], ["香港国际机场", "香港國際機場", "Hong Kong International Airport", "Aeropuerto Internacional de Hong Kong", "香港国際空港", "홍콩 국제공항"]], ["airport", ["PVG", "浦东", "浦東", "浦东机场", "Shanghai Pudong International Airport"], ["上海浦东国际机场", "上海浦東國際機場", "Shanghai Pudong International Airport", "Aeropuerto Internacional de Shanghái Pudong", "上海浦東国際空港", "상하이 푸둥 국제공항"]], ["airport", ["NRT", "成田", "成田国际机场", "Narita International Airport"], ["成田国际机场", "成田國際機場", "Narita International Airport", "Aeropuerto Internacional de Narita", "成田国際空港", "나리타 국제공항"]], ["airport", ["HND", "羽田", "Tokyo Haneda International Airport", "Tokyo Haneda Airport"], ["东京羽田机场", "東京羽田機場", "Tokyo Haneda Airport", "Aeropuerto de Tokio Haneda", "東京国際空港（羽田）", "도쿄 하네다 공항"]], ["airline", ["BR", "长荣航空", "長榮航空", "长荣航空股份有限公司", "EVA Air"], ["长荣航空", "長榮航空", "EVA Air", "EVA Air", "エバー航空", "에바항공"]], ["airline", ["CI", "中华航空", "中華航空", "China Airlines"], ["中华航空", "中華航空", "China Airlines", "China Airlines", "チャイナ エアライン", "중화항공"]], ["airline", ["CX", "国泰航空", "國泰航空", "香港国泰航空有限公司", "Cathay Pacific"], ["国泰航空", "國泰航空", "Cathay Pacific", "Cathay Pacific", "キャセイパシフィック航空", "캐세이퍼시픽항공"]], ["airline", ["JX", "星宇航空", "STARLUX Airlines"], ["星宇航空", "星宇航空", "STARLUX Airlines", "STARLUX Airlines", "スターラックス航空", "스타룩스항공"]], ["airline", ["UA", "美国联合航空", "美國聯合航空", "United Airlines", "United"], ["美国联合航空", "美國聯合航空", "United Airlines", "United Airlines", "ユナイテッド航空", "유나이티드항공"]], ["airline", ["MU", "中国东方航空", "中國東方航空", "China Eastern Airlines"], ["中国东方航空", "中國東方航空", "China Eastern Airlines", "China Eastern Airlines", "中国東方航空", "중국동방항공"]]];
+const flightStatuses = [[["计划", "計劃", "scheduled", "planned"], ["计划", "計劃", "Scheduled", "Programado", "定刻予定", "예정"]], [["延误", "延誤", "delayed", "delay"], ["延误", "延誤", "Delayed", "Retrasado", "遅延", "지연"]], [["起飞", "起飛", "已起飞", "已起飛", "departed", "airborne", "en route", "enroute"], ["已起飞", "已起飛", "Departed", "Despegado", "出発済み", "출발"]], [["到达", "到達", "抵达", "抵達", "落地", "已落地", "arrived", "landed"], ["已落地", "已降落", "Landed", "Aterrizado", "到着済み", "도착"]], [["取消", "已取消", "cancelled", "canceled"], ["已取消", "已取消", "Cancelled", "Cancelado", "欠航", "취소"]], [["备降", "備降", "diverted"], ["备降", "備降", "Diverted", "Desviado", "目的地変更", "회항"]], [["返航", "returned"], ["返航", "返航", "Returned", "Regresado", "引き返し", "귀항"]]];
+const unknownFlightStatus = ["状态待确认", "狀態待確認", "Status unavailable", "Estado no disponible", "状況未確認", "상태 미확인"];
+function flightLanguageIndex(language) {
+ const id=String(language||'en').toLowerCase().replaceAll('_','-');
+ if(id.startsWith('zh'))return /hant|tw|hk/.test(id)?1:0;
+ return id.startsWith('es')?3:id.startsWith('ja')?4:id.startsWith('ko')?5:2;
+}
+export function flightDisplayName(raw,kind,language) {
+ const original=String(raw||'').trim();if(!original)return '—';
+ const match=flightNames.find(([type,aliases,names])=>type===kind&&[...aliases,...names].some(v=>v.toLowerCase()===original.toLowerCase()));
+ if(!match)return original;
+ const display=match[2][flightLanguageIndex(language)];
+ return kind==='airport'?`${display} (${match[1][0]})`:display;
+}
+export function flightStatusLabel(raw,language) {
+ const original=String(raw||'').trim(),value=original.toLowerCase(),index=flightLanguageIndex(language);
+ const match=flightStatuses.find(([aliases,names])=>[...aliases,...names].some(v=>v.toLowerCase()===value));
+ return match?match[1][index]:(!value||Number.isFinite(Number(value)))?unknownFlightStatus[index]:original;
 }

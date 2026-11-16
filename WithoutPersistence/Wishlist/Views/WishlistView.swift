@@ -886,7 +886,7 @@ struct FlightInformationPanel: View {
                 VStack(alignment: .leading, spacing: 2) {
                     Text(flightNumber).font(.headline.weight(.bold))
                     if let name = result.airlineName, !name.isEmpty {
-                        Text(name).font(.caption).foregroundStyle(.secondary)
+                        Text(FlightPresentation.name(name, kind: "airline", locale: locale)).font(.caption).foregroundStyle(.secondary)
                     }
                 }
                 Spacer()
@@ -899,7 +899,7 @@ struct FlightInformationPanel: View {
                     alignment: .leading,
                     timeZoneOnLeading: false
                 )
-                directionIndicator
+                directionIndicator(result.status)
                 timeColumn(
                     result.estimatedArrivalTime ?? arrivalFallback,
                     label: "预计到达时间",
@@ -911,16 +911,16 @@ struct FlightInformationPanel: View {
             HStack(alignment: .top, spacing: 12) {
                 VStack(alignment: .leading, spacing: 3) {
                     Text("起飞机场").font(.caption2).foregroundStyle(.secondary)
-                    Text(result.departureAirport ?? "—").font(.caption.weight(.semibold)).lineLimit(2)
+                    Text(FlightPresentation.name(result.departureAirport, kind: "airport", locale: locale)).font(.caption.weight(.semibold)).fixedSize(horizontal: false, vertical: true)
                     Text(String(localized: "出发航站楼 \(terminalDisplay(result.departureTerminal))", locale: locale))
                         .font(.caption2).foregroundStyle(.secondary)
                 }
                 Spacer(minLength: 4)
                 VStack(alignment: .trailing, spacing: 3) {
                     Text("到达机场").font(.caption2).foregroundStyle(.secondary)
-                    Text(result.arrivalAirport ?? "—")
+                    Text(FlightPresentation.name(result.arrivalAirport, kind: "airport", locale: locale))
                         .font(.caption.weight(.semibold))
-                        .lineLimit(2)
+                        .fixedSize(horizontal: false, vertical: true)
                         .multilineTextAlignment(.trailing)
                     Text(String(localized: "到达航站楼 \(terminalDisplay(result.arrivalTerminal))", locale: locale))
                         .font(.caption2).foregroundStyle(.secondary)
@@ -960,18 +960,18 @@ struct FlightInformationPanel: View {
             .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 
-    private var directionIndicator: some View {
+    private func directionIndicator(_ status: String?) -> some View {
         VStack(spacing: 3) {
             HStack(spacing: 0) {
                 Capsule().fill(Color.accentColor.opacity(0.35)).frame(height: 2)
                 RightFacingAirplane().fill(Color.accentColor).frame(width: 22, height: 18)
                 Capsule().fill(Color.accentColor.opacity(0.35)).frame(height: 2)
             }
-            Text("计划").font(.caption2.weight(.semibold)).foregroundStyle(Color.accentColor)
+            Text(FlightPresentation.status(status, locale: locale)).font(.caption2.weight(.semibold)).foregroundStyle(Color.accentColor)
         }
-        .frame(width: 48)
+        .frame(minWidth: 48, idealWidth: 86)
         .accessibilityElement(children: .combine)
-        .accessibilityLabel("计划航班方向")
+        .accessibilityLabel(FlightPresentation.status(status, locale: locale))
     }
 
     private func timeColumn(

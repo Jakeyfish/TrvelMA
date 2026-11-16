@@ -378,9 +378,8 @@ struct CloudWalletView: View {
                     completed: trip.isCompleted, cancelled: trip.isCancelled, paid: trip.isPaid,
                     contact: trip.customerContact, passengers: trip.customerCount, luggage: trip.customerStuff,
                     agency: trip.orderSource == "旅行社订单" ? trip.travelAgencyName : "", order: trip.orderSource == "旅行社订单" ? trip.travelAgencyOrderNumber : "", memo: trip.memo)
-                    + FinancialTripSnapshotRow.flightDetails(trip.flightSelectionSnapshot?.selected)
                     + [("小费", walletCurrency(trip.tip, code: trip.currencyCode))]
-                    + trip.expenses.map { ($0.title, "\($0.isAddition ? "+" : "−")\(walletCurrency(abs($0.amount), code: trip.currencyCode))") })
+                    + trip.expenses.map { ($0.title, "\($0.isAddition ? "+" : "−")\(walletCurrency(abs($0.amount), code: trip.currencyCode))") }, flightResult: trip.flightSelectionSnapshot?.selected)
         }.sorted { $0.date == $1.date ? ($0.time == $1.time ? $0.id < $1.id : $0.time < $1.time) : $0.date < $1.date }
     }
 
@@ -597,6 +596,15 @@ private struct OnlinePaymentMethodRow: View {
                 .navigationTitle(method.name.isEmpty ? localized("收款二维码", "Payment QR code", "Código QR de pago", "支払い用QRコード", "결제 QR 코드") : method.name)
                 .navigationBarTitleDisplayMode(.inline)
                 .toolbar {
+                    ToolbarItem(placement: .topBarLeading) {
+                        if let data = method.qrImageData, let image = UIImage(data: data) {
+                            ShareLink(item: Image(uiImage: image),
+                                      preview: SharePreview(method.name.isEmpty ? AppLocalization.text("收款二维码") : method.name,
+                                                            image: Image(uiImage: image))) {
+                                Label(AppLocalization.text("分享二维码"), systemImage: "square.and.arrow.up")
+                            }
+                        }
+                    }
                     ToolbarItem(placement: .topBarTrailing) {
                         Button(localized("完成", "Done", "Listo", "完了", "완료")) { isPreviewing = false }
                     }
