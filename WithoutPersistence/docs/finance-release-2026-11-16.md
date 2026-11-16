@@ -19,3 +19,15 @@
 ## 发布状态与回退
 
 代码待提交、Cloudflare待发布；实际提交和部署凭证完成后补录。当前生产回退基线为fb867a6b-6405-4983-ad04-03988eb9d93a（20261112-expiry-v1）。不涉及数据库回退。
+
+## 已完成的提交与生产发布
+
+- 代码提交：7e197ad，Unify flight cards and finance PDF sharing across App and Web；未Git推送。
+- Cloudflare生产main部署：bf1c2553-382d-4bb4-9970-21f9c9cbca77，详情状态success，2026-11-16 10:06（洛杉矶时间）。固定地址 https://bf1c2553.trvelma.pages.dev/，正式地址 https://trvelma.pages.dev/。
+- 上传67/67成功；部署资产页66个静态文件（另有_headers配置），明确包含statement-pdf.mjs。ZIP逐项哈希核对；除由打包脚本生成的安全头外，所有成员再次与7e197ad中的Web文件逐字节核验。
+- 正式域名DOM实际引用 app.js、styles.css、workspace.css 的20261116-finance-v1版本。现有到期QA会话正确显示1条合成客户，重新检查授权功能正常，控制台错误0。
+- 本次线上会话为到期只读账号，因此未在正式Web活动账号里重新生成PDF；PDF功能证据来自独立快照自动化、真实浏览器合成PDF逐页核验及16 Plus原生分享。未为了线上验证而扩权、改业务资料或退出用户会话。
+- App三台开发更新已于本轮提交前完成，仍是1.1(14)完整工作区包；1.1商店审核和正式收费没有启用。
+- 发布包、测试、SHA清单、生产success及线上只读核验截图：协作目录 deliverables/2026-11-16-finance-release/。
+
+回退：Cloudflare生产可回到fb867a6b-6405-4983-ad04-03988eb9d93a，无数据库迁移或数据回退。其他未提交工作仍保留。
