@@ -12,9 +12,11 @@ private struct AccountArchiveDocument: FileDocument {
 /// A separate read-only route. No normal editing, syncing or settlement views are mounted.
 struct ExpiredAccountArchiveView: View {
     @Environment(AuthViewModel.self) private var auth
-    @State private var snapshot: [String: Any] = [:]
-    @State private var exportData = Data()
-    @State private var busy = false
+    @State private var readState = ExpiredArchiveReadState()
+    private var snapshot: [String: Any] { readState.owner == archiveOwner ? readState.snapshot : [:] }
+    private var exportData: Data { readState.owner == archiveOwner ? readState.exportData : Data() }
+    private var busy: Bool { readState.busy }
+    private var archiveOwner: String { auth.isLoggedIn && auth.isCloudAccount && auth.canReadExpiredArchive ? auth.currentEmail : "" }
     @State private var error = ""
     @State private var exporting = false
     @State private var showingDeletion = false
@@ -29,7 +31,7 @@ struct ExpiredAccountArchiveView: View {
                     Text("导出文件包含个人及业务资料，请妥善保管。").font(.footnote).foregroundStyle(.secondary)
                     if busy { ProgressView() }
                     if !error.isEmpty { Text(error).foregroundStyle(.red) }
-                    Button("导出全部资料") { exporting = true }.disabled(exportData.isEmpty || busy)
+                    Button("导出全部资料") { exporting = true }.disabled(readState.owner != archiveOwner || !readState.canExport)
                     Button("重新加载资料") { Task { await load() } }.disabled(busy)
                     Button("重新检查授权") { Task { await auth.retryServerEntitlementLookup() } }.disabled(busy)
                     if BillingReleaseConfiguration.plansVisible && auth.canManageCloudPurchases {
@@ -60,7 +62,11 @@ struct ExpiredAccountArchiveView: View {
             .fileExporter(isPresented: $exporting, document: AccountArchiveDocument(data: exportData), contentType: .json, defaultFilename: AppLocalization.text("TrvelMA-资料备份")) { result in
                 if case .failure(let failure) = result { error = failure.localizedDescription }
             }
-            .task(id: auth.currentEmail) { await load() }
+            .task(id: archiveOwner) {
+                if readState.owner != archiveOwner { readState.reset(); error = "" }
+                if archiveOwner.isEmpty { readState.reset() } else { await load() }
+            }
+            .onDisappear { readState.reset() }
         }
     }
 
@@ -72,25 +78,32 @@ struct ExpiredAccountArchiveView: View {
     }
 
     @MainActor private func load() async {
-        guard !busy else { return }
-        let email = auth.currentEmail
-        snapshot = [:]; exportData = Data(); error = ""; busy = true
-        defer { busy = false }
+        guard !busy, !archiveOwner.isEmpty else { return }
+        let owner = archiveOwner
+        let request = readState.begin(owner: owner)
+        error = ""
         do {
-            guard let token = await auth.refreshCloudAccessToken() else {
+            let refreshedToken = await auth.refreshCloudAccessToken()
+            guard archiveOwner == owner, readState.isCurrent(request: request, owner: owner), !Task.isCancelled else { return }
+            guard let token = refreshedToken else {
+                readState.fail(request: request, owner: owner, transient: false)
                 error = AppLocalization.text("登录状态已失效，请退出并重新登录。"); return
             }
             let data = try await SupabaseAuthClient.readExpiredArchive(accessToken: token)
-            guard auth.currentEmail == email, auth.canReadExpiredArchive, !Task.isCancelled else { return }
-            let object = try JSONSerialization.jsonObject(with: data)
-            guard let archive = object as? [String: Any], archive["read_only"] as? Bool == true else {
-                error = AppLocalization.text("资料格式无法识别，请稍后重试。"); return
-            }
-            snapshot = archive
-            exportData = try JSONSerialization.data(withJSONObject: archive, options: [.prettyPrinted,.sortedKeys])
+            guard archiveOwner == owner, readState.isCurrent(request: request, owner: owner), !Task.isCancelled else { return }
+            try readState.accept(data, request: request, owner: owner)
         } catch {
-            guard auth.currentEmail == email, !Task.isCancelled else { return }
-            self.error = error.localizedDescription
+            guard archiveOwner == owner, readState.isCurrent(request: request, owner: owner), !Task.isCancelled else { return }
+            let transient: Bool
+            if case let SupabaseAuthClient.AuthError.response(statusCode, _) = error {
+                transient = statusCode == 429 || (500..<600).contains(statusCode)
+            } else if let failure = error as? URLError {
+                transient = [.timedOut, .notConnectedToInternet, .networkConnectionLost, .cannotFindHost,
+                             .cannotConnectToHost, .dnsLookupFailed].contains(failure.code)
+            } else { transient = false }
+            readState.fail(request: request, owner: owner, transient: transient)
+            self.error = error is ExpiredArchiveReadState.InvalidArchive
+                ? AppLocalization.text("资料格式无法识别，请稍后重试。") : error.localizedDescription
         }
     }
 }

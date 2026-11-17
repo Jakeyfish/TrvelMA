@@ -4702,3 +4702,54 @@ final class TripTelephoneContactTests: XCTestCase {
         XCTAssertEqual(TripPhoneContact.local(booking, context: container.mainContext), [])
     }
 }
+
+final class ExpiredArchiveRefreshRegressionTests: XCTestCase {
+    private let data = Data(#"{"read_only":true,"customers":[{"name":"QA"}]}"#.utf8)
+    func testTransientRefreshKeepsVisibleArchiveButBlocksExportUntilSuccess() throws {
+        var state = ExpiredArchiveReadState()
+        let first = state.begin(owner: "one"); try state.accept(data, request: first, owner: "one")
+        XCTAssertTrue(state.canExport)
+        let retry = state.begin(owner: "one")
+        XCTAssertEqual((state.snapshot["customers"] as? [[String: Any]])?.count, 1)
+        state.fail(request: retry, owner: "one", transient: true)
+        XCTAssertEqual((state.snapshot["customers"] as? [[String: Any]])?.count, 1)
+        XCTAssertFalse(state.canExport)
+        let next = state.begin(owner: "one"); try state.accept(data, request: next, owner: "one")
+        XCTAssertTrue(state.canExport)
+    }
+    func testPermissionFailureClearsArchiveAndCannotExport() throws {
+        var state = ExpiredArchiveReadState()
+        let first = state.begin(owner: "one"); try state.accept(data, request: first, owner: "one")
+        let denied = state.begin(owner: "one"); state.fail(request: denied, owner: "one", transient: false)
+        XCTAssertTrue(state.snapshot.isEmpty); XCTAssertTrue(state.exportData.isEmpty); XCTAssertFalse(state.canExport)
+    }
+    func testAccountSwitchAndLogoutRejectLateResponsesIncludingSameOwnerLogin() throws {
+        var state = ExpiredArchiveReadState()
+        let old = state.begin(owner: "one"); let newer = state.begin(owner: "two")
+        try state.accept(data, request: old, owner: "one")
+        XCTAssertTrue(state.snapshot.isEmpty); XCTAssertTrue(state.busy)
+        try state.accept(data, request: newer, owner: "two"); state.reset()
+        let current = state.begin(owner: "two")
+        try state.accept(data, request: newer, owner: "two")
+        XCTAssertTrue(state.snapshot.isEmpty)
+        try state.accept(data, request: current, owner: "two"); XCTAssertTrue(state.canExport)
+    }
+    func testAuthoritativeEmptyRefreshReplacesOldRecordsAndOwnerSwitchClearsImmediately() throws {
+        var state = ExpiredArchiveReadState()
+        let first = state.begin(owner: "one"); try state.accept(data, request: first, owner: "one")
+        let next = state.begin(owner: "one")
+        try state.accept(Data(#"{"read_only":true,"customers":[]}"#.utf8), request: next, owner: "one")
+        XCTAssertEqual((state.snapshot["customers"] as? [[String: Any]])?.count, 0)
+        XCTAssertTrue(state.canExport)
+        _ = state.begin(owner: "two")
+        XCTAssertTrue(state.snapshot.isEmpty); XCTAssertTrue(state.exportData.isEmpty); XCTAssertFalse(state.canExport)
+    }
+    func testMalformedOrNonReadOnlyPayloadNeverReplacesVerifiedArchive() throws {
+        var state = ExpiredArchiveReadState()
+        let first = state.begin(owner: "one"); try state.accept(data, request: first, owner: "one")
+        let bad = state.begin(owner: "one")
+        XCTAssertThrowsError(try state.accept(Data(#"{"read_only":false}"#.utf8), request: bad, owner: "one"))
+        state.fail(request: bad, owner: "one", transient: false)
+        XCTAssertTrue(state.snapshot.isEmpty); XCTAssertFalse(state.canExport)
+    }
+}
