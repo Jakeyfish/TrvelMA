@@ -24,8 +24,11 @@ final class StoreKitLocalIntegrationTests: XCTestCase {
         let transaction = try await session.buyProduct(identifier: StoreProductCatalog.local)
         await store.load()
         XCTAssertTrue(store.hasLocalPurchase)
+        XCTAssertFalse(store.hasProductionLocalPurchase, "Xcode StoreKit purchase cannot prove a production buyout")
+        XCTAssertEqual(store.localWorkspaceAccess, .unchanged, "Release gate remains disabled during acceptance")
         await store.restore()
         XCTAssertTrue(store.hasLocalPurchase)
+        XCTAssertFalse(store.hasProductionLocalPurchase, "Restoring test purchases cannot grant production access")
         try session.refundTransaction(identifier: UInt(transaction.id))
         for _ in 0..<20 {
             await store.load()
@@ -48,6 +51,16 @@ final class StoreKitLocalIntegrationTests: XCTestCase {
 }
 
 extension StoreKitLocalIntegrationTests {
+    @MainActor func testEmptyRestoreDoesNotClaimServerConfigurationIsMissing() async throws {
+        let session = try session()
+        defer { session.clearTransactions() }
+        let store = StorePurchaseManager()
+        await store.restore()
+        XCTAssertFalse(store.hasLocalPurchase)
+        XCTAssertEqual(store.message, AppLocalization.text("未找到可恢复的有效购买。订阅可能已到期或退款。"))
+        XCTAssertTrue(try session.allTransactions().isEmpty)
+    }
+
     @MainActor func testCloudPurchaseRequiresPreflightEvenWithVerifier() async throws {
         let session = try session()
         defer { session.clearTransactions() }

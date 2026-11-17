@@ -1,16 +1,23 @@
 import Foundation
 import StoreKit
 import Observation
+import UIKit
 
 enum BillingReleaseConfiguration {
     // Explicit developer build only. Release cannot enable this via build flags.
     #if DEBUG && STOREKIT_SANDBOX_ACCEPTANCE
     static let sandboxAcceptanceBuild = true
     static let sandboxOwnerID = UUID(uuidString: "71b164e4-7dbf-4433-8503-84ed156171de")!
+    static let sandboxOwnerIDs: Set<UUID> = [sandboxOwnerID, UUID(uuidString: "86361373-d4ba-4fc6-8f38-420367b6484e")!]
     #else
     static let sandboxAcceptanceBuild = false
     static let sandboxOwnerID: UUID? = nil
+    static let sandboxOwnerIDs: Set<UUID> = []
     #endif
+    // Set only after the first actually paid release/build boundary is approved.
+    static let firstPaidLocalBuild: String? = nil
+    // Keep off until the read-only/export route and production migration pass acceptance.
+    static let localAccessEnforcementEnabled = false
     static let salesEnabled = sandboxAcceptanceBuild
     static let plansVisible = sandboxAcceptanceBuild
 
@@ -31,6 +38,17 @@ enum StoreProductCatalog {
     }
 }
 
+/// Pure selection policy. Only the named lifecycle QA owner can request a Sandbox refund.
+/// Expired periods remain eligible for Apple's own decision; no app-side entitlement is changed.
+enum SandboxRefundPolicy {
+    static let lifecycleOwner = UUID(uuidString: "86361373-d4ba-4fc6-8f38-420367b6484e")!
+    static func permits(buildEnabled: Bool, owner: UUID?, transactionOwner: UUID?, product: String,
+                        environment: AppStore.Environment, revoked: Bool, upgraded: Bool) -> Bool {
+        buildEnabled && owner == lifecycleOwner && transactionOwner == owner
+            && StoreProductCatalog.isCloud(product) && environment == .sandbox && !revoked && !upgraded
+    }
+}
+
 /// Cloud grants are deliberately injected only after server signature verification is deployed.
 /// No UI setting or UserDefaults flag can enable production sales.
 @MainActor @Observable final class StorePurchaseManager {
@@ -39,6 +57,14 @@ enum StoreProductCatalog {
     static let shared = StorePurchaseManager()
     private(set) var products: [Product] = []
     private(set) var hasLocalPurchase = false
+    // Separate from sandbox UI state: test transactions never unlock production use.
+    private(set) var hasProductionLocalPurchase = false
+    private(set) var legacyLocalDecision: LegacyLocalAccessDecision = .notConfigured
+    var localWorkspaceAccess: LegacyLocalAccessPolicy.WorkspaceAccess {
+        LegacyLocalAccessPolicy.workspaceAccess(
+            enforcementEnabled: BillingReleaseConfiguration.localAccessEnforcementEnabled,
+            decision: legacyLocalDecision, hasProductionPurchase: hasProductionLocalPurchase)
+    }
     private(set) var isBusy = false
     private(set) var message = ""
     let salesEnabled: Bool
@@ -60,6 +86,7 @@ enum StoreProductCatalog {
 
     func load(accountID: UUID? = nil) async {
         self.accountID = accountID
+        legacyLocalDecision = BillingReleaseConfiguration.firstPaidLocalBuild == nil ? .notConfigured : .evidenceUnavailable
         message = ""
         if listener == nil {
             listener = Task { [weak self] in
@@ -80,12 +107,15 @@ enum StoreProductCatalog {
             if products.isEmpty { message = AppLocalization.text("购买暂未开放。已有业务资料不受影响。") }
         } catch { message = AppLocalization.text("暂时无法读取商店商品，请稍后重试。") }
         await refreshLocalEntitlement()
+        await refreshLegacyLocalEvidence()
         await retryUnfinishedTransactions()
     }
 
     func canPurchase(_ product: Product) -> Bool {
         salesEnabled && StoreProductCatalog.all.contains(product.id)
-            && !(product.id == StoreProductCatalog.local && hasLocalPurchase)
+            && (product.id != StoreProductCatalog.local || LegacyLocalAccessPolicy.allowsLocalPurchase(
+                decision: legacyLocalDecision, hasPurchase: hasLocalPurchase,
+                cutoverConfigured: BillingReleaseConfiguration.firstPaidLocalBuild != nil))
             && (!StoreProductCatalog.isCloud(product.id) || (cloudVerifier != nil && cloudPurchasePreflight != nil && accountID != nil))
     }
 
@@ -115,35 +145,113 @@ enum StoreProductCatalog {
         } catch { message = error.localizedDescription }
     }
 
+    #if DEBUG && STOREKIT_SANDBOX_ACCEPTANCE
+    private(set) var sandboxRefundDiagnostic = ""
+    var canRequestSandboxRefund: Bool {
+        sandboxOnly && accountID == SandboxRefundPolicy.lifecycleOwner && cloudPurchasePreflight != nil
+    }
+    func refreshSandboxRefundDiagnostic() async {
+        await requestSandboxRefund(in: nil)
+    }
+    func requestSandboxRefund(in scene: UIWindowScene?) async {
+        guard !isBusy, canRequestSandboxRefund, let owner = accountID, let preflight = cloudPurchasePreflight else { return }
+        isBusy = true; message = ""; sandboxRefundDiagnostic = ""
+        defer { isBusy = false }
+        do {
+            try await checkStoreEnvironment()
+            try await preflight(owner)
+            var candidate: Transaction?
+            var scanned = 0, verified = 0, sandbox = 0, matched = 0, eligible = 0
+            for await result in Transaction.all {
+                scanned += 1
+                guard case .verified(let transaction) = result else { continue }
+                verified += 1
+                if transaction.environment == .sandbox { sandbox += 1 }
+                if transaction.environment == .sandbox, transaction.appAccountToken == owner,
+                   StoreProductCatalog.isCloud(transaction.productID) { matched += 1 }
+                guard SandboxRefundPolicy.permits(buildEnabled: BillingReleaseConfiguration.sandboxAcceptanceBuild,
+                        owner: owner, transactionOwner: transaction.appAccountToken, product: transaction.productID,
+                        environment: transaction.environment, revoked: transaction.revocationDate != nil,
+                        upgraded: transaction.isUpgraded) else { continue }
+                eligible += 1
+                if candidate == nil || transaction.purchaseDate > candidate!.purchaseDate { candidate = transaction }
+            }
+            guard !Task.isCancelled, accountID == owner, canRequestSandboxRefund else { return }
+            sandboxRefundDiagnostic = AppLocalization.format("历史 %ld · 已验证 %ld · 沙盒 %ld · 本账号 %ld · 可申请 %ld", scanned, verified, sandbox, matched, eligible)
+            guard let candidate else {
+                message = AppLocalization.text("未找到属于当前账号的可退款沙盒交易。"); return
+            }
+            // A diagnostic-only read never presents Apple UI or changes a transaction.
+            guard let scene else { return }
+            try await preflight(owner)
+            guard accountID == owner, canRequestSandboxRefund else { return }
+            let result = try await candidate.beginRefundRequest(in: scene)
+            try await preflight(owner)
+            switch result {
+            case .success: message = AppLocalization.text("退款请求已提交，等待 Apple 通知确认。")
+            case .userCancelled: message = AppLocalization.text("已取消")
+            @unknown default: message = AppLocalization.text("退款状态尚未确认，请稍后检查。")
+            }
+        } catch { message = error.localizedDescription }
+    }
+    #endif
+
     func restore() async {
         guard !isBusy else { return }
+        legacyLocalDecision = BillingReleaseConfiguration.firstPaidLocalBuild == nil ? .notConfigured : .evidenceUnavailable
         isBusy = true; message = ""
         defer { isBusy = false }
         do {
             try await checkStoreEnvironment()
             try await AppStore.sync()
             var restoredCloud = false
+            var cloudNeedsConfiguration = false
             for await result in Transaction.currentEntitlements {
                 guard case .verified(let transaction) = result else { continue }
+                if StoreProductCatalog.isCloud(transaction.productID), cloudVerifier == nil || accountID == nil {
+                    cloudNeedsConfiguration = true
+                }
                 if StoreProductCatalog.isCloud(transaction.productID), cloudVerifier != nil,
                    let accountID, transaction.appAccountToken == accountID {
                     try await deliver(result); restoredCloud = true
                 }
             }
             await refreshLocalEntitlement()
-            message = hasLocalPurchase || restoredCloud ? AppLocalization.text("已恢复可用的购买权益。") : AppLocalization.text("未找到可恢复的购买。云端订阅恢复需完成账号和服务端验证配置。")
+            await refreshLegacyLocalEvidence()
+            if hasLocalPurchase || legacyLocalDecision.grantsLegacyLocalAccess || restoredCloud {
+                message = AppLocalization.text("已恢复可用的购买权益。")
+            } else if cloudNeedsConfiguration {
+                message = AppLocalization.text("未找到可恢复的购买。云端订阅恢复需完成账号和服务端验证配置。")
+            } else {
+                message = AppLocalization.text("未找到可恢复的有效购买。订阅可能已到期或退款。")
+            }
         } catch { message = error.localizedDescription }
+    }
+
+    private func refreshLegacyLocalEvidence() async {
+        legacyLocalDecision = await LegacyLocalAccessReader.decision(
+            expectedBundleID: "com.yunshengtech.travelmanager",
+            firstPaidBuild: BillingReleaseConfiguration.firstPaidLocalBuild)
+    }
+
+    /// Read evidence only; no product requests, cloud delivery, or new payment.
+    func refreshLocalAccessEvidence() async {
+        await refreshLocalEntitlement()
+        await refreshLegacyLocalEvidence()
     }
 
     private func refreshLocalEntitlement() async {
         var active = false
+        var productionActive = false
         for await result in Transaction.currentEntitlements {
-            if case .verified(let transaction) = result, transaction.productID == StoreProductCatalog.local,
-               BillingReleaseConfiguration.permits(environment: transaction.environment, sandboxOnly: sandboxOnly) {
-                active = StoreProductCatalog.isActive(productID: transaction.productID, revokedAt: transaction.revocationDate, expiresAt: transaction.expirationDate, upgraded: transaction.isUpgraded)
-            }
+            guard case .verified(let transaction) = result, transaction.productID == StoreProductCatalog.local,
+                  StoreProductCatalog.isActive(productID: transaction.productID, revokedAt: transaction.revocationDate,
+                                               expiresAt: transaction.expirationDate, upgraded: transaction.isUpgraded) else { continue }
+            if BillingReleaseConfiguration.permits(environment: transaction.environment, sandboxOnly: sandboxOnly) { active = true }
+            if transaction.environment == .production { productionActive = true }
         }
         hasLocalPurchase = active
+        hasProductionLocalPurchase = productionActive
     }
 
     private func checkStoreEnvironment() async throws {

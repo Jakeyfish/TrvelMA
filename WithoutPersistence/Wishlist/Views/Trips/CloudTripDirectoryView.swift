@@ -58,7 +58,7 @@ struct CloudTripDirectoryView: View {
             VStack(spacing: 0) {
                 HStack {
                     Text("行程")
-                        .font(.system(size: 34, weight: .bold, design: .rounded))
+                        .font(.system(size: 30, weight: .bold, design: .rounded))
                         .lineLimit(1)
                         .accessibilityAddTraits(.isHeader)
                     Spacer(minLength: 12)
@@ -73,9 +73,9 @@ struct CloudTripDirectoryView: View {
                     .disabled(directory.isLoading)
                     .accessibilityLabel("新增行程")
                 }
-                .padding(.horizontal, 16)
-                .padding(.top, 8)
-                .padding(.bottom, 8)
+                .frame(minHeight: 52)
+                .padding(.horizontal, 20)
+                .padding(.vertical, 8)
 
                 CloudTripScheduleView(directory: directory, showsDateControls: true)
                     .padding(.horizontal, 16)
@@ -1024,8 +1024,7 @@ private struct CloudTripDetailView: View {
         List {
             Section("订单信息") {
                 LabeledContent("客户", value: valueOrFallback(trip.customerName))
-                LabeledContent("联系方式", value: valueOrFallback(trip.customerContact))
-                TripPhoneActions(phones: TripPhoneContact.cloud(trip, directory: directory))
+                TripDetailContactRow(contact: trip.customerContact, phones: TripPhoneContact.cloud(trip, directory: directory))
                 HStack(spacing: 8) {
                     compactDetail("行程类型", value: trip.serviceType)
                     compactDetail("订单来源", value: trip.orderSource)

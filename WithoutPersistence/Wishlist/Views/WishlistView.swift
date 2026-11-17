@@ -225,7 +225,7 @@ struct TripsPageView: View {
             VStack(spacing: 0) {
                 HStack(alignment: .center) {
                     Text("行程")
-                        .font(.system(size: 34, weight: .bold, design: .rounded))
+                        .font(.system(size: 30, weight: .bold, design: .rounded))
                         .lineLimit(1)
                         .accessibilityAddTraits(.isHeader)
                     Spacer(minLength: 12)
@@ -237,9 +237,9 @@ struct TripsPageView: View {
                     .buttonStyle(.plain)
                     .accessibilityLabel("新增行程")
                 }
-                .padding(.horizontal, 16)
-                .padding(.top, 8)
-                .padding(.bottom, 8)
+                .frame(minHeight: 52)
+                .padding(.horizontal, 20)
+                .padding(.vertical, 8)
 
                 TripListDashboardView()
                     .padding(.horizontal, 16)
@@ -1740,8 +1740,7 @@ private struct TripBrowseView: View {
         List {
             Section("订单信息") {
                 LabeledContent("客户", value: valueOrFallback(booking.customerName))
-                LabeledContent("联系方式", value: valueOrFallback(booking.customerContact))
-                TripPhoneActions(phones: TripPhoneContact.local(booking, context: modelContext))
+                TripDetailContactRow(contact: booking.customerContact, phones: TripPhoneContact.local(booking, context: modelContext))
                 compactOrderDetails
                 if booking.orderSource == "旅行社订单" {
                     HStack(spacing: 12) {

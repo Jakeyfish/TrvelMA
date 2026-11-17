@@ -1,13 +1,13 @@
-import { statementPDF } from "./statement-pdf.mjs?v=20261116-trip-period-v1";
-import { localized } from "./localization.mjs?v=20261116-trip-period-v1";
+import { statementPDF } from "./statement-pdf.mjs?v=20261116-card-polish-v1";
+import { localized } from "./localization.mjs?v=20261116-card-polish-v1";
 const uiLanguage = () => normalizedLanguageCode((state.archiveMode ? state.archiveData?.user_settings?.[0]?.language_code : null) || state.settings?.language_code || readInterfaceLanguage());
 const ui = (key, ...args) => localized(key, uiLanguage(), ...args);
-import { flightDisplayName, flightStatusLabel, safeNavigationURL, telephoneNumber, tripTelephoneContacts, financialCategoryGroups, statementMoney, agencyStatementTrips, statementAgencyKey, buildAgencyStatement, pickupReminders, recognizePickup, matchPickupAgency, partsInZone, zonedISO, parseFlights, flightID, makeFlightSnapshot, readFlightSnapshot, routeMatches, compareTrips, settlementPayload } from './parity.mjs?v=20261116-trip-period-v1';
+import { flightDisplayName, flightStatusLabel, safeNavigationURL, telephoneNumber, tripTelephoneContacts, financialCategoryGroups, statementMoney, agencyStatementTrips, statementAgencyKey, buildAgencyStatement, pickupReminders, recognizePickup, matchPickupAgency, partsInZone, zonedISO, parseFlights, flightID, makeFlightSnapshot, readFlightSnapshot, routeMatches, compareTrips, settlementPayload } from './parity.mjs?v=20261116-card-polish-v1';
 let airportCrosswalk = [];
 const airportCrosswalkReady = fetch('./assets/airport-crosswalk.json').then(r => { if (!r.ok) throw Error('机场对照表不可用'); return r.json(); }).then(data => { airportCrosswalk = data.airports; }).catch(() => {});
 const SUPABASE_URL = "https://lbdfqzeiweqbsklklcqr.supabase.co";
 const SUPABASE_PUBLISHABLE_KEY = "sb_publishable_d4tmuPirsf8-wUDO0Frd7w_PcXME6rs";
-const WEB_BUILD = "20261116-trip-period-v1";
+const WEB_BUILD = "20261116-card-polish-v1";
 const SESSION_KEY = "yunsheng.web.session.v1";
 const OFFLINE_CACHE_PREFIX = "yunsheng.web.offline-cache.v1.";
 const OFFLINE_QUEUE_PREFIX = "yunsheng.web.offline-queue.v1.";
@@ -1168,6 +1168,14 @@ function tripContactActionsHTML(trip) {
   const phones = tripTelephoneContacts(trip, state.contacts, state.customers.map(c => c.id));
   return `<div class="trip-contact-actions">${phones.length ? phones.map(phone => `<div><span>${escapeHTML(phone)}</span><a class="button small" href="sms:${telephoneNumber(phone)}" aria-label="发送信息">${appIcon("message.fill")}</a><a class="button small" href="tel:${telephoneNumber(phone)}" aria-label="拨打电话">${appIcon("phone.fill")}</a></div>`).join("") : '<span class="muted">未填写</span>'}</div>`;
 }
+function tripDetailContactHTML(trip) {
+  const phones = tripTelephoneContacts(trip, state.contacts, state.customers.map(c => c.id));
+  const original = String(trip.customer_contact || "").trim();
+  const normalized = telephoneNumber(original);
+  const duplicate = normalized && phones.some(phone => telephoneNumber(phone) === normalized);
+  const originalHTML = original && !duplicate ? `<strong>${escapeHTML(original)}</strong>` : "";
+  return originalHTML + (phones.length || !original ? tripContactActionsHTML(trip) : "");
+}
 const TRIP_AMOUNTS_PRIVACY_KEY = "yunsheng.web.trip-amounts-hidden.v2.";
 const tripAmountsPrivacyFallback = new Map();
 function tripAmountsHidden(tripID) {
@@ -1282,7 +1290,7 @@ function detailSection(title, subtitle, content) {
 function openTripDetail(trip) {
   const pending = !trip.is_completed && !trip.is_cancelled;
   const tripRows = (trip.stops || []).map((stop, index) => '<div><small>停靠点 ' + (index + 1) + '</small><strong>' + escapeHTML(stop.address) + '</strong></div>').join("");
-  const fields = '<div class="detail-grid"><div><small>客户</small><strong>' + escapeHTML(trip.customer_name || "—") + '</strong></div><div><small>联系方式</small><strong>' + escapeHTML(trip.customer_contact || "—") + '</strong>' + tripContactActionsHTML(trip) + '</div><div><small>行程类型</small><strong>' + escapeHTML(trip.service_type || "接机") + '</strong></div><div><small>订单来源</small><strong>' + escapeHTML(trip.order_source || "普通客户") + '</strong></div><div><small>乘客人数</small><strong>' + escapeHTML(trip.customer_count || "1") + ' 位</strong></div><div><small>行李数量</small><strong>' + escapeHTML(trip.customer_stuff || "0") + ' 件</strong></div><div><small>行程状态</small><strong>' + tripStatus(trip) + '</strong></div><div><small>结算状态</small><strong>' + paymentStatus(trip) + '</strong></div><div><small>起始点</small><strong>' + escapeHTML(trip.location_start || "—") + '</strong></div>' + tripRows + '<div><small>目的地</small><strong>' + escapeHTML(trip.location_end || "—") + '</strong></div></div>';
+  const fields = '<div class="detail-grid"><div><small>客户</small><strong>' + escapeHTML(trip.customer_name || "—") + '</strong></div><div><small>联系方式</small>' + tripDetailContactHTML(trip) + '</div><div><small>行程类型</small><strong>' + escapeHTML(trip.service_type || "接机") + '</strong></div><div><small>订单来源</small><strong>' + escapeHTML(trip.order_source || "普通客户") + '</strong></div><div><small>乘客人数</small><strong>' + escapeHTML(trip.customer_count || "1") + ' 位</strong></div><div><small>行李数量</small><strong>' + escapeHTML(trip.customer_stuff || "0") + ' 件</strong></div><div><small>行程状态</small><strong>' + tripStatus(trip) + '</strong></div><div><small>结算状态</small><strong>' + paymentStatus(trip) + '</strong></div><div><small>起始点</small><strong>' + escapeHTML(trip.location_start || "—") + '</strong></div>' + tripRows + '<div><small>目的地</small><strong>' + escapeHTML(trip.location_end || "—") + '</strong></div></div>';
   const flight = trip.flight_info ? detailSection('航班信息', '', flightDetailsHTML(trip) + `<div class="detail-flight-actions"><button type="button" class="button small" data-action="refresh-flight-card" data-id="${trip.id}">刷新航班</button></div>`) : '';
   const expenses = (trip.expenses || []).map(item => '<div class="finance-row"><span>' + escapeHTML(item.title) + (item.is_addition ? ' ＋' : ' −') + '</span><strong>' + currency(item.amount) + '</strong></div>').join("");
   const actions = '<button class="button small" data-action="copy-trip" data-id="' + trip.id + '">复制行程</button>' + (pending ? '<button class="button small" data-action="edit-trip" data-id="' + trip.id + '">编辑</button><button class="button small complete-action" data-action="toggle-complete" data-id="' + trip.id + '">已完成</button><button class="button small danger" data-action="cancel-trip" data-id="' + trip.id + '">取消行程</button><button class="button small danger" data-action="delete-trip" data-id="' + trip.id + '">删除</button>' : trip.is_cancelled ? '<button class="button small" data-action="restore-trip" data-id="' + trip.id + '">恢复行程</button>' : trip.is_completed ? '<button class="button small" data-action="restore-trip" data-id="' + trip.id + '">恢复待执行</button>' : '') + (!trip.is_paid ? '<button class="button small settle-action" data-action="toggle-paid" data-id="' + trip.id + '">财务结算</button>' : "");
@@ -1641,7 +1649,62 @@ function renderBusinessCard() {
   const email = state.user?.email || "未填写";
   const portrait = card.portraitData ? `<img src="${imageDataURL(card.portraitData)}" alt="名片头像">` : `<span>人像</span>`;
   const styleName = Number(card.style) === 1 ? "金属质感" : "简洁平版";
-  return `<section class="business-card-editor"><div class="panel business-card-settings"><div class="business-card-photo"><label class="business-avatar-picker">${portrait}<span>更换头像<input type="file" accept="image/*" data-card-photo></span></label>${card.portraitData ? `<button class="button small danger" data-action="remove-card-photo">删除头像</button>` : ""}</div><div class="readonly-profile"><label>姓名<input readonly value="${escapeHTML(name)}"></label><label>电话<input readonly value="${escapeHTML(phone)}"></label><label>电子邮箱<input readonly value="${escapeHTML(email)}"></label></div><label class="field">昵称<input data-card-field="nickname" value="${escapeHTML(card.nickname || "")}" placeholder="输入名片上显示的昵称"></label><div class="field"><label>名片样式</label><div class="business-style-options"><button class="business-style-option ${Number(card.style) === 0 ? "selected" : ""}" data-action="card-style" data-style="0"><strong>样式一</strong><small>简洁平版</small></button><button class="business-style-option ${Number(card.style) === 1 ? "selected" : ""}" data-action="card-style" data-style="1"><strong>样式二</strong><small>金属质感</small></button></div></div><button class="button primary" data-action="save-business-card">保存名片</button></div><div class="business-card-preview ${Number(card.style) === 1 ? "metallic" : "flat"}"><div class="preview-heading">${card.portraitData ? `<img src="${imageDataURL(card.portraitData)}" alt="">` : `<span>${escapeHTML(String(name).slice(0, 1))}</span>`}<div><strong>${escapeHTML(card.nickname || name)}</strong><small>${escapeHTML(name)}</small></div></div><div class="preview-contact"><span>${escapeHTML(phone)}</span><span>${escapeHTML(email)}</span></div><small>${styleName}</small></div></section><section class="panel account-asset-panel"><div class="section-heading"><h2>二维码</h2><button class="button small" data-action="add-card-qr">${appIcon("plus")} 添加</button></div>${card.qrCodes.length ? `<div class="asset-list">${card.qrCodes.map(qr => `<article class="asset-row"><button class="asset-image-button" data-action="preview-card-qr" data-id="${escapeHTML(qr.id)}" ${qr.imageData ? "" : "disabled"}>${qr.imageData ? `<img src="${imageDataURL(qr.imageData)}" alt="${escapeHTML(qr.name || "二维码")}">` : `<span>添加二维码</span>`}</button><div class="asset-row-content"><label>二维码名称<input data-card-qr-name="${escapeHTML(qr.id)}" value="${escapeHTML(qr.name || "")}" placeholder="例如：微信"></label><label class="button small asset-upload">${qr.imageData ? "更换二维码" : "选择二维码图片"}<input type="file" accept="image/*" data-card-qr-image="${escapeHTML(qr.id)}"></label></div><button class="button small danger" data-action="remove-card-qr" data-id="${escapeHTML(qr.id)}">删除</button></article>`).join("")}</div>` : `<p class="empty-hint">添加微信、LINE 或其他联系二维码。</p>`}</section>`;
+  return `<section class="business-card-editor"><div class="panel business-card-settings"><div class="business-card-photo"><label class="business-avatar-picker">${portrait}<span>更换头像<input type="file" accept="image/*" data-card-photo></span></label>${card.portraitData ? `<button class="button small danger" data-action="remove-card-photo">删除头像</button>` : ""}</div><div class="readonly-profile"><label>姓名<input readonly value="${escapeHTML(name)}"></label><label>电话<input readonly value="${escapeHTML(phone)}"></label><label>电子邮箱<input readonly value="${escapeHTML(email)}"></label></div><label class="field">昵称<input data-card-field="nickname" value="${escapeHTML(card.nickname || "")}" placeholder="输入名片上显示的昵称"></label><div class="field"><label>名片样式</label><div class="business-style-options"><button class="business-style-option ${Number(card.style) === 0 ? "selected" : ""}" data-action="card-style" data-style="0"><strong>样式一</strong><small>简洁平版</small></button><button class="business-style-option ${Number(card.style) === 1 ? "selected" : ""}" data-action="card-style" data-style="1"><strong>样式二</strong><small>金属质感</small></button></div></div><button class="button primary" data-action="save-business-card">保存名片</button></div><div class="business-card-preview ${Number(card.style) === 1 ? "metallic" : "flat"}"><div class="preview-heading">${card.portraitData ? `<img src="${imageDataURL(card.portraitData)}" alt="">` : `<span>${escapeHTML(String(card.nickname?.trim() || "?").slice(0, 1))}</span>`}<div><strong>${escapeHTML(card.nickname?.trim() || "请填写昵称")}</strong></div></div><div class="preview-contact"><span>${escapeHTML(phone)}</span><span>${escapeHTML(email)}</span></div><small>${styleName}</small><div class="business-card-export"><button class="button" data-action="save-card-image">保存图片</button><button class="button primary" data-action="share-card-image">分享名片</button></div></div></section><section class="panel account-asset-panel"><div class="section-heading"><h2>其他资料</h2><button class="button small" data-action="add-card-qr">${appIcon("plus")} 添加</button></div>${card.qrCodes.length ? `<div class="asset-list">${card.qrCodes.map(qr => `<article class="asset-row"><button class="asset-image-button" data-action="preview-card-qr" data-id="${escapeHTML(qr.id)}" ${qr.imageData ? "" : "disabled"}>${qr.imageData ? `<img src="${imageDataURL(qr.imageData)}" alt="${escapeHTML(qr.name || "二维码")}">` : `<span>添加资料图片</span>`}</button><div class="asset-row-content"><label>资料名称<input data-card-qr-name="${escapeHTML(qr.id)}" value="${escapeHTML(qr.name || "")}" placeholder="例如：微信"></label><label class="button small asset-upload">${qr.imageData ? "更换图片" : "选择资料图片"}<input type="file" accept="image/*" data-card-qr-image="${escapeHTML(qr.id)}"></label></div><button class="button small danger" data-action="remove-card-qr" data-id="${escapeHTML(qr.id)}">删除</button></article>`).join("")}</div>` : `<p class="empty-hint">添加二维码、服务介绍等图片资料。</p>`}</section>`;
+}
+
+async function exportBusinessCardImage(share) {
+  const owner = state.user?.id;
+  if (!owner) return;
+  const card = structuredClone(state.businessCard);
+  const metadata = state.user.user_metadata || {};
+  const phone = metadata.phone || "未填写";
+  const email = state.user.email || "未填写";
+  const nickname = card.nickname?.trim() || "请填写昵称";
+  const canvas = document.createElement("canvas");
+  canvas.width = 1200;
+  const context = canvas.getContext("2d");
+  if (!context) throw new Error("无法生成名片图片，请重试。");
+  function lines(value, font, width) {
+    context.font = font;
+    const result = []; let line = "";
+    for (const char of value) {
+      if (line && context.measureText(line + char).width > width) { result.push(line); line = char; }
+      else line += char;
+    }
+    result.push(line); return result;
+  }
+  const nameLines = lines(nickname, "600 52px sans-serif", 870);
+  const phoneLines = lines(phone, "36px sans-serif", 1080);
+  const emailLines = lines(email, "36px sans-serif", 1080);
+  canvas.height = Math.max(670, 220 + nameLines.length * 64 + (phoneLines.length + emailLines.length) * 50);
+  const gradient = context.createLinearGradient(0, 0, 1200, canvas.height);
+  if (Number(card.style) === 1) { gradient.addColorStop(0, "#b59c74"); gradient.addColorStop(.52, "#656666"); gradient.addColorStop(1, "#897258"); }
+  else { gradient.addColorStop(0, "#425867"); gradient.addColorStop(1, "#273b49"); }
+  context.fillStyle = gradient; context.fillRect(0, 0, 1200, canvas.height);
+  if (card.portraitData) {
+    const image = new Image(); image.src = imageDataURL(card.portraitData);
+    await image.decode();
+    context.save(); context.beginPath(); context.arc(120, 120, 60, 0, Math.PI * 2); context.clip();
+    const side = Math.min(image.naturalWidth, image.naturalHeight);
+    context.drawImage(image, (image.naturalWidth-side)/2, (image.naturalHeight-side)/2, side, side, 60, 60, 120, 120); context.restore();
+  }
+  context.fillStyle = "#ffffff"; context.font = "600 52px sans-serif";
+  nameLines.forEach((line, index) => context.fillText(line, 220, 130 + index * 64));
+  let y = Math.max(240, 160 + nameLines.length * 64);
+  context.font = "36px sans-serif";
+  for (const group of [phoneLines, emailLines]) { for (const line of group) { context.fillText(line, 60, y); y += 50; } y += 22; }
+  const blob = await new Promise(resolve => canvas.toBlob(resolve, "image/png"));
+  if (!blob) throw new Error("无法生成名片图片，请重试。");
+  if (state.user?.id !== owner) return;
+  const file = new File([blob], "TrvelMA-Business-Card.png", {type:"image/png"});
+  if (share && navigator.share && navigator.canShare?.({files:[file]})) {
+    try { await navigator.share({files:[file],title:"Business Card"}); return; }
+    catch (error) { if(error.name === "AbortError") return; throw error; }
+  }
+  const url = URL.createObjectURL(blob), link = document.createElement("a");
+  link.href = url; link.download = file.name; link.click();
+  setTimeout(() => URL.revokeObjectURL(url), 60000);
+  if (share) showToast("名片图片已下载，可通过设备分享功能发送。");
 }
 
 async function cloudAssetValue(column, value, ownerID, uploadedPaths = []) {
@@ -2730,7 +2793,7 @@ document.addEventListener("input", event => {
   if (event.target.matches("[data-card-field='nickname']")) {
     state.businessCard.nickname = event.target.value;
     const previewName = document.querySelector(".business-card-preview .preview-heading strong");
-    if (previewName) previewName.textContent = event.target.value || state.user?.user_metadata?.salutation || "未填写";
+    if (previewName) previewName.textContent = event.target.value.trim() || "请填写昵称";
     return;
   }
   if (event.target.matches("[data-card-qr-name]")) {
@@ -2942,6 +3005,7 @@ document.addEventListener("click", async event => {
       updatePageContent();
       await saveBusinessCard();
     }
+    else if (action === "save-card-image" || action === "share-card-image") await exportBusinessCardImage(action === "share-card-image");
     else if (action === "save-business-card") await saveBusinessCard();
     else if (action === "remove-card-photo") {
       const removedPath = state.businessCard.portraitPath;

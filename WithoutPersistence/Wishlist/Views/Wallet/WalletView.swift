@@ -161,8 +161,14 @@ struct WalletView: View {
             }
             .scrollDismissesKeyboard(.interactively)
             .background(Color(.systemGroupedBackground))
-            .navigationTitle(localized("财务", "Finance", "Finanzas", "財務", "재무"))
-            .navigationBarTitleDisplayMode(.inline)
+            .safeAreaInset(edge: .top, spacing: 0) {
+                HStack {
+                    Text(localized("财务", "Finance", "Finanzas", "財務", "재무")).font(.system(size: 30, weight: .bold, design: .rounded))
+                    Spacer()
+                }.frame(minHeight: 52).padding(.horizontal, 20).padding(.vertical, 8)
+                    .background(Color(.systemGroupedBackground))
+            }
+            .toolbar(.hidden, for: .navigationBar)
             .sheet(item: $tripSnapshot) { snapshot in
                 FinancialTripSnapshotSheet(snapshot: snapshot)
             }

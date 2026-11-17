@@ -1532,6 +1532,7 @@ struct TripDeteilSection: View {
                         .joined(separator: " ")
                     UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder), to: nil, from: nil, for: nil)
                     setAddress(address, for: target)
+                    NavigationDestinationStore.rememberSelection(completion, address: address)
                     focusedAddressField = nil
                 } label: {
                     HStack(alignment: .top, spacing: 10) {

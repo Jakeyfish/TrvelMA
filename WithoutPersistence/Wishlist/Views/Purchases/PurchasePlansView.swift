@@ -49,6 +49,24 @@ struct PurchasePlansView: View {
                     }
                     Button("恢复购买") { Task { await store.restore() } }
                         .disabled(isPreparing || !preparationError.isEmpty || store.isBusy)
+                    #if DEBUG && STOREKIT_SANDBOX_ACCEPTANCE
+                    if store.canRequestSandboxRefund {
+                        Button("读取沙盒交易诊断") { Task { await store.refreshSandboxRefundDiagnostic() } }
+                            .disabled(isPreparing || !preparationError.isEmpty || store.isBusy)
+                        if !store.sandboxRefundDiagnostic.isEmpty {
+                            Text(store.sandboxRefundDiagnostic)
+                                .font(.body.monospacedDigit()).foregroundStyle(.primary)
+                                .accessibilityIdentifier("sandbox-transaction-diagnostic")
+                        }
+                        Button("沙盒退款测试") {
+                            guard let scene = UIApplication.shared.connectedScenes.compactMap({ $0 as? UIWindowScene })
+                                .first(where: { $0.activationState == .foregroundActive }) else { return }
+                            Task { await store.requestSandboxRefund(in: scene) }
+                        }
+                        .disabled(isPreparing || !preparationError.isEmpty || store.isBusy)
+                        Text("仅测试原沙盒交易，不会发起新购买。").font(.footnote).foregroundStyle(.secondary)
+                    }
+                    #endif
                     Link("管理订阅", destination: URL(string: "https://apps.apple.com/account/subscriptions/")!)
                     Text("订阅按所选周期自动续费。可在Apple订阅管理中取消后续续费，实际条款以购买确认页为准。")
                         .font(.footnote).foregroundStyle(.secondary)

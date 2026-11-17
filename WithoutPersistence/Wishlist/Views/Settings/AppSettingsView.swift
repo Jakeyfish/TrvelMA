@@ -204,7 +204,7 @@ struct MyAccountSettingsView: View {
             .font(.body)
             .navigationTitle("我的账号")
             .navigationBarTitleDisplayMode(.inline)
-            .toolbar { ToolbarItem(placement: .cancellationAction) { Button("关闭") { dismiss() } } }
+            .toolbar { ToolbarItem(placement: .cancellationAction) { Button("关闭") { dismiss() }.font(.body) } }
         }
     }
 }

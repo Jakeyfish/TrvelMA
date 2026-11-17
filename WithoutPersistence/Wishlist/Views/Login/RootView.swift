@@ -258,6 +258,8 @@ struct RootView: View {
             }
             .padding(24)
             .frame(maxWidth: .infinity, maxHeight: .infinity)
+        } else if auth.isLoggedIn && !auth.isCloudAccount && BillingReleaseConfiguration.localAccessEnforcementEnabled {
+            LocalAccountWorkspace().id(storeTaskIdentity)
         } else if auth.isLoggedIn {
 
             VStack(spacing: 0) {
@@ -305,7 +307,9 @@ struct RootView: View {
         }
         }
         .sheet(isPresented: $showingCloudDeletion) { CloudAccountDeletionView() }
-        .sheet(isPresented: $showingPurchasePlans) { PurchasePlansView() }
+        .sheet(isPresented: $showingPurchasePlans, onDismiss: {
+            NotificationCenter.default.post(name: .recheckLocalAccess, object: nil)
+        }) { PurchasePlansView() }
         // Apple authentication can trigger a foreground entitlement recheck.
         // Keep the purchase sheet above the account data route so that recheck
         // cannot destroy an in-flight StoreKit operation or its result.
@@ -327,7 +331,7 @@ struct RootView: View {
             }
             if auth.isCloudAccount {
                 await prepareCloudSync()
-            } else if auth.isLoggedIn {
+            } else if auth.isLoggedIn && !BillingReleaseConfiguration.localAccessEnforcementEnabled {
                 await prepareLocalDataScope()
             }
         }

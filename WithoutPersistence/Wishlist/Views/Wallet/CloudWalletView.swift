@@ -148,8 +148,14 @@ struct CloudWalletView: View {
             }
             .background(Color(.systemGroupedBackground))
             .scrollDismissesKeyboard(.interactively)
-            .navigationTitle("财务")
-            .navigationBarTitleDisplayMode(.inline)
+            .safeAreaInset(edge: .top, spacing: 0) {
+                HStack {
+                    Text("财务").font(.system(size: 30, weight: .bold, design: .rounded))
+                    Spacer()
+                }.frame(minHeight: 52).padding(.horizontal, 20).padding(.vertical, 8)
+                    .background(Color(.systemGroupedBackground))
+            }
+            .toolbar(.hidden, for: .navigationBar)
             .sheet(item: $tripSnapshot) { snapshot in
                 FinancialTripSnapshotSheet(snapshot: snapshot)
             }

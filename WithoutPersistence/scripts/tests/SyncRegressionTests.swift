@@ -7,7 +7,103 @@ import SwiftUI
 import CryptoKit
 import StoreKit
 
+final class NavigationDestinationRegressionTests: XCTestCase {
+    @MainActor func testTextDestinationIsSearchNotAnUnverifiedRoute() throws {
+        let previous = DataOwnership.activeScope
+        let scope = "local:navigation-qa-" + UUID().uuidString
+        DataOwnership.activateLocal(scope: scope)
+        defer { NavigationDestinationStore.clear(scope: scope); DataOwnership.activateLocal(scope: previous) }
+        let address = "123 QA Greenwood Ave 圣加百利, CA, 美国 #2 & North"
+        for provider in NavigationProvider.allCases {
+            let url = try XCTUnwrap(provider.directionsURL(for: address))
+            let items = try XCTUnwrap(URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems)
+            XCTAssertEqual(items.first { $0.name == (provider == .googleMaps ? "query" : "q") }?.value, address)
+            XCTAssertFalse(items.contains { $0.name == "destination" || $0.name == "daddr" })
+        }
+    }
+    @MainActor func testSelectedPointRoutesExactlyAndCannotLeakToAnotherAddressOrAccount() throws {
+        let previous = DataOwnership.activeScope
+        let scope = "local:navigation-qa-" + UUID().uuidString
+        DataOwnership.activateLocal(scope: scope)
+        defer { NavigationDestinationStore.clear(scope: scope); DataOwnership.activateLocal(scope: previous) }
+        let address = "123 N QA Greenwood Ave"
+        let point = NavigationPoint(latitude: 34.123456, longitude: -118.123456)
+        NavigationDestinationStore.remember(point, for: address)
+        for provider in NavigationProvider.allCases {
+            let url = try XCTUnwrap(provider.directionsURL(for: address))
+            let query = URLComponents(url: url, resolvingAgainstBaseURL: false)!.queryItems!
+            XCTAssertEqual(query.first { $0.name == (provider == .googleMaps ? "destination" : "daddr") }?.value, point.queryValue)
+        }
+        XCTAssertNil(NavigationDestinationStore.point(for: "123 S QA Greenwood Ave"))
+        XCTAssertNil(NavigationDestinationStore.point(for: address, scope: "cloud:other@example.invalid"))
+        XCTAssertNil(NavigationProvider.googleMaps.directionsURL(for: " "))
+    }
+    @MainActor func testInvalidPointsAndAmbiguousSelectionDoNotBecomeRoutes() async {
+        let previous = DataOwnership.activeScope
+        let scope = "local:navigation-qa-" + UUID().uuidString
+        DataOwnership.activateLocal(scope: scope)
+        defer { NavigationDestinationStore.clear(scope: scope); DataOwnership.activateLocal(scope: previous) }
+        let address = "QA ambiguous"
+        for point in [NavigationPoint(latitude: .nan, longitude: 1), .init(latitude: 91, longitude: 1), .init(latitude: 1, longitude: 181)] {
+            NavigationDestinationStore.remember(point, for: address)
+            XCTAssertNil(NavigationDestinationStore.point(for: address))
+        }
+        let point = NavigationPoint(latitude: 34, longitude: -118)
+        NavigationDestinationStore.remember(point, for: address)
+        await NavigationDestinationStore.select(address: address) { [point, .init(latitude: 35, longitude: -118)] }.value
+        XCTAssertNil(NavigationDestinationStore.point(for: address), "Do not choose the first ambiguous result or retain a stale point")
+        await NavigationDestinationStore.select(address: address) { throw URLError(.notConnectedToInternet) }.value
+        XCTAssertNil(NavigationDestinationStore.point(for: address))
+    }
+    @MainActor func testOlderSelectionCannotOverwriteNewerSelectionForSameText() async throws {
+        let previous = DataOwnership.activeScope
+        let scope = "local:navigation-qa-" + UUID().uuidString
+        DataOwnership.activateLocal(scope: scope)
+        defer { NavigationDestinationStore.clear(scope: scope); DataOwnership.activateLocal(scope: previous) }
+        let started = expectation(description: "Old selected-place lookup started")
+        var resume: CheckedContinuation<[NavigationPoint], Never>?
+        let old = NavigationDestinationStore.select(address: "QA same label") {
+            await withCheckedContinuation { resume = $0; started.fulfill() }
+        }
+        await fulfillment(of: [started], timeout: 3)
+        let newer = NavigationPoint(latitude: 35, longitude: -119)
+        await NavigationDestinationStore.select(address: "QA same label") { [newer] }.value
+        try XCTUnwrap(resume).resume(returning: [.init(latitude: 34, longitude: -118)])
+        await old.value
+        XCTAssertEqual(NavigationDestinationStore.point(for: "QA same label"), newer)
+    }
+    @MainActor func testClearingCacheOrSwitchingAccountRejectsPendingResult() async throws {
+        for clear in [false, true] {
+            let previous = DataOwnership.activeScope
+            let scope = "local:navigation-qa-" + UUID().uuidString
+            DataOwnership.activateLocal(scope: scope)
+            let started = expectation(description: "Selected-place lookup started")
+            var resume: CheckedContinuation<[NavigationPoint], Never>?
+            let pending = NavigationDestinationStore.select(address: "QA pending") {
+                await withCheckedContinuation { resume = $0; started.fulfill() }
+            }
+            await fulfillment(of: [started], timeout: 3)
+            if clear { NavigationDestinationStore.clear(scope: scope) }
+            else { DataOwnership.activateLocal(scope: "local:other-qa") }
+            try XCTUnwrap(resume).resume(returning: [.init(latitude: 34, longitude: -118)])
+            await pending.value
+            XCTAssertNil(NavigationDestinationStore.point(for: "QA pending", scope: scope))
+            NavigationDestinationStore.clear(scope: scope); DataOwnership.activateLocal(scope: previous)
+        }
+    }
+}
+
 final class SandboxBillingBuildPolicyTests: XCTestCase {
+    func testSandboxAllowlistIsExplicitAndAbsentFromNormalBuild() {
+        let developer = UUID(uuidString: "71b164e4-7dbf-4433-8503-84ed156171de")!
+        let lifecycle = UUID(uuidString: "86361373-d4ba-4fc6-8f38-420367b6484e")!
+        #if DEBUG && STOREKIT_SANDBOX_ACCEPTANCE
+        XCTAssertEqual(BillingReleaseConfiguration.sandboxOwnerIDs, [developer, lifecycle])
+        #else
+        XCTAssertTrue(BillingReleaseConfiguration.sandboxOwnerIDs.isEmpty)
+        #endif
+        XCTAssertFalse(BillingReleaseConfiguration.sandboxOwnerIDs.contains(UUID()))
+    }
     func testDefaultBuildDoesNotExposePurchases() {
         #if !STOREKIT_SANDBOX_ACCEPTANCE
         XCTAssertFalse(BillingReleaseConfiguration.sandboxAcceptanceBuild)
@@ -15,6 +111,10 @@ final class SandboxBillingBuildPolicyTests: XCTestCase {
         XCTAssertFalse(BillingReleaseConfiguration.plansVisible)
         XCTAssertNil(BillingReleaseConfiguration.sandboxOwnerID)
         #endif
+    }
+    func testProductionLocalGateRemainsDisabledUntilAcceptance() {
+        XCTAssertFalse(BillingReleaseConfiguration.localAccessEnforcementEnabled)
+        XCTAssertNil(BillingReleaseConfiguration.firstPaidLocalBuild)
     }
     func testSandboxOnlyPolicyRejectsProductionTransactions() {
         XCTAssertFalse(BillingReleaseConfiguration.permits(environment: .production, sandboxOnly: true))
@@ -24,6 +124,65 @@ final class SandboxBillingBuildPolicyTests: XCTestCase {
     }
     func testSandboxOnlyPolicyAcceptsAppleSandbox() {
         XCTAssertTrue(BillingReleaseConfiguration.permits(environment: .sandbox, sandboxOnly: true))
+    }
+}
+
+final class LocalAccountArchiveTests: XCTestCase {
+    @MainActor func testExportIsScopedReadOnlyAndIncludesExpensesStopsAndReminders() throws {
+        let previous = DataOwnership.activeScope
+        let email = "local-archive-qa@example.invalid"
+        let scope = DataOwnership.localScope(email: email)
+        DataOwnership.activateLocal(scope: scope)
+        defer { DataOwnership.activateLocal(scope: previous) }
+        let schema = Schema(AppDataSchema.modelTypes)
+        let container = try ModelContainer(for: schema, configurations: [ModelConfiguration(schema: schema, isStoredInMemoryOnly: true)])
+        let context = ModelContext(container)
+        let own = TripBookingRecord(form: NewTripFormModel())
+        own.customerName = "Archive QA"; own.price = 90; own.isPaid = false
+        own.locationStops = ["QA stop"]
+        own.expenseAdjustmentsJSON = "[{\"fixture\":\"preserve-expense\"}]"
+        own.reminderEnabled = true; own.reminderDateTime = Date(timeIntervalSince1970: 1700000000)
+        own.flightArrivalTerminal = "QA-T1"
+        let other = TripBookingRecord(form: NewTripFormModel())
+        other.ownerScope = "cloud:other@example.invalid"; other.customerName = "DO-NOT-EXPORT"
+        let customer = Custumer(name: "Own customer", email: "qa@example.invalid", csource: "", type: 1)
+        let good = Connect(connectlable: "电话", connecttype: "15550000100", customer: customer)
+        let bad = Connect(connectlable: "电话", connecttype: "15550000999", customer: customer)
+        bad.ownerScope = other.ownerScope
+        customer.connecttype = [good, bad]
+        let goodAddress = Address(addlable: "QA", addresses: "Own address", customer: customer)
+        let badAddress = Address(addlable: "Other", addresses: "DO-NOT-EXPORT", customer: customer)
+        badAddress.ownerScope = other.ownerScope
+        customer.addresses = [goodAddress, badAddress]
+        own.customerUUID = customer.uuid
+        context.insert(own); context.insert(other); context.insert(customer)
+        try context.save()
+        let archive = try LocalAccountArchive.snapshot(context: context, email: email)
+        let trips = try XCTUnwrap(archive["trips"] as? [[String: Any]])
+        XCTAssertEqual(trips.count, 1)
+        XCTAssertEqual(trips.first?["price"] as? Double, 90)
+        XCTAssertEqual(trips.first?["is_paid"] as? Bool, false)
+        XCTAssertEqual(trips.first?["location_stop"] as? String, "QA stop")
+        XCTAssertEqual(trips.first?["expense_adjustments_json"] as? String, own.expenseAdjustmentsJSON)
+        XCTAssertEqual(trips.first?["reminder_enabled"] as? Bool, true)
+        XCTAssertEqual(trips.first?["flight_arrival_terminal"] as? String, "QA-T1")
+        let text = String(decoding: try JSONSerialization.data(withJSONObject: archive), as: UTF8.self)
+        XCTAssertTrue(text.contains("15550000100")); XCTAssertFalse(text.contains("15550000999"))
+        XCTAssertTrue(text.contains("Own address")); XCTAssertFalse(text.contains("DO-NOT-EXPORT"))
+        XCTAssertFalse(context.hasChanges, "Export must not save, mutate or mark records paid")
+        XCTAssertEqual(try context.fetchCount(FetchDescriptor<TripBookingRecord>()), 2)
+    }
+
+    @MainActor func testExportRejectsWrongAccountAndCloudScope() throws {
+        let previous = DataOwnership.activeScope
+        defer { DataOwnership.activateLocal(scope: previous) }
+        let schema = Schema(AppDataSchema.modelTypes)
+        let container = try ModelContainer(for: schema, configurations: [ModelConfiguration(schema: schema, isStoredInMemoryOnly: true)])
+        let context = ModelContext(container)
+        DataOwnership.activateLocal(scope: DataOwnership.localScope(email: "owner-a@example.invalid"))
+        XCTAssertThrowsError(try LocalAccountArchive.snapshot(context: context, email: "owner-b@example.invalid"))
+        DataOwnership.activateCloud(email: "owner-a@example.invalid")
+        XCTAssertThrowsError(try LocalAccountArchive.snapshot(context: context, email: "owner-a@example.invalid"))
     }
 }
 
@@ -4754,6 +4913,31 @@ final class ExpiredArchiveRefreshRegressionTests: XCTestCase {
     }
 }
 
+final class SandboxRefundSelectionTests: XCTestCase {
+    private let owner = SandboxRefundPolicy.lifecycleOwner
+    private func permits(build: Bool = true, owner: UUID? = SandboxRefundPolicy.lifecycleOwner,
+                         token: UUID? = SandboxRefundPolicy.lifecycleOwner, product: String = StoreProductCatalog.monthly,
+                         environment: AppStore.Environment = .sandbox, revoked: Bool = false, upgraded: Bool = false) -> Bool {
+        SandboxRefundPolicy.permits(buildEnabled: build, owner: owner, transactionOwner: token,
+                                   product: product, environment: environment, revoked: revoked, upgraded: upgraded)
+    }
+    func testOnlyLifecycleOwnerAndMatchingTransactionAreEligible() {
+        XCTAssertTrue(permits()); XCTAssertFalse(permits(owner: UUID())); XCTAssertFalse(permits(token: UUID()))
+        XCTAssertFalse(permits(owner: nil)); XCTAssertFalse(permits(token: nil))
+    }
+    func testProductionAndXcodeTransactionsCannotBeRefundedFromSandboxEntry() {
+        XCTAssertFalse(permits(environment: .production)); XCTAssertFalse(permits(environment: .xcode))
+    }
+    func testNormalBuildAndUnrelatedProductsCannotUseEntry() {
+        XCTAssertFalse(permits(build: false)); XCTAssertFalse(permits(product: StoreProductCatalog.local))
+        XCTAssertFalse(permits(product: "other.product"))
+    }
+    func testRevokedAndUpgradedPeriodsAreNotOfferedAgain() {
+        XCTAssertFalse(permits(revoked: true)); XCTAssertFalse(permits(upgraded: true))
+        XCTAssertTrue(permits(product: StoreProductCatalog.yearly))
+    }
+}
+
 final class TripPeriodFilteringTests: XCTestCase {
     func testQuickOptionsDoNotDuplicateExistingAllEntry() {
         XCTAssertEqual(TripDateMode.quickOptions, [.day, .week, .month, .year])
@@ -4806,5 +4990,27 @@ final class TripPeriodFilteringTests: XCTestCase {
         let fall = date(2026, 11, 1)
         XCTAssertEqual(TripDateMode.day.interval(anchor: fall, calendar: calendar).duration, 25 * 3600)
         XCTAssertEqual(TripDateMode.month.shifted(date(2028, 1, 31), by: 1, calendar: calendar), date(2028, 2, 29))
+    }
+}
+
+final class BusinessCardExportRenderingTests: XCTestCase {
+    @MainActor func testBothCardStylesRenderLongEmailAtPhoneAndExportWidths() throws {
+        for style in [0, 1] {
+            for width: CGFloat in [320, 600] {
+                let card = BusinessCardPreview(name: "PRIVATE NAME MUST NOT APPEAR", phone: "+1 (213) 555-0148",
+                    email: "alexander.transport.service.very.long.address@example.com", nickname: "",
+                    portraitData: nil, qrCodeData: nil, style: style)
+                let renderer = ImageRenderer(content: card.frame(width: width).padding(20).background(Color.white))
+                renderer.scale = 2
+                let image = try XCTUnwrap(renderer.uiImage)
+                XCTAssertEqual(image.size.width, width + 40, accuracy: 1)
+                XCTAssertGreaterThan(image.size.height, 100)
+                XCTAssertFalse(try XCTUnwrap(image.pngData()).isEmpty)
+                let attachment = XCTAttachment(image: image)
+                attachment.name = "business-card-style-\(style)-width-\(Int(width))"
+                attachment.lifetime = .keepAlways
+                add(attachment)
+            }
+        }
     }
 }

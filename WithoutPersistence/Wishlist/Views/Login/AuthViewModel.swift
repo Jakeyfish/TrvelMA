@@ -300,7 +300,7 @@ final class AuthViewModel {
         }
         let account = try await SupabaseAuthClient.fetchPurchaseAccount(accessToken: token)
         if BillingReleaseConfiguration.sandboxAcceptanceBuild,
-           account.id != BillingReleaseConfiguration.sandboxOwnerID {
+           !BillingReleaseConfiguration.sandboxOwnerIDs.contains(account.id) {
             throw SupabaseAuthClient.AuthError.message(AppLocalization.text("此测试版本仅限开发测试账号使用。"))
         }
         guard isCloudAccount, Self.normalize(currentEmail) == email, Self.normalize(account.email) == email else {

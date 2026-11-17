@@ -1,457 +1,1440 @@
 {
   "sourceLanguage" : "zh-Hans",
   "strings" : {
-  "此操作将删除此设备上的全部账户及相关本地资料，并清空登录状态和本地缓存。删除后无法恢复。本地账号的删除不影响其他云端账号。": {
+  "名片图片已下载，可通过设备分享功能发送。": {
   "extractionState": "manual",
   "localizations": {
-    "zh-Hans": {
-      "stringUnit": {
-        "state": "translated",
-        "value": "此操作将删除此设备上的全部账户及相关本地资料，并清空登录状态和本地缓存。删除后无法恢复。本地账号的删除不影响其他云端账号。"
-      }
-    },
     "zh-Hant": {
       "stringUnit": {
         "state": "translated",
-        "value": "此操作將刪除此裝置上的所有帳號及相關本機資料，並清除登入狀態與本機快取。刪除後無法復原。刪除本機帳號不影響其他雲端帳號。"
+        "value": "名片圖片已下載，可透過裝置分享功能傳送。"
       }
     },
     "en": {
       "stringUnit": {
         "state": "translated",
-        "value": "This deletes all accounts and their local data on this device, and clears sign-in state and local caches. Deletion cannot be undone. Deleting local accounts does not affect other cloud accounts."
+        "value": "Card image downloaded. You can share it from your device."
       }
     },
     "es": {
       "stringUnit": {
         "state": "translated",
-        "value": "Se eliminarán todas las cuentas y sus datos locales de este dispositivo, así como la sesión y las cachés locales. No se puede deshacer. Las demás cuentas en la nube no se verán afectadas."
+        "value": "Imagen descargada. Puedes compartirla desde tu dispositivo."
       }
     },
     "ja": {
       "stringUnit": {
         "state": "translated",
-        "value": "この端末のすべてのアカウントと関連するローカルデータを削除し、ログイン状態とキャッシュを消去します。元に戻せません。ローカルアカウントの削除は他のクラウドアカウントに影響しません。"
+        "value": "名刺画像をダウンロードしました。端末から共有できます。"
       }
     },
     "ko": {
       "stringUnit": {
         "state": "translated",
-        "value": "이 기기의 모든 계정과 관련 로컬 데이터를 삭제하고 로그인 상태와 캐시를 지웁니다. 삭제는 되돌릴 수 없습니다. 로컬 계정 삭제는 다른 클라우드 계정에 영향을 주지 않습니다."
+        "value": "명함 이미지가 다운로드되었습니다. 기기에서 공유할 수 있습니다."
+      }
+    },
+    "zh-Hans": {
+      "stringUnit": {
+        "state": "translated",
+        "value": "名片图片已下载，可通过设备分享功能发送。"
       }
     }
   }
 },
-  "请先在设置的“合作旅行社”中添加旅行社。": {
+  "无法生成名片图片，请重试。": {
   "extractionState": "manual",
   "localizations": {
-    "zh-Hans": {
-      "stringUnit": {
-        "state": "translated",
-        "value": "请先在设置的“合作旅行社”中添加旅行社。"
-      }
-    },
     "zh-Hant": {
       "stringUnit": {
         "state": "translated",
-        "value": "請先在設定的「合作旅行社」中新增旅行社。"
+        "value": "無法產生名片圖片，請重試。"
       }
     },
     "en": {
       "stringUnit": {
         "state": "translated",
-        "value": "Add an agency under Cooperative agencies in Settings first."
+        "value": "Unable to create the card image. Please try again."
       }
     },
     "es": {
       "stringUnit": {
         "state": "translated",
-        "value": "Primero añade una agencia en Agencias colaboradoras, en Ajustes."
+        "value": "No se pudo crear la imagen. Inténtalo de nuevo."
       }
     },
     "ja": {
       "stringUnit": {
         "state": "translated",
-        "value": "設定の「提携旅行会社」で旅行会社を追加してください。"
+        "value": "名刺画像を作成できません。再試行してください。"
       }
     },
     "ko": {
       "stringUnit": {
         "state": "translated",
-        "value": "설정의 제휴 여행사에서 여행사를 먼저 추가하세요."
+        "value": "명함 이미지를 생성할 수 없습니다. 다시 시도하세요."
+      }
+    },
+    "zh-Hans": {
+      "stringUnit": {
+        "state": "translated",
+        "value": "无法生成名片图片，请重试。"
       }
     }
   }
 },
-  "更改本位币不会自动换算已保存的金额。": {
+  "分享名片": {
   "extractionState": "manual",
   "localizations": {
-    "zh-Hans": {
-      "stringUnit": {
-        "state": "translated",
-        "value": "更改本位币不会自动换算已保存的金额。"
-      }
-    },
     "zh-Hant": {
       "stringUnit": {
         "state": "translated",
-        "value": "變更本位幣不會自動換算已儲存的金額。"
+        "value": "分享名片"
       }
     },
     "en": {
       "stringUnit": {
         "state": "translated",
-        "value": "Changing the base currency does not convert saved amounts."
+        "value": "Share card"
       }
     },
     "es": {
       "stringUnit": {
         "state": "translated",
-        "value": "Cambiar la moneda base no convierte los importes guardados."
+        "value": "Compartir tarjeta"
       }
     },
     "ja": {
       "stringUnit": {
         "state": "translated",
-        "value": "基準通貨を変更しても保存済みの金額は換算されません。"
+        "value": "名刺を共有"
       }
     },
     "ko": {
       "stringUnit": {
         "state": "translated",
-        "value": "기준 통화를 변경해도 저장된 금액은 환산되지 않습니다."
+        "value": "명함 공유"
+      }
+    },
+    "zh-Hans": {
+      "stringUnit": {
+        "state": "translated",
+        "value": "分享名片"
       }
     }
   }
 },
-  "账号与数据安全": {
+  "保存图片": {
   "extractionState": "manual",
   "localizations": {
-    "zh-Hans": {
-      "stringUnit": {
-        "state": "translated",
-        "value": "账号与数据安全"
-      }
-    },
     "zh-Hant": {
       "stringUnit": {
         "state": "translated",
-        "value": "帳號與資料安全"
+        "value": "儲存圖片"
       }
     },
     "en": {
       "stringUnit": {
         "state": "translated",
-        "value": "Account & data security"
+        "value": "Save image"
       }
     },
     "es": {
       "stringUnit": {
         "state": "translated",
-        "value": "Seguridad de cuenta y datos"
+        "value": "Guardar imagen"
       }
     },
     "ja": {
       "stringUnit": {
         "state": "translated",
-        "value": "アカウントとデータの安全"
+        "value": "画像を保存"
       }
     },
     "ko": {
       "stringUnit": {
         "state": "translated",
-        "value": "계정 및 데이터 보안"
+        "value": "이미지 저장"
+      }
+    },
+    "zh-Hans": {
+      "stringUnit": {
+        "state": "translated",
+        "value": "保存图片"
       }
     }
   }
 },
-  "航班查询": {
+  "请填写昵称": {
   "extractionState": "manual",
   "localizations": {
-    "zh-Hans": {
-      "stringUnit": {
-        "state": "translated",
-        "value": "航班查询"
-      }
-    },
     "zh-Hant": {
       "stringUnit": {
         "state": "translated",
-        "value": "航班查詢"
+        "value": "請填寫暱稱"
       }
     },
     "en": {
       "stringUnit": {
         "state": "translated",
-        "value": "Flight lookup"
+        "value": "Please enter a nickname"
       }
     },
     "es": {
       "stringUnit": {
         "state": "translated",
-        "value": "Consultar vuelos"
+        "value": "Introduce un apodo"
       }
     },
     "ja": {
       "stringUnit": {
         "state": "translated",
-        "value": "フライト検索"
+        "value": "ニックネームを入力"
       }
     },
     "ko": {
       "stringUnit": {
         "state": "translated",
-        "value": "항공편 조회"
+        "value": "별명을 입력하세요"
+      }
+    },
+    "zh-Hans": {
+      "stringUnit": {
+        "state": "translated",
+        "value": "请填写昵称"
       }
     }
   }
 },
-  "联系支持": {
+  "添加二维码、服务介绍等图片资料。": {
   "extractionState": "manual",
   "localizations": {
-    "zh-Hans": {
-      "stringUnit": {
-        "state": "translated",
-        "value": "联系支持"
-      }
-    },
     "zh-Hant": {
       "stringUnit": {
         "state": "translated",
-        "value": "聯絡支援"
+        "value": "新增 QR Code、服務介紹等圖片資料。"
       }
     },
     "en": {
       "stringUnit": {
         "state": "translated",
-        "value": "Contact support"
+        "value": "Add QR codes, service information, or other images."
       }
     },
     "es": {
       "stringUnit": {
         "state": "translated",
-        "value": "Contactar con soporte"
+        "value": "Añade códigos QR, información de servicios u otras imágenes."
       }
     },
     "ja": {
       "stringUnit": {
         "state": "translated",
-        "value": "サポートに連絡"
+        "value": "QRコードやサービス紹介などの画像を追加。"
       }
     },
     "ko": {
       "stringUnit": {
         "state": "translated",
-        "value": "지원 문의"
+        "value": "QR 코드, 서비스 소개 등 이미지 추가."
+      }
+    },
+    "zh-Hans": {
+      "stringUnit": {
+        "state": "translated",
+        "value": "添加二维码、服务介绍等图片资料。"
       }
     }
   }
 },
-  "数据同步": {
+  "更换图片": {
   "extractionState": "manual",
   "localizations": {
-    "zh-Hans": {
-      "stringUnit": {
-        "state": "translated",
-        "value": "数据同步"
-      }
-    },
     "zh-Hant": {
       "stringUnit": {
         "state": "translated",
-        "value": "資料同步"
+        "value": "更換圖片"
       }
     },
     "en": {
       "stringUnit": {
         "state": "translated",
-        "value": "Data sync"
+        "value": "Replace image"
       }
     },
     "es": {
       "stringUnit": {
         "state": "translated",
-        "value": "Sincronización"
+        "value": "Cambiar imagen"
       }
     },
     "ja": {
       "stringUnit": {
         "state": "translated",
-        "value": "データ同期"
+        "value": "画像を変更"
       }
     },
     "ko": {
       "stringUnit": {
         "state": "translated",
-        "value": "데이터 동기화"
+        "value": "이미지 변경"
+      }
+    },
+    "zh-Hans": {
+      "stringUnit": {
+        "state": "translated",
+        "value": "更换图片"
       }
     }
   }
 },
-  "帮助与关于": {
+  "选择资料图片": {
   "extractionState": "manual",
   "localizations": {
-    "zh-Hans": {
-      "stringUnit": {
-        "state": "translated",
-        "value": "帮助与关于"
-      }
-    },
     "zh-Hant": {
       "stringUnit": {
         "state": "translated",
-        "value": "說明與關於"
+        "value": "選擇資料圖片"
       }
     },
     "en": {
       "stringUnit": {
         "state": "translated",
-        "value": "Help & about"
+        "value": "Choose material image"
       }
     },
     "es": {
       "stringUnit": {
         "state": "translated",
-        "value": "Ayuda e información"
+        "value": "Elegir imagen"
       }
     },
     "ja": {
       "stringUnit": {
         "state": "translated",
-        "value": "ヘルプと情報"
+        "value": "資料画像を選択"
       }
     },
     "ko": {
       "stringUnit": {
         "state": "translated",
-        "value": "도움말 및 정보"
+        "value": "자료 이미지 선택"
+      }
+    },
+    "zh-Hans": {
+      "stringUnit": {
+        "state": "translated",
+        "value": "选择资料图片"
       }
     }
   }
 },
-  "个人资料": {
+  "添加资料图片": {
   "extractionState": "manual",
   "localizations": {
-    "zh-Hans": {
-      "stringUnit": {
-        "state": "translated",
-        "value": "个人资料"
-      }
-    },
     "zh-Hant": {
       "stringUnit": {
         "state": "translated",
-        "value": "個人資料"
+        "value": "新增資料圖片"
       }
     },
     "en": {
       "stringUnit": {
         "state": "translated",
-        "value": "Profile"
+        "value": "Add material image"
       }
     },
     "es": {
       "stringUnit": {
         "state": "translated",
-        "value": "Perfil"
+        "value": "Añadir imagen"
       }
     },
     "ja": {
       "stringUnit": {
         "state": "translated",
-        "value": "プロフィール"
+        "value": "資料画像を追加"
       }
     },
     "ko": {
       "stringUnit": {
         "state": "translated",
-        "value": "개인 정보"
+        "value": "자료 이미지 추가"
+      }
+    },
+    "zh-Hans": {
+      "stringUnit": {
+        "state": "translated",
+        "value": "添加资料图片"
       }
     }
   }
 },
-  "业务与服务": {
+  "资料名称": {
   "extractionState": "manual",
   "localizations": {
-    "zh-Hans": {
-      "stringUnit": {
-        "state": "translated",
-        "value": "业务与服务"
-      }
-    },
     "zh-Hant": {
       "stringUnit": {
         "state": "translated",
-        "value": "業務與服務"
+        "value": "資料名稱"
       }
     },
     "en": {
       "stringUnit": {
         "state": "translated",
-        "value": "Business & services"
+        "value": "Material name"
       }
     },
     "es": {
       "stringUnit": {
         "state": "translated",
-        "value": "Gestión y servicios"
+        "value": "Nombre del material"
       }
     },
     "ja": {
       "stringUnit": {
         "state": "translated",
-        "value": "業務とサービス"
+        "value": "資料名"
       }
     },
     "ko": {
       "stringUnit": {
         "state": "translated",
-        "value": "업무 및 서비스"
+        "value": "자료 이름"
+      }
+    },
+    "zh-Hans": {
+      "stringUnit": {
+        "state": "translated",
+        "value": "资料名称"
+      }
+    }
+  }
+},
+  "其他资料": {
+  "extractionState": "manual",
+  "localizations": {
+    "zh-Hant": {
+      "stringUnit": {
+        "state": "translated",
+        "value": "其他資料"
+      }
+    },
+    "en": {
+      "stringUnit": {
+        "state": "translated",
+        "value": "Other materials"
+      }
+    },
+    "es": {
+      "stringUnit": {
+        "state": "translated",
+        "value": "Otros materiales"
+      }
+    },
+    "ja": {
+      "stringUnit": {
+        "state": "translated",
+        "value": "その他の資料"
+      }
+    },
+    "ko": {
+      "stringUnit": {
+        "state": "translated",
+        "value": "기타 자료"
+      }
+    },
+    "zh-Hans": {
+      "stringUnit": {
+        "state": "translated",
+        "value": "其他资料"
       }
     }
   }
 },
   "常用偏好": {
-  "extractionState": "manual",
-  "localizations": {
-    "zh-Hans": {
-      "stringUnit": {
-        "state": "translated",
-        "value": "常用偏好"
-      }
-    },
-    "zh-Hant": {
-      "stringUnit": {
-        "state": "translated",
-        "value": "常用偏好"
-      }
-    },
-    "en": {
-      "stringUnit": {
-        "state": "translated",
-        "value": "Preferences"
-      }
-    },
-    "es": {
-      "stringUnit": {
-        "state": "translated",
-        "value": "Preferencias"
-      }
-    },
-    "ja": {
-      "stringUnit": {
-        "state": "translated",
-        "value": "よく使う設定"
-      }
-    },
-    "ko": {
-      "stringUnit": {
-        "state": "translated",
-        "value": "자주 쓰는 설정"
+    "extractionState": "manual",
+    "localizations": {
+      "zh-Hans": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "常用偏好"
+        }
+      },
+      "zh-Hant": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "常用偏好"
+        }
+      },
+      "en": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "Preferences"
+        }
+      },
+      "es": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "Preferencias"
+        }
+      },
+      "ja": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "よく使う設定"
+        }
+      },
+      "ko": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "자주 쓰는 설정"
+        }
       }
     }
-  }
-},
+  },
+  "业务与服务": {
+    "extractionState": "manual",
+    "localizations": {
+      "zh-Hans": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "业务与服务"
+        }
+      },
+      "zh-Hant": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "業務與服務"
+        }
+      },
+      "en": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "Business & services"
+        }
+      },
+      "es": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "Gestión y servicios"
+        }
+      },
+      "ja": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "業務とサービス"
+        }
+      },
+      "ko": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "업무 및 서비스"
+        }
+      }
+    }
+  },
+  "个人资料": {
+    "extractionState": "manual",
+    "localizations": {
+      "zh-Hans": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "个人资料"
+        }
+      },
+      "zh-Hant": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "個人資料"
+        }
+      },
+      "en": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "Profile"
+        }
+      },
+      "es": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "Perfil"
+        }
+      },
+      "ja": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "プロフィール"
+        }
+      },
+      "ko": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "개인 정보"
+        }
+      }
+    }
+  },
+  "帮助与关于": {
+    "extractionState": "manual",
+    "localizations": {
+      "zh-Hans": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "帮助与关于"
+        }
+      },
+      "zh-Hant": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "說明與關於"
+        }
+      },
+      "en": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "Help & about"
+        }
+      },
+      "es": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "Ayuda e información"
+        }
+      },
+      "ja": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "ヘルプと情報"
+        }
+      },
+      "ko": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "도움말 및 정보"
+        }
+      }
+    }
+  },
+  "数据同步": {
+    "extractionState": "manual",
+    "localizations": {
+      "zh-Hans": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "数据同步"
+        }
+      },
+      "zh-Hant": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "資料同步"
+        }
+      },
+      "en": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "Data sync"
+        }
+      },
+      "es": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "Sincronización"
+        }
+      },
+      "ja": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "データ同期"
+        }
+      },
+      "ko": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "데이터 동기화"
+        }
+      }
+    }
+  },
+  "联系支持": {
+    "extractionState": "manual",
+    "localizations": {
+      "zh-Hans": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "联系支持"
+        }
+      },
+      "zh-Hant": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "聯絡支援"
+        }
+      },
+      "en": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "Contact support"
+        }
+      },
+      "es": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "Contactar con soporte"
+        }
+      },
+      "ja": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "サポートに連絡"
+        }
+      },
+      "ko": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "지원 문의"
+        }
+      }
+    }
+  },
+  "航班查询": {
+    "extractionState": "manual",
+    "localizations": {
+      "zh-Hans": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "航班查询"
+        }
+      },
+      "zh-Hant": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "航班查詢"
+        }
+      },
+      "en": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "Flight lookup"
+        }
+      },
+      "es": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "Consultar vuelos"
+        }
+      },
+      "ja": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "フライト検索"
+        }
+      },
+      "ko": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "항공편 조회"
+        }
+      }
+    }
+  },
+  "账号与数据安全": {
+    "extractionState": "manual",
+    "localizations": {
+      "zh-Hans": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "账号与数据安全"
+        }
+      },
+      "zh-Hant": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "帳號與資料安全"
+        }
+      },
+      "en": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "Account & data security"
+        }
+      },
+      "es": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "Seguridad de cuenta y datos"
+        }
+      },
+      "ja": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "アカウントとデータの安全"
+        }
+      },
+      "ko": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "계정 및 데이터 보안"
+        }
+      }
+    }
+  },
+  "更改本位币不会自动换算已保存的金额。": {
+    "extractionState": "manual",
+    "localizations": {
+      "zh-Hans": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "更改本位币不会自动换算已保存的金额。"
+        }
+      },
+      "zh-Hant": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "變更本位幣不會自動換算已儲存的金額。"
+        }
+      },
+      "en": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "Changing the base currency does not convert saved amounts."
+        }
+      },
+      "es": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "Cambiar la moneda base no convierte los importes guardados."
+        }
+      },
+      "ja": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "基準通貨を変更しても保存済みの金額は換算されません。"
+        }
+      },
+      "ko": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "기준 통화를 변경해도 저장된 금액은 환산되지 않습니다."
+        }
+      }
+    }
+  },
+  "请先在设置的“合作旅行社”中添加旅行社。": {
+    "extractionState": "manual",
+    "localizations": {
+      "zh-Hans": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "请先在设置的“合作旅行社”中添加旅行社。"
+        }
+      },
+      "zh-Hant": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "請先在設定的「合作旅行社」中新增旅行社。"
+        }
+      },
+      "en": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "Add an agency under Cooperative agencies in Settings first."
+        }
+      },
+      "es": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "Primero añade una agencia en Agencias colaboradoras, en Ajustes."
+        }
+      },
+      "ja": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "設定の「提携旅行会社」で旅行会社を追加してください。"
+        }
+      },
+      "ko": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "설정의 제휴 여행사에서 여행사를 먼저 추가하세요."
+        }
+      }
+    }
+  },
+  "此操作将删除此设备上的全部账户及相关本地资料，并清空登录状态和本地缓存。删除后无法恢复。本地账号的删除不影响其他云端账号。": {
+    "extractionState": "manual",
+    "localizations": {
+      "zh-Hans": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "此操作将删除此设备上的全部账户及相关本地资料，并清空登录状态和本地缓存。删除后无法恢复。本地账号的删除不影响其他云端账号。"
+        }
+      },
+      "zh-Hant": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "此操作將刪除此裝置上的所有帳號及相關本機資料，並清除登入狀態與本機快取。刪除後無法復原。刪除本機帳號不影響其他雲端帳號。"
+        }
+      },
+      "en": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "This deletes all accounts and their local data on this device, and clears sign-in state and local caches. Deletion cannot be undone. Deleting local accounts does not affect other cloud accounts."
+        }
+      },
+      "es": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "Se eliminarán todas las cuentas y sus datos locales de este dispositivo, así como la sesión y las cachés locales. No se puede deshacer. Las demás cuentas en la nube no se verán afectadas."
+        }
+      },
+      "ja": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "この端末のすべてのアカウントと関連するローカルデータを削除し、ログイン状態とキャッシュを消去します。元に戻せません。ローカルアカウントの削除は他のクラウドアカウントに影響しません。"
+        }
+      },
+      "ko": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "이 기기의 모든 계정과 관련 로컬 데이터를 삭제하고 로그인 상태와 캐시를 지웁니다. 삭제는 되돌릴 수 없습니다. 로컬 계정 삭제는 다른 클라우드 계정에 영향을 주지 않습니다."
+        }
+      }
+    }
+  },
+  "历史 %ld · 已验证 %ld · 沙盒 %ld · 本账号 %ld · 可申请 %ld": {
+    "extractionState": "manual",
+    "localizations": {
+      "zh-Hans": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "历史 %ld · 已验证 %ld · 沙盒 %ld · 本账号 %ld · 可申请 %ld"
+        }
+      },
+      "zh-Hant": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "歷史 %ld · 已驗證 %ld · 沙盒 %ld · 本帳號 %ld · 可申請 %ld"
+        }
+      },
+      "en": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "History %ld · Verified %ld · Sandbox %ld · This account %ld · Eligible %ld"
+        }
+      },
+      "es": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "Historial %ld · Verificadas %ld · Sandbox %ld · Esta cuenta %ld · Aptas %ld"
+        }
+      },
+      "ja": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "履歴 %ld · 検証済み %ld · サンドボックス %ld · このアカウント %ld · 申請可能 %ld"
+        }
+      },
+      "ko": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "기록 %ld · 검증됨 %ld · 샌드박스 %ld · 이 계정 %ld · 신청 가능 %ld"
+        }
+      }
+    }
+  },
+  "沙盒退款测试": {
+    "extractionState": "manual",
+    "localizations": {
+      "zh-Hans": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "沙盒退款测试"
+        }
+      },
+      "zh-Hant": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "沙盒退款測試"
+        }
+      },
+      "en": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "Sandbox refund test"
+        }
+      },
+      "es": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "Prueba de reembolso de sandbox"
+        }
+      },
+      "ja": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "サンドボックス返金テスト"
+        }
+      },
+      "ko": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "샌드박스 환불 테스트"
+        }
+      }
+    }
+  },
+  "仅测试原沙盒交易，不会发起新购买。": {
+    "extractionState": "manual",
+    "localizations": {
+      "zh-Hans": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "仅测试原沙盒交易，不会发起新购买。"
+        }
+      },
+      "zh-Hant": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "僅測試原沙盒交易，不會發起新購買。"
+        }
+      },
+      "en": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "Tests an existing sandbox transaction without making a new purchase."
+        }
+      },
+      "es": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "Prueba una transacción de sandbox existente sin realizar una nueva compra."
+        }
+      },
+      "ja": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "既存のサンドボックス取引をテストします。新規購入は行いません。"
+        }
+      },
+      "ko": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "기존 샌드박스 거래만 테스트하며 새로 구매하지 않습니다."
+        }
+      }
+    }
+  },
+  "未找到属于当前账号的可退款沙盒交易。": {
+    "extractionState": "manual",
+    "localizations": {
+      "zh-Hans": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "未找到属于当前账号的可退款沙盒交易。"
+        }
+      },
+      "zh-Hant": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "未找到屬於目前帳號的可退款沙盒交易。"
+        }
+      },
+      "en": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "No eligible sandbox transaction was found for this account."
+        }
+      },
+      "es": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "No se encontró una transacción de sandbox apta para esta cuenta."
+        }
+      },
+      "ja": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "このアカウントで返金を申請できるサンドボックス取引が見つかりません。"
+        }
+      },
+      "ko": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "이 계정에 환불을 요청할 수 있는 샌드박스 거래가 없습니다."
+        }
+      }
+    }
+  },
+  "退款请求已提交，等待 Apple 通知确认。": {
+    "extractionState": "manual",
+    "localizations": {
+      "zh-Hans": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "退款请求已提交，等待 Apple 通知确认。"
+        }
+      },
+      "zh-Hant": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "退款申請已提交，等待 Apple 通知確認。"
+        }
+      },
+      "en": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "Refund request submitted. Waiting for confirmation from Apple."
+        }
+      },
+      "es": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "Solicitud de reembolso enviada. Esperando la confirmación de Apple."
+        }
+      },
+      "ja": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "返金リクエストを送信しました。Appleの確認通知を待っています。"
+        }
+      },
+      "ko": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "환불 요청을 제출했습니다. Apple의 확인 알림을 기다리는 중입니다."
+        }
+      }
+    }
+  },
+  "退款状态尚未确认，请稍后检查。": {
+    "extractionState": "manual",
+    "localizations": {
+      "zh-Hans": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "退款状态尚未确认，请稍后检查。"
+        }
+      },
+      "zh-Hant": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "退款狀態尚未確認，請稍後檢查。"
+        }
+      },
+      "en": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "Refund status is not confirmed. Check again later."
+        }
+      },
+      "es": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "El estado del reembolso no está confirmado. Compruébalo más tarde."
+        }
+      },
+      "ja": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "返金状況を確認できません。後でもう一度確認してください。"
+        }
+      },
+      "ko": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "환불 상태가 확인되지 않았습니다. 나중에 다시 확인하세요."
+        }
+      }
+    }
+  },
+  "未找到可恢复的有效购买。订阅可能已到期或退款。": {
+    "extractionState": "manual",
+    "localizations": {
+      "zh-Hans": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "未找到可恢复的有效购买。订阅可能已到期或退款。"
+        }
+      },
+      "zh-Hant": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "未找到可回復的有效購買。訂閱可能已到期或退款。"
+        }
+      },
+      "en": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "No active purchases were found to restore. Subscriptions may have expired or been refunded."
+        }
+      },
+      "es": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "No se encontraron compras activas para restaurar. Las suscripciones pueden haber caducado o sido reembolsadas."
+        }
+      },
+      "ja": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "復元できる有効な購入が見つかりません。サブスクリプションの期限切れや返金の可能性があります。"
+        }
+      },
+      "ko": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "복원할 유효한 구입 항목이 없습니다. 구독이 만료되었거나 환불되었을 수 있습니다."
+        }
+      }
+    }
+  },
+  "本地资料 · 只读": {
+    "extractionState": "manual",
+    "localizations": {
+      "zh-Hans": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "本地资料 · 只读"
+        }
+      },
+      "zh-Hant": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "本機資料 · 唯讀"
+        }
+      },
+      "en": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "Local data · Read-only"
+        }
+      },
+      "es": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "Datos locales · Solo lectura"
+        }
+      },
+      "ja": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "ローカルデータ · 読み取り専用"
+        }
+      },
+      "ko": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "로컬 자료 · 읽기 전용"
+        }
+      }
+    }
+  },
+  "导出包含业务记录和本地名片资料，不包含登录凭据或远程图片原文件。": {
+    "extractionState": "manual",
+    "localizations": {
+      "zh-Hans": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "导出包含业务记录和本地名片资料，不包含登录凭据或远程图片原文件。"
+        }
+      },
+      "zh-Hant": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "匯出包含業務紀錄和本機名片資料，不包含登入憑證或遠端圖片原始檔。"
+        }
+      },
+      "en": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "The export includes business records and local business card data, but no sign-in credentials or remote image files."
+        }
+      },
+      "es": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "La exportación incluye registros y tarjetas locales, pero no credenciales de acceso ni archivos de imágenes remotas."
+        }
+      },
+      "ja": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "業務記録とローカル名刺データを書き出します。ログイン認証情報やリモート画像の元ファイルは含みません。"
+        }
+      },
+      "ko": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "업무 기록과 로컬 명함 데이터를 내보냅니다. 로그인 인증 정보와 원격 이미지 원본은 포함되지 않습니다."
+        }
+      }
+    }
+  },
+  "暂时无法确认本地使用权限，请重试或恢复购买。": {
+    "extractionState": "manual",
+    "localizations": {
+      "zh-Hans": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "暂时无法确认本地使用权限，请重试或恢复购买。"
+        }
+      },
+      "zh-Hant": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "暫時無法確認本機使用權限，請重試或回復購買。"
+        }
+      },
+      "en": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "Local access could not be verified. Retry or restore purchases."
+        }
+      },
+      "es": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "No se pudo verificar el acceso local. Reintenta o restaura las compras."
+        }
+      },
+      "ja": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "ローカル利用権限を確認できません。再試行するか購入を復元してください。"
+        }
+      },
+      "ko": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "로컬 사용 권한을 확인할 수 없습니다. 다시 시도하거나 구입을 복원하세요."
+        }
+      }
+    }
+  },
+  "本地使用权限尚未开通，可恢复购买或查看版本。": {
+    "extractionState": "manual",
+    "localizations": {
+      "zh-Hans": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "本地使用权限尚未开通，可恢复购买或查看版本。"
+        }
+      },
+      "zh-Hant": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "本機使用權限尚未開通，可回復購買或查看版本。"
+        }
+      },
+      "en": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "Local access is not active. Restore purchases or view available plans."
+        }
+      },
+      "es": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "El acceso local no está activo. Restaura las compras o consulta los planes."
+        }
+      },
+      "ja": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "ローカル利用権限がありません。購入を復元するか、プランを確認してください。"
+        }
+      },
+      "ko": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "로컬 사용 권한이 없습니다. 구입을 복원하거나 요금제를 확인하세요."
+        }
+      }
+    }
+  },
+  "正在验证本地使用权限…": {
+    "extractionState": "manual",
+    "localizations": {
+      "zh-Hans": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "正在验证本地使用权限…"
+        }
+      },
+      "zh-Hant": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "正在驗證本機使用權限…"
+        }
+      },
+      "en": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "Verifying local access…"
+        }
+      },
+      "es": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "Verificando el acceso local…"
+        }
+      },
+      "ja": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "ローカル利用権限を確認中…"
+        }
+      },
+      "ko": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "로컬 사용 권한 확인 중…"
+        }
+      }
+    }
+  },
+  "读取沙盒交易诊断": {
+    "localizations": {
+      "zh-Hans": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "读取沙盒交易诊断"
+        }
+      },
+      "zh-Hant": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "讀取沙盒交易診斷"
+        }
+      },
+      "en": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "Read sandbox transaction diagnostics"
+        }
+      },
+      "es": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "Leer diagnóstico de transacciones de prueba"
+        }
+      },
+      "ja": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "サンドボックス取引の診断を読み込む"
+        }
+      },
+      "ko": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "샌드박스 거래 진단 읽기"
+        }
+      }
+    }
+  },
   "出发航站楼": {
     "extractionState": "manual",
     "localizations": {

@@ -47,6 +47,21 @@ test('account change while checking expiry stops old workspace reads',async()=>{
  const c=boot();c.calls=[];vm.runInContext(`resolveProductEdition=async()=>{state.user={id:'new-owner'};};loadData=async()=>calls.push('normal-read');loadExpiredArchive=async()=>calls.push('archive-read');`,c);
  assert.equal(await c.refreshAuthorizedWorkspace(),undefined);assert.deepEqual(c.calls,[]);
 });
+test('all address navigation buttons launch the selected field without reusing another destination',async()=>{
+ const c=boot();c.opened=[];c.window.open=url=>c.opened.push(url);c.getAccountPreference=()=> 'googleMaps';
+ const form={elements:{location_start:{value:'123 N QA Ave'},location_end:{value:'456 S QA Blvd'}},querySelector:()=>({value:'34.123456,-118.123456'})};
+ for(const [target,expected] of [['start','123 N QA Ave'],['end','456 S QA Blvd'],['stop:0','34.123456,-118.123456']]){
+  const button={dataset:{action:'navigate-address',target},closest:()=>form};
+  await c.listeners.click({target:{closest:s=>s==='[data-action]'?button:null}});
+  const url=new URL(c.opened.at(-1));
+  assert.equal(url.searchParams.get(target==='stop:0'?'destination':'query'),expected);
+  assert.equal(url.pathname,target==='stop:0'?'/maps/dir/':'/maps/search/');
+ }
+ const button={dataset:{action:'navigate-saved-address',address:'789 QA Hotel & Conference'}};
+ await c.listeners.click({target:{closest:s=>s==='[data-action]'?button:null}});
+ assert.equal(new URL(c.opened.at(-1)).searchParams.get('query'),'789 QA Hotel & Conference');
+ assert.equal(c.opened.length,4);
+});
 test('narrow completion and restore patches never include financial or route fields',async()=>{const c=boot();c.calls=[];vm.runInContext(`patch=async(table,query,body)=>calls.push({table,query,body});`,c);await vm.runInContext(`markTrip('t',{is_completed:true,is_cancelled:false})`,c);await vm.runInContext(`markTrip('t',{is_completed:false,is_cancelled:false})`,c);assert.equal(c.calls.length,2);for(const call of c.calls){assert.equal(call.table,'trips');assert.equal(Object.hasOwn(call.body,'price'),false);assert.equal(Object.hasOwn(call.body,'location_start'),false);assert.equal(Object.hasOwn(call.body,'is_paid'),false);}assert.equal(c.calls[1].body.is_completed,false);});
 test('late image download cannot overwrite an image selected locally',async()=>{const c=boot();let release;c.response=()=>new Promise(r=>{release=r;});vm.runInContext(`state.businessCard={portraitPath:'owner/business-card/portrait.jpg',qrCodes:[]};storageRequest=async()=>({arrayBuffer:response});`,c);const task=vm.runInContext('hydrateAccountAssets()',c);await new Promise(r=>setImmediate(r));vm.runInContext(`state.businessCard.portraitData='NEW-LOCAL';`,c);release(new TextEncoder().encode('OLD-CLOUD').buffer);await task;assert.equal(vm.runInContext('state.businessCard.portraitData',c),'NEW-LOCAL');});
 test('late account image read cannot write into a newly selected account',async()=>{const c=boot();let release;c.read=()=>new Promise(r=>{release=r;});c.saves=[];vm.runInContext(`readImageBase64=read;saveBusinessCard=async()=>saves.push('save');`,c);const task=vm.runInContext(`setCardPhoto({})`,c);vm.runInContext(`state.user={id:'other'};state.businessCard={nickname:'Other',qrCodes:[]};`,c);release('OLD-ACCOUNT');await task;assert.equal(vm.runInContext('state.businessCard.portraitData',c),undefined);assert.equal(c.saves.length,0);});
@@ -629,6 +644,19 @@ test('trip contact dropdown and detail expose SMS and telephone for typed phone 
  assert.match(html,/href="sms:\+15550000100"/);assert.match(html,/href="tel:\+15550000100"/);assert.doesNotMatch(html,/12345678|WeChat-QA/);assert.match(html,/data-symbol="phone.fill"/);assert.match(html,/data-symbol="message.fill"/);
 });
 
+test('detail contact shows phone once with actions and preserves other contact text',()=>{
+ const c=boot();
+ vm.runInContext(`state.customers=[{id:'qa'}];state.contacts=[{customer_id:'qa',contact_type:'电话',value:'+1 (555) 000-0100'}];`,c);
+ const html=vm.runInContext(`tripDetailContactHTML({customer_id:'qa',customer_contact:'+15550000100'})`,c);
+ assert.equal((html.match(/<span>\+1 \(555\) 000-0100<\/span>/g)||[]).length,1);
+ assert.doesNotMatch(html,/<strong>/);
+ assert.match(html,/href="sms:\+15550000100"/);assert.match(html,/href="tel:\+15550000100"/);
+ const mixed=vm.runInContext(`tripDetailContactHTML({customer_id:'qa',customer_contact:'WeChat-QA'})`,c);
+ assert.match(mixed,/<strong>WeChat-QA<\/strong>/);assert.match(mixed,/href="tel:/);
+ const empty=vm.runInContext(`tripDetailContactHTML({customer_contact:''})`,c);
+ assert.match(empty,/未填写/);
+});
+
 test('home next-trip card uses earliest eligible trip and escapes customer and route text',()=>{
  const c=boot();
  vm.runInContext(`state.trips=[
@@ -765,18 +793,32 @@ test('date navigator and original date cards both remain; arrows apply the activ
  assert.equal(vm.runInContext('state.tripDateMode',c),'all');
 });
 
-test('all address navigation buttons launch the selected field without reusing another destination',async()=>{
- const c=boot();c.opened=[];c.window.open=url=>c.opened.push(url);c.getAccountPreference=()=> 'googleMaps';
- const form={elements:{location_start:{value:'123 N QA Ave'},location_end:{value:'456 S QA Blvd'}},querySelector:()=>({value:'34.123456,-118.123456'})};
- for(const [target,expected] of [['start','123 N QA Ave'],['end','456 S QA Blvd'],['stop:0','34.123456,-118.123456']]){
-  const button={dataset:{action:'navigate-address',target},closest:()=>form};
-  await c.listeners.click({target:{closest:s=>s==='[data-action]'?button:null}});
-  const url=new URL(c.opened.at(-1));
-  assert.equal(url.searchParams.get(target==='stop:0'?'destination':'query'),expected);
-  assert.equal(url.pathname,target==='stop:0'?'/maps/dir/':'/maps/search/');
- }
- const button={dataset:{action:'navigate-saved-address',address:'789 QA Hotel & Conference'}};
- await c.listeners.click({target:{closest:s=>s==='[data-action]'?button:null}});
- assert.equal(new URL(c.opened.at(-1)).searchParams.get('query'),'789 QA Hotel & Conference');
- assert.equal(c.opened.length,4);
+test('business card preview hides registered name, uses nickname fallback and retains image tools',()=>{
+ const c=boot();
+ vm.runInContext(`state.user={id:'owner',email:'long.address@example.com',user_metadata:{salutation:'PRIVATE REAL NAME',phone:'555'}};state.businessCard={nickname:' ',style:1,qrCodes:[{id:'q',name:'Keep image',imageData:null}]}`,c);
+ const html=vm.runInContext('renderBusinessCard()',c);
+ const preview=html.slice(html.indexOf('class="business-card-preview'));
+ assert.ok(preview.includes('请填写昵称'));
+ assert.ok(!preview.includes('PRIVATE REAL NAME'));
+ assert.ok(preview.includes('long.address@example.com'));
+ assert.ok(html.includes('data-action="save-card-image"'));
+ assert.ok(html.includes('data-action="share-card-image"'));
+ assert.ok(html.includes('data-action="add-card-qr"'));
+ assert.ok(html.includes('data-card-qr-name="q"'));
+ assert.ok(html.includes('<h2>其他资料</h2>'));
+});
+
+test('card PNG export wraps full email and never draws registered name',async()=>{
+ const c=boot(),drawn=[];let download=false;
+ c.drawn=drawn;c.ctx={font:'',measureText:t=>({width:t.length*25}),createLinearGradient:()=>({addColorStop(){}}),fillRect(){},fillText:t=>drawn.push(t)};
+ c.canvas={width:0,height:0,getContext:()=>c.ctx,toBlob:fn=>fn(new Blob(['image'],{type:'image/png'}))};
+ c.document.createElement=tag=>tag==='canvas'?c.canvas:{click(){download=true}};
+ c.URL={createObjectURL:()=> 'blob:card',revokeObjectURL(){}};c.File=class{constructor(parts,name,options){this.name=name;this.type=options.type}};
+ vm.runInContext(`state.user={id:'owner',email:'very.long.complete.email.address.for.wrapping@example.com',user_metadata:{salutation:'PRIVATE REAL NAME',phone:'555'}};state.businessCard={nickname:'Card nickname',style:1};`,c);
+ await vm.runInContext('exportBusinessCardImage(false)',c);
+ assert.equal(download,true);
+ assert.ok(!drawn.includes('PRIVATE REAL NAME'));
+ assert.ok(drawn.includes('Card nickname'));
+ assert.ok(drawn.join('').includes('very.long.complete.email.address.for.wrapping@example.com'));
+ assert.ok(c.canvas.height>=670);
 });

@@ -99,3 +99,27 @@ struct TripPhoneActions: View {
         }
     }
 }
+
+/// Keep the original non-phone contact, but show each actionable phone only once.
+struct TripDetailContactRow: View {
+    let contact: String
+    let phones: [String]
+
+    private var showsOriginalContact: Bool {
+        let value = contact.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !value.isEmpty else { return false }
+        guard let number = TripPhoneContact.number(value) else { return true }
+        return !phones.contains { TripPhoneContact.number($0) == number }
+    }
+
+    var body: some View {
+        HStack(alignment: .top, spacing: 14) {
+            Text("联系方式")
+            Spacer(minLength: 4)
+            VStack(alignment: .trailing, spacing: 8) {
+                if showsOriginalContact { Text(contact).textSelection(.enabled) }
+                if !phones.isEmpty || !showsOriginalContact { TripPhoneActions(phones: phones) }
+            }
+        }
+    }
+}

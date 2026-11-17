@@ -2,6 +2,7 @@ import SwiftUI
 import SwiftData
 import PhotosUI
 import UIKit
+import UniformTypeIdentifiers
 
 private struct BusinessCardQR: Codable, Identifiable, Equatable {
     var id = UUID()
@@ -35,17 +36,21 @@ private enum BusinessCardCopy {
         case "简洁平版": return value(language, "简洁平版", "簡潔平版", "Classic", "Clásico", "シンプル", "심플")
         case "样式二": return value(language, "样式二", "樣式二", "Style 2", "Estilo 2", "スタイル 2", "스타일 2")
         case "金属质感": return value(language, "金属质感", "金屬質感", "Metallic", "Metálico", "メタリック", "메탈릭")
-        case "二维码": return value(language, "二维码", "QR Code", "QR Codes", "Códigos QR", "QRコード", "QR 코드")
-        case "添加微信、LINE 或其他联系二维码": return value(language, "添加微信、LINE 或其他联系二维码", "新增微信、LINE 或其他聯絡 QR Code", "Add WeChat, LINE, or other contact QR codes", "Añade códigos QR de WeChat, LINE u otros contactos", "WeChat、LINE などの連絡先 QR コードを追加", "WeChat, LINE 또는 기타 연락처 QR 코드 추가")
+        case "二维码": return value(language, "其他资料", "其他資料", "Other materials", "Otros materiales", "その他の資料", "기타 자료")
+        case "添加微信、LINE 或其他联系二维码": return value(language, "添加二维码、服务介绍等图片资料", "新增 QR Code、服務介紹等圖片資料", "Add QR codes, service information, or other images", "Añade códigos QR, información de servicios u otras imágenes", "QRコードやサービス紹介などの画像を追加", "QR 코드, 서비스 소개 등 이미지 추가")
         case "添加": return value(language, "添加", "新增", "Add", "Añadir", "追加", "추가")
-        case "新二维码": return value(language, "新二维码", "新 QR Code", "New QR Code", "Nuevo código QR", "新しい QRコード", "새 QR 코드")
-        case "还没有二维码": return value(language, "还没有二维码", "尚無 QR Code", "No QR codes yet", "Aún no hay códigos QR", "QRコードはまだありません", "아직 QR 코드가 없습니다")
-        case "点“添加”后选择二维码图片并填写名称。": return value(language, "点“添加”后选择二维码图片并填写名称。", "點選「新增」後選擇 QR Code 圖片並輸入名稱。", "Tap Add to choose a QR code image and enter a name.", "Pulsa Añadir para elegir una imagen QR e introducir un nombre.", "「追加」をタップして QR コード画像を選び、名前を入力します。", "추가를 눌러 QR 코드 이미지를 선택하고 이름을 입력하세요.")
-        case "二维码名称": return value(language, "二维码名称", "QR Code 名稱", "QR Code Name", "Nombre del código QR", "QRコード名", "QR 코드 이름")
+        case "新二维码": return value(language, "新资料", "新資料", "New material", "Nuevo material", "新しい資料", "새 자료")
+        case "还没有二维码": return value(language, "还没有其他资料", "尚無其他資料", "No materials yet", "Aún no hay materiales", "資料はまだありません", "아직 자료가 없습니다")
+        case "点“添加”后选择二维码图片并填写名称。": return value(language, "点“添加”后选择图片并填写名称。", "點選「新增」後選擇圖片並輸入名稱。", "Tap Add to choose an image and enter its name.", "Pulsa Añadir para elegir una imagen e introducir su nombre.", "「追加」をタップして画像を選び、名前を入力します。", "추가를 눌러 이미지를 선택하고 이름을 입력하세요.")
+        case "二维码名称": return value(language, "资料名称", "資料名稱", "Material name", "Nombre del material", "資料名", "자료 이름")
         case "例如：微信": return value(language, "例如：微信", "例如：微信", "e.g. WeChat", "p. ej., WeChat", "例：WeChat", "예: WeChat")
-        case "选择二维码图片": return value(language, "选择二维码图片", "選擇 QR Code 圖片", "Choose QR code image", "Elegir imagen QR", "QRコード画像を選択", "QR 코드 이미지 선택")
-        case "分享二维码": return value(language, "分享二维码", "分享 QR Code", "Share QR code", "Compartir código QR", "QRコードを共有", "QR 코드 공유")
+        case "选择二维码图片": return value(language, "选择资料图片", "選擇資料圖片", "Choose material image", "Elegir imagen", "資料画像を選択", "자료 이미지 선택")
+        case "分享二维码": return value(language, "分享资料", "分享資料", "Share material", "Compartir material", "資料を共有", "자료 공유")
         case "完成": return value(language, "完成", "完成", "Done", "Listo", "完了", "완료")
+        case "请填写昵称": return value(language, "请填写昵称", "請填寫暱稱", "Please enter a nickname", "Introduce un apodo", "ニックネームを入力", "별명을 입력하세요")
+        case "保存图片": return value(language, "保存图片", "儲存圖片", "Save image", "Guardar imagen", "画像を保存", "이미지 저장")
+        case "分享名片": return value(language, "分享名片", "分享名片", "Share card", "Compartir tarjeta", "名刺を共有", "명함 공유")
+        case "无法生成名片图片，请重试。": return value(language, "无法生成名片图片，请重试。", "無法產生名片圖片，請重試。", "Unable to create the card image. Please try again.", "No se pudo crear la imagen. Inténtalo de nuevo.", "名刺画像を作成できません。再試行してください。", "명함 이미지를 생성할 수 없습니다. 다시 시도하세요.")
         default:
             return String(localized: String.LocalizationValue(key), locale: Locale(identifier: language.rawValue))
         }
@@ -72,6 +77,11 @@ struct BusinessCardView: View {
     @State private var portraitPicker: PhotosPickerItem?
     @State private var portraitLoadTask: Task<Void, Never>?
     @State private var loadedDraftAccountKey: String?
+    @State private var exportImage: UIImage?
+    @State private var exportDocument = BusinessCardImageDocument(data: Data())
+    @State private var showsImageExporter = false
+    @State private var showsCardShare = false
+    @State private var exportError: String?
     @State private var hasLoaded = false
     @State private var draftLoadGeneration = 0
     @State private var cloudAssetModel = CloudAccountAssetModel()
@@ -108,15 +118,12 @@ struct BusinessCardView: View {
                     registeredInformation
                     nicknameField
                     stylePicker
-                    BusinessCardPreview(
-                        name: registeredName,
-                        phone: (account?.phone ?? auth.currentPhone).trimmingCharacters(in: .whitespacesAndNewlines),
-                        email: auth.currentEmail.trimmingCharacters(in: .whitespacesAndNewlines),
-                        nickname: draft.nickname,
-                        portraitData: draft.portraitData,
-                        qrCodeData: draft.qrCodes.first(where: { $0.imageData != nil })?.imageData,
-                        style: draft.style
-                    )
+                    cardPreview
+                    HStack {
+                        Button { prepareCardExport(share: false) } label: { Label(localized("保存图片"), systemImage: "square.and.arrow.down") }
+                        Spacer()
+                        Button { prepareCardExport(share: true) } label: { Label(localized("分享名片"), systemImage: "square.and.arrow.up") }
+                    }.buttonStyle(.bordered).disabled(!hasLoaded)
                     qrCodeSection
                 }
                 .padding(16)
@@ -124,16 +131,29 @@ struct BusinessCardView: View {
             }
             .scrollDismissesKeyboard(.interactively)
             .background(Color(.systemGroupedBackground))
-            .navigationTitle(localized("名片页面标题"))
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .topBarTrailing) {
-                    Button(localized("保存")) { Task { await saveDraft() } }
-                        .fontWeight(.semibold)
-                        .disabled(cloudAssetModel.isSaving || !hasLoaded)
-                }
+            .safeAreaInset(edge: .top, spacing: 0) {
+                HStack {
+                    Text(localized("名片页面标题")).font(.system(size: 30, weight: .bold, design: .rounded))
+                    Spacer()
+                    Button(localized("保存")) { Task { await saveDraft() } }.disabled(cloudAssetModel.isSaving || !hasLoaded)
+                }.frame(minHeight: 52).padding(.horizontal, 20).padding(.vertical, 8)
+                    .background(Color(.systemGroupedBackground))
             }
+            .toolbar(.hidden, for: .navigationBar)
+            .fileExporter(isPresented: $showsImageExporter, document: exportDocument, contentType: .png, defaultFilename: "TrvelMA-Business-Card") { result in
+                if case .failure(let error) = result { exportError = error.localizedDescription }
+            }
+            .sheet(isPresented: $showsCardShare, onDismiss: { exportImage = nil }) {
+                if let exportImage { BusinessCardShareSheet(image: exportImage) }
+            }
+            .alert(localized("名片页面标题"), isPresented: Binding(get: { exportError != nil }, set: { if !$0 { exportError = nil } })) {
+                Button(localized("完成"), role: .cancel) { exportError = nil }
+            } message: { Text(exportError ?? "") }
             .task(id: "\(auth.isCloudAccount)|\(auth.currentEmail)") {
+                exportImage = nil
+                showsCardShare = false
+                showsImageExporter = false
+                exportDocument = BusinessCardImageDocument(data: Data())
                 cloudAssetModel.beginAccountChange()
                 portraitLoadTask?.cancel()
                 portraitLoadTask = nil
@@ -175,6 +195,25 @@ struct BusinessCardView: View {
                 Text(cloudAssetModel.errorMessage ?? "")
             }
         }
+    }
+
+    private var cardPreview: some View {
+        BusinessCardPreview(name: registeredName, phone: registeredPhone,
+            email: auth.currentEmail.trimmingCharacters(in: .whitespacesAndNewlines), nickname: draft.nickname,
+            portraitData: draft.portraitData, qrCodeData: draft.qrCodes.first(where: { $0.imageData != nil })?.imageData, style: draft.style)
+    }
+
+    @MainActor private func prepareCardExport(share: Bool) {
+        guard hasLoaded, loadedDraftAccountKey == draftAccountKey else { return }
+        let renderer = ImageRenderer(content: cardPreview.frame(width: 600).padding(20).background(Color.white)
+            .environment(\.colorScheme, .light).environment(\.locale, languageSettings.locale))
+        renderer.scale = 2
+        guard let image = renderer.uiImage, let data = image.pngData() else {
+            exportError = localized("无法生成名片图片，请重试。"); return
+        }
+        exportImage = image
+        exportDocument = BusinessCardImageDocument(data: data)
+        if share { showsCardShare = true } else { showsImageExporter = true }
     }
 
     private var photoPicker: some View {
@@ -512,7 +551,7 @@ private struct BusinessCardQRRow: View {
     }
 }
 
-private struct BusinessCardPreview: View {
+struct BusinessCardPreview: View {
     let name: String
     let phone: String
     let email: String
@@ -520,6 +559,11 @@ private struct BusinessCardPreview: View {
     let portraitData: Data?
     let qrCodeData: Data?
     let style: Int
+
+    private var displayNickname: String {
+        let value = nickname.trimmingCharacters(in: .whitespacesAndNewlines)
+        return value.isEmpty ? BusinessCardCopy.text("请填写昵称", language: AppLanguage(rawValue: AppLanguageSettings.effectiveIdentifier) ?? .english) : value
+    }
 
     private var isMetallic: Bool { style == 1 }
     private let gold = Color(red: 0.80, green: 0.65, blue: 0.34)
@@ -543,17 +587,11 @@ private struct BusinessCardPreview: View {
                     .clipShape(RoundedRectangle(cornerRadius: 15, style: .continuous))
                     .overlay(RoundedRectangle(cornerRadius: 15, style: .continuous).stroke(.white.opacity(isMetallic ? 0.45 : 0.7), lineWidth: 1))
                 VStack(alignment: .leading, spacing: 4) {
-                    Text(nickname.isEmpty ? name : nickname)
+                    Text(displayNickname)
                         .font(.title3.weight(.bold))
                         .lineLimit(1)
-                    if !nickname.isEmpty {
-                        Text(name).font(.caption).opacity(0.78)
-                    }
                 }
                 Spacer(minLength: 0)
-                Image(systemName: "person.text.rectangle.fill")
-                    .font(.title2)
-                    .opacity(0.72)
             }
             Rectangle().fill(.white.opacity(isMetallic ? 0.35 : 0.5)).frame(height: 1)
             VStack(alignment: .leading, spacing: 6) {
@@ -561,8 +599,8 @@ private struct BusinessCardPreview: View {
                 Label(email, systemImage: "envelope.fill")
             }
             .font(.caption.weight(.medium))
-            .lineLimit(1)
-            .minimumScaleFactor(0.72)
+            .lineLimit(nil)
+            .fixedSize(horizontal: false, vertical: true)
         }
         .foregroundStyle(isMetallic ? Color.white : Color(red: 0.24, green: 0.20, blue: 0.16))
         .padding(18)
@@ -592,21 +630,6 @@ private struct BusinessCardPreview: View {
                                 .frame(width: height * 0.22, height: height * 0.22)
                                 .clipShape(Circle())
                                 .overlay(Circle().stroke(.black.opacity(0.25), lineWidth: 1))
-                            Image(systemName: "person.text.rectangle.fill")
-                                .font(.system(size: height * 0.15, weight: .medium))
-                                .foregroundStyle(.black.opacity(0.78))
-                        }
-                        VStack(alignment: .leading, spacing: 2) {
-                            Text(name)
-                                .font(.system(size: height * 0.105, weight: .bold, design: .serif))
-                                .lineLimit(1)
-                                .minimumScaleFactor(0.65)
-                            if !nickname.isEmpty {
-                                Text(nickname)
-                                    .font(.system(size: height * 0.065, weight: .medium))
-                                    .lineLimit(1)
-                                    .minimumScaleFactor(0.7)
-                            }
                         }
                         Spacer(minLength: 0)
                         qrMark
@@ -617,20 +640,14 @@ private struct BusinessCardPreview: View {
                     .padding(.vertical, height * 0.11)
                     .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
                 }
-                .frame(width: proxy.size.width * 0.43)
+                .frame(width: proxy.size.width * 0.32)
 
                 VStack(alignment: .leading, spacing: 0) {
                     Spacer(minLength: 0)
-                    Text(nickname.isEmpty ? name : nickname)
+                    Text(displayNickname)
                         .font(.system(size: height * 0.13, weight: .bold, design: .rounded))
                         .lineLimit(1)
                         .minimumScaleFactor(0.65)
-                    if !nickname.isEmpty {
-                        Text(name)
-                            .font(.system(size: height * 0.07, weight: .medium))
-                            .foregroundStyle(.white.opacity(0.72))
-                            .lineLimit(1)
-                    }
                     Rectangle().fill(gold.opacity(0.9)).frame(height: 1)
                         .padding(.vertical, height * 0.11)
                     VStack(alignment: .leading, spacing: height * 0.085) {
@@ -664,9 +681,10 @@ private struct BusinessCardPreview: View {
                 .frame(width: height * 0.17, height: height * 0.17)
                 .background(LinearGradient(colors: [Color(red: 0.98, green: 0.84, blue: 0.44), gold], startPoint: .top, endPoint: .bottom), in: RoundedRectangle(cornerRadius: 5))
             Text(value)
-                .font(.system(size: height * 0.075, weight: .medium))
-                .lineLimit(1)
-                .minimumScaleFactor(0.58)
+                .font(.system(size: height * 0.065, weight: .medium))
+                .lineLimit(3)
+                .fixedSize(horizontal: false, vertical: true)
+                .layoutPriority(1)
         }
     }
 
@@ -723,4 +741,20 @@ private struct GoldCardAccent: Shape {
         path.closeSubpath()
         return path
     }
+}
+
+private struct BusinessCardImageDocument: FileDocument {
+    static var readableContentTypes: [UTType] { [.png] }
+    var data: Data
+    init(data: Data) { self.data = data }
+    init(configuration: ReadConfiguration) throws { data = configuration.file.regularFileContents ?? Data() }
+    func fileWrapper(configuration: WriteConfiguration) throws -> FileWrapper { FileWrapper(regularFileWithContents: data) }
+}
+
+private struct BusinessCardShareSheet: UIViewControllerRepresentable {
+    let image: UIImage
+    func makeUIViewController(context: Context) -> UIActivityViewController {
+        UIActivityViewController(activityItems: [image], applicationActivities: nil)
+    }
+    func updateUIViewController(_ controller: UIActivityViewController, context: Context) {}
 }

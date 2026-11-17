@@ -978,3 +978,6 @@ body { background: var(--bg); color: var(--text); }
 }
 
 .trip-guest-toggle{display:inline-flex;align-items:center;gap:6px;border:0;background:none;padding:0;color:inherit;font:inherit;font-weight:700;text-align:left;cursor:pointer}.trip-guest-toggle svg{width:12px;height:12px}.trip-contact-actions{padding:8px 0}.trip-contact-actions>div{display:flex;align-items:center;gap:10px;margin:4px 0}.trip-contact-actions>div>span{flex:1}.trip-contact-actions a svg{width:16px;height:16px}
+
+.business-card-export { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 18px; }
+.preview-heading > div { min-width: 0; overflow-wrap: anywhere; }

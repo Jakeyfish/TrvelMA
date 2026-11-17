@@ -1,7 +1,7 @@
 import SwiftUI
 import UniformTypeIdentifiers
 
-private struct AccountArchiveDocument: FileDocument {
+struct AccountArchiveDocument: FileDocument {
     static var readableContentTypes: [UTType] { [.json] }
     var data: Data
     init(data: Data) { self.data = data }

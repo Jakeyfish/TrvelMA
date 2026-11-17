@@ -11,7 +11,9 @@ sys.dont_write_bytecode = True
 parser = argparse.ArgumentParser(description='Run isolated SwiftData/URLProtocol sync regression tests on a booted simulator.')
 parser.add_argument('--destination', help='Explicit xcodebuild destination; defaults to the first booted iOS simulator.')
 parser.add_argument('--storekit', action='store_true', help='Run isolated StoreKit local purchase tests only; no real App Store purchases.')
+parser.add_argument('--purchase-preview', action='store_true', help='Run isolated purchase UI fixture; finish with its QA button, no purchases')
 args = parser.parse_args()
+if args.purchase_preview: args.storekit = True
 # Hostless runners share the simulator's standard preferences. Concurrent runs
 # can change account scope underneath each other and invalidate network fixtures.
 run_lock = (Path(tempfile.gettempdir()) / 'trvelma-sync-regression.lock').open('a')
@@ -104,10 +106,19 @@ storekit_resources=[]
 if args.storekit:
     config=base/'TrvelMA.storekit'
     shutil.copyfile(root.parent/'StoreKit/TrvelMA.storekit',config)
+    if args.purchase_preview:
+        fixture = json.loads(config.read_text())
+        metadata = json.loads((root.parent/'docs/billing-1.1-product-localizations.json').read_text())
+        by_id = {p['product_id']: p for p in metadata['products'].values()}
+        for product in fixture['products'] + [p for g in fixture['subscriptionGroups'] for p in g['subscriptions']]:
+            product['localizations'] = [{'locale':code.replace('-','_'),'displayName':copy['name'],'description':copy['description']} for code,copy in by_id[product['productID']]['localizations'].items()]
+        config.write_text(json.dumps(fixture, ensure_ascii=False, indent=2))
     ref=obj('PBXFileReference',lastKnownFileType='text',path=str(config),sourceTree='<absolute>');refs.append(ref)
     storekit_resources.append(obj('PBXBuildFile',fileRef=ref))
     storekit_test=base/'StoreKitLocalTests.swift'
     shutil.copyfile(Path(__file__).parent/'tests/StoreKitLocalTests.swift',storekit_test)
+    if args.purchase_preview:
+        storekit_test.write_text((Path(__file__).parent/'tests/PurchaseUIPreview.swift').read_text())
     ref=obj('PBXFileReference',lastKnownFileType='sourcecode.swift',path=str(storekit_test),sourceTree='<absolute>');refs.append(ref);builds.append(obj('PBXBuildFile',fileRef=ref))
 product=obj('PBXFileReference',explicitFileType='wrapper.cfbundle',path='SyncRegression.xctest',sourceTree='BUILT_PRODUCTS_DIR')
 products=obj('PBXGroup',children=[product],name='Products',sourceTree='<group>')
@@ -128,7 +139,12 @@ if args.storekit:
     host_product=obj('PBXFileReference',explicitFileType='wrapper.application',path='StoreKitQA.app',sourceTree='BUILT_PRODUCTS_DIR');objects[products]['children'].append(host_product)
     host_sources=obj('PBXSourcesBuildPhase',buildActionMask=2147483647,files=[obj('PBXBuildFile',fileRef=host_ref)],runOnlyForDeploymentPostprocessing=0)
     host_frameworks=obj('PBXFrameworksBuildPhase',buildActionMask=2147483647,files=[],runOnlyForDeploymentPostprocessing=0)
-    host_resources=obj('PBXResourcesBuildPhase',buildActionMask=2147483647,files=[],runOnlyForDeploymentPostprocessing=0)
+    host_resource_files=[]
+    if args.purchase_preview:
+        locale_ref=obj('PBXFileReference',lastKnownFileType='text.json.xcstrings',path=str(root/'Localizable.xcstrings'),sourceTree='<absolute>')
+        objects[group]['children'].append(locale_ref)
+        host_resource_files.append(obj('PBXBuildFile',fileRef=locale_ref))
+    host_resources=obj('PBXResourcesBuildPhase',buildActionMask=2147483647,files=host_resource_files,runOnlyForDeploymentPostprocessing=0)
     host_settings=dict(settings)
     host_settings.update(PRODUCT_NAME='StoreKitQA',PRODUCT_BUNDLE_IDENTIFIER='com.trvelma.acceptance.storekit-host',CODE_SIGNING_ALLOWED='YES',CODE_SIGN_IDENTITY='-',INFOPLIST_KEY_UILaunchScreen_Generation='YES',INFOPLIST_KEY_UIApplicationSceneManifest_Generation='YES')
     host_conf=obj('XCBuildConfiguration',name='Debug',buildSettings=host_settings)
@@ -158,7 +174,8 @@ log = base / 'test.log'
 print('Isolated test artifacts:', base, flush=True)
 command = ['xcodebuild', '-project', str(proj), '-scheme', 'SyncRegression', '-destination', destination,
            '-derivedDataPath', str(base / 'build'), '-resultBundlePath', str(base / 'results'), 'test']
-if args.storekit: command.append('-only-testing:SyncRegression/StoreKitLocalIntegrationTests')
+if args.purchase_preview: command.append('-only-testing:SyncRegression/PurchaseUIOnlyTests')
+elif args.storekit: command.append('-only-testing:SyncRegression/StoreKitLocalIntegrationTests')
 with log.open('w') as output:
     result = subprocess.run(command, stdout=output, stderr=subprocess.STDOUT)
 for line in log.read_text().splitlines():

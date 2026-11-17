@@ -1313,6 +1313,7 @@ struct AddressSuggestionField: View {
                         UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder), to: nil, from: nil, for: nil)
                         isFocused = false
                         onSelect(value)
+                        NavigationDestinationStore.rememberSelection(completion, address: value)
                     } label: {
                         VStack(alignment: .leading, spacing: 2) {
                             Text(completion.title).foregroundStyle(.primary)

@@ -115,6 +115,7 @@ enum AccountAssetStore {
     }
 
     static func removeLocalAssets(email: String) {
+        NavigationDestinationStore.clear(scope: DataOwnership.localScope(email: email))
         let normalizedEmail = normalize(email)
         for asset in Asset.allCases {
             set(nil, for: asset, email: normalizedEmail, namespace: .local)
@@ -124,6 +125,7 @@ enum AccountAssetStore {
     }
 
     static func removeCloudAssets(email: String) {
+        NavigationDestinationStore.clear(scope: DataOwnership.cloudScope(for: email))
         let normalizedEmail = normalize(email)
         for asset in Asset.allCases {
             set(nil, for: asset, email: normalizedEmail, namespace: .cloud)

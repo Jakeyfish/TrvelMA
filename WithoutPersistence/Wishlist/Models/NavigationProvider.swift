@@ -30,22 +30,23 @@ enum NavigationProvider: String, CaseIterable, Identifiable {
     func directionsURL(for address: String) -> URL? {
         let destination = address.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !destination.isEmpty else { return nil }
+        let point = NavigationPoint.parse(destination) ?? NavigationDestinationStore.point(for: destination)
 
         var components: URLComponents?
         switch self {
         case .appleMaps:
             components = URLComponents(string: "https://maps.apple.com/")
             components?.queryItems = [
-                URLQueryItem(name: "daddr", value: destination),
-                URLQueryItem(name: "dirflg", value: "d")
+                URLQueryItem(name: point == nil ? "q" : "daddr", value: point?.queryValue ?? destination)
             ]
+            if point != nil { components?.queryItems?.append(URLQueryItem(name: "dirflg", value: "d")) }
         case .googleMaps:
-            components = URLComponents(string: "https://www.google.com/maps/dir/")
+            components = URLComponents(string: point == nil ? "https://www.google.com/maps/search/" : "https://www.google.com/maps/dir/")
             components?.queryItems = [
                 URLQueryItem(name: "api", value: "1"),
-                URLQueryItem(name: "destination", value: destination),
-                URLQueryItem(name: "travelmode", value: "driving")
+                URLQueryItem(name: point == nil ? "query" : "destination", value: point?.queryValue ?? destination)
             ]
+            if point != nil { components?.queryItems?.append(URLQueryItem(name: "travelmode", value: "driving")) }
         }
         return components?.url
     }
