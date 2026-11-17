@@ -686,3 +686,97 @@ test('payment QR has an explicit share action only when an image is available',(
  const html=vm.runInContext('renderPaymentMethods()',c);assert.match(html,/data-action="share-qr" data-kind="payment" data-id="with"/);
  assert.doesNotMatch(html,/data-action="share-qr" data-kind="payment" data-id="without"/);
 });
+
+test('trip periods default to all with current-day anchor; quick ranges compose with search and status',()=>{
+ const c=boot();
+ assert.equal(vm.runInContext('state.tripDateMode',c),'all');
+ c.fixture=[
+  {id:'a',appointment_date:'2026-11-16T12:00:00',customer_name:'QA guest',is_completed:false,is_paid:false},
+  {id:'b',appointment_date:'2026-11-22T12:00:00',customer_name:'QA guest',is_completed:true,is_paid:false},
+  {id:'c',appointment_date:'2026-11-23T12:00:00',customer_name:'QA guest',is_paid:true},
+  {id:'d',appointment_date:'2026-12-01T12:00:00',customer_name:'QA guest'},
+  {id:'e',appointment_date:'2027-01-01T12:00:00',customer_name:'QA guest'}
+ ];
+ vm.runInContext(`state.trips=fixture;state.tripPeriodAnchor=new Date(2026,10,16);`,c);
+ const ids=()=>Array.from(vm.runInContext('filteredTrips().map(t=>t.id)',c)).sort();
+ assert.deepEqual(ids(),['a','b','c','d','e']);
+ vm.runInContext(`state.tripDateMode='day'`,c);assert.deepEqual(ids(),['a']);
+ vm.runInContext(`state.tripDateMode='week'`,c);assert.deepEqual(ids(),['a','b']);
+ vm.runInContext(`state.tripFilter='pending'`,c);assert.deepEqual(ids(),['a']);
+ vm.runInContext(`state.tripFilter='all';state.tripDateMode='month'`,c);assert.deepEqual(ids(),['a','b','c']);
+ vm.runInContext(`state.tripDateMode='year'`,c);assert.deepEqual(ids(),['a','b','c','d']);
+ vm.runInContext(`state.search='missing'`,c);assert.deepEqual(ids(),[]);
+ vm.runInContext(`state.search='QA';state.tripFilter='unpaid'`,c);assert.deepEqual(ids(),['a','b','d']);
+});
+test('trip calendar ranges cross years, include leap day, and exclude the next boundary',()=>{
+ const c=boot();
+ const parts=expr=>Array.from(vm.runInContext(expr,c));
+ assert.deepEqual(parts(`(()=>{const r=tripPeriodInterval('week',new Date(2027,0,3));return [r.start.getFullYear(),r.start.getMonth(),r.start.getDate(),r.end.getFullYear(),r.end.getMonth(),r.end.getDate()]})()`),[2026,11,28,2027,0,4]);
+ assert.deepEqual(parts(`(()=>{const r=tripPeriodInterval('month',new Date(2028,1,29));return [r.start.getDate(),r.end.getMonth(),r.end.getDate()]})()`),[1,2,1]);
+});
+test('trip period actions reset to current period, navigate, and preserve status/search without changing Home',async()=>{
+ const c=boot();vm.runInContext(`updatePageContent=()=>{};state.homeDate='2026-10-01';state.tripFilter='unpaid';state.search='QA';`,c);
+ const click=async dataset=>c.listeners.click({target:{closest:s=>s==='[data-action]'?{dataset}:null}});
+ await click({action:'trip-date-mode',mode:'month'});
+ assert.equal(vm.runInContext('state.tripDateMode',c),'month');
+ assert.equal(vm.runInContext('dateInput(state.tripPeriodAnchor)',c),vm.runInContext('dateInput(new Date())',c));
+ vm.runInContext(`state.tripPeriodAnchor=new Date(2028,0,31)`,c);
+ await click({action:'trip-period-shift',step:'1'});
+ assert.equal(vm.runInContext('dateInput(state.tripPeriodAnchor)',c),'2028-02-29');
+ assert.equal(vm.runInContext('state.tripFilter',c),'unpaid');assert.equal(vm.runInContext('state.search',c),'QA');
+ assert.equal(vm.runInContext('state.homeDate',c),'2026-10-01');
+});
+
+test('Existing All entry clears quick ranges and keeps today as its date anchor',async()=>{
+ const c=boot();vm.runInContext(`updatePageContent=()=>{};state.tripDateMode='month';state.tripPeriodAnchor=new Date(2020,0,1);`,c);
+ await c.listeners.click({target:{closest:s=>s==='[data-action]'?{dataset:{action:'trip-filter',filter:'all'}}:null}});
+ assert.equal(vm.runInContext('state.tripDateMode',c),'all');
+ assert.equal(vm.runInContext('dateInput(state.tripPeriodAnchor)',c),vm.runInContext('dateInput(new Date())',c));
+ assert.doesNotMatch(vm.runInContext('renderTripPeriodSelector()',c),/data-mode="all"/);
+});
+
+test('original date strip remains above list and a date click activates a single-day range',async()=>{
+ const c=boot();vm.runInContext(`updatePageContent=()=>{};state.page='trips';state.trips=[];`,c);
+ const html=vm.runInContext('renderTrips()',c);
+ assert.match(html,/data-trip-calendar/);assert.match(html,/data-action="trip-date"/);
+ assert.ok(html.indexOf('data-trip-calendar')<html.indexOf('data-search="trips"'));
+ assert.doesNotMatch(vm.runInContext('renderTripPeriodSelector()',c),/data-mode="all"/);
+ await c.listeners.click({target:{closest:s=>s==='[data-action]'?{dataset:{action:'trip-date',date:'2026-12-01'}}:null}});
+ assert.equal(vm.runInContext('state.tripDateMode',c),'day');
+ assert.equal(vm.runInContext('dateInput(state.tripPeriodAnchor)',c),'2026-12-01');
+ await c.listeners.click({target:{closest:s=>s==='[data-action]'?{dataset:{action:'trip-date-mode',mode:'month'}}:null}});
+ assert.equal(vm.runInContext('dateInput(state.tripPeriodAnchor)',c),'2026-12-01');
+});
+
+test('date navigator and original date cards both remain; arrows apply the active quick period',async()=>{
+ const c=boot();vm.runInContext(`updatePageContent=()=>{};state.page='trips';state.trips=[];state.tripPeriodAnchor=new Date(2026,10,16);`,c);
+ const html=vm.runInContext('renderTrips()',c);
+ assert.match(html,/data-trip-date-navigator/);assert.match(html,/data-trip-calendar/);
+ assert.ok(html.indexOf('data-trip-date-navigator')<html.indexOf('data-trip-calendar'));
+ const click=async data=>c.listeners.click({target:{closest:s=>s==='[data-action]'?{dataset:data}:null}});
+ await click({action:'trip-period-shift',step:'1'});
+ assert.equal(vm.runInContext('state.tripDateMode',c),'day');
+ assert.equal(vm.runInContext('dateInput(state.tripPeriodAnchor)',c),'2026-11-17');
+ for(const [period,expected] of [['week','2026-11-24'],['month','2026-12-24'],['year','2027-12-24']]){
+  await click({action:'trip-date-mode',mode:period});await click({action:'trip-period-shift',step:'1'});
+  assert.equal(vm.runInContext('dateInput(state.tripPeriodAnchor)',c),expected);
+ }
+ await click({action:'trip-filter',filter:'all'});
+ assert.equal(vm.runInContext('state.tripDateMode',c),'all');
+});
+
+test('all address navigation buttons launch the selected field without reusing another destination',async()=>{
+ const c=boot();c.opened=[];c.window.open=url=>c.opened.push(url);c.getAccountPreference=()=> 'googleMaps';
+ const form={elements:{location_start:{value:'123 N QA Ave'},location_end:{value:'456 S QA Blvd'}},querySelector:()=>({value:'34.123456,-118.123456'})};
+ for(const [target,expected] of [['start','123 N QA Ave'],['end','456 S QA Blvd'],['stop:0','34.123456,-118.123456']]){
+  const button={dataset:{action:'navigate-address',target},closest:()=>form};
+  await c.listeners.click({target:{closest:s=>s==='[data-action]'?button:null}});
+  const url=new URL(c.opened.at(-1));
+  assert.equal(url.searchParams.get(target==='stop:0'?'destination':'query'),expected);
+  assert.equal(url.pathname,target==='stop:0'?'/maps/dir/':'/maps/search/');
+ }
+ const button={dataset:{action:'navigate-saved-address',address:'789 QA Hotel & Conference'}};
+ await c.listeners.click({target:{closest:s=>s==='[data-action]'?button:null}});
+ assert.equal(new URL(c.opened.at(-1)).searchParams.get('query'),'789 QA Hotel & Conference');
+ assert.equal(c.opened.length,4);
+});

@@ -450,7 +450,8 @@ struct TripListDashboardView: View {
     @State private var selectedFilter: TripListFilter = .all
     @State private var selectedDateFilter: Date?
     @AppStorage("tripList.selectedDateTimestamp") private var selectedDateTimestamp = Date.now.timeIntervalSince1970
-    @State private var dateMode: TripDateMode = .sevenDays
+    @State private var dateMode: TripDateMode = .all
+    @State private var periodAnchor = Calendar.current.startOfDay(for: Date.now)
     @State private var isShowingAllDates = true
     @State private var completionBooking: TripBookingRecord?
     @State private var pendingCompletionBooking: TripBookingRecord?
@@ -479,7 +480,7 @@ struct TripListDashboardView: View {
     private var datesWithBookings: [Date] {
         let calendar = Calendar.current
         if showsDateControls {
-            return Array(Set(bookings.map { calendar.startOfDay(for: $0.appointmentDate) })).sorted()
+            return Array(Set(bookings.map { calendar.startOfDay(for: $0.appointmentDate) } + [calendar.startOfDay(for: .now), calendar.startOfDay(for: periodAnchor)])).sorted()
         }
 
         let today = calendar.startOfDay(for: .now)
@@ -508,8 +509,7 @@ struct TripListDashboardView: View {
             }
             guard matchesStatus else { return false }
             if showsDateControls,
-               let selectedDateFilter,
-               !calendar.isDate(booking.appointmentDate, inSameDayAs: selectedDateFilter) { return false }
+               !dateMode.includes(booking.appointmentDate, anchor: periodAnchor, calendar: calendar) { return false }
             if !showsDateControls,
                !isShowingAllDates,
                !calendar.isDate(booking.appointmentDate, inSameDayAs: selectedDate) { return false }
@@ -527,40 +527,9 @@ struct TripListDashboardView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
             if showsDateControls {
-                HStack(spacing: 5) {
-                    ForEach(TripDateMode.allCases) { mode in
-                        Button { dateMode = mode } label: {
-                            Text(LocalizedStringKey(mode.title))
-                                .font(.subheadline.weight(.semibold))
-                                .foregroundStyle(dateMode == mode ? Color.accentColor : Color.secondary)
-                                .frame(maxWidth: .infinity, minHeight: 36)
-                                .background(dateMode == mode ? Color.accentColor.opacity(0.10) : Color.clear, in: RoundedRectangle(cornerRadius: 10))
-                        }.buttonStyle(.plain)
-                    }
-                }
-                .padding(4)
-                .background(Color(.secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 14))
-
+                TripPeriodSelector(period: $dateMode, anchor: $periodAnchor)
             }
-
-            if showsDateControls && dateMode == .month {
-                DatePicker("选择日期", selection: Binding(
-                    get: { selectedDateFilter ?? selectedDate },
-                    set: {
-                        selectedDateTimestamp = $0.timeIntervalSince1970
-                        selectedDateFilter = Calendar.current.startOfDay(for: $0)
-                    }
-                ), displayedComponents: .date)
-                    .datePickerStyle(.graphical)
-                    .tint(.accentColor)
-                    .padding(8)
-                    .background(Color(.secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 16))
-            }
-
-            // The homepage and trip list share the same row of dates that contain trips.
-            if !showsDateControls || dateMode == .sevenDays || dateMode == .month {
-                dateNavigationStrip
-            }
+            dateNavigationStrip
 
             HStack(spacing: 10) {
                 Image(systemName: "magnifyingglass").foregroundStyle(.secondary)
@@ -586,7 +555,7 @@ struct TripListDashboardView: View {
                 ForEach(TripListFilter.allCases) { filter in
                     Button {
                         selectedFilter = filter
-                        selectedDateFilter = nil
+                        if filter == .all { dateMode = .all; periodAnchor = Calendar.current.startOfDay(for: .now) }
                     } label: {
                         Text(LocalizedStringKey(filter.title))
                             .font(.system(size: 12, weight: .semibold))
@@ -734,20 +703,31 @@ struct TripListDashboardView: View {
     }
 
     private var dateNavigationStrip: some View {
-        ScrollView(.horizontal) {
-            HStack(spacing: 8) {
-                allPendingDatesButton
-                ForEach(datesWithBookings, id: \.self) { day in
-                    dateButton(for: day)
+        ScrollViewReader { proxy in
+            ScrollView(.horizontal) {
+                HStack(spacing: 8) {
+                    if !showsDateControls { allPendingDatesButton }
+                    ForEach(datesWithBookings, id: \.self) { day in
+                        dateButton(for: day).id(day)
+                    }
                 }
             }
+            .scrollIndicators(.hidden)
+            .onAppear {
+                if showsDateControls { proxy.scrollTo(Calendar.current.startOfDay(for: .now), anchor: .leading) }
+            }
+            .onChange(of: periodAnchor) { _, day in
+                if showsDateControls { proxy.scrollTo(Calendar.current.startOfDay(for: day), anchor: .leading) }
+            }
+            .onChange(of: datesWithBookings) { _, _ in
+                if showsDateControls { proxy.scrollTo(Calendar.current.startOfDay(for: periodAnchor), anchor: .leading) }
+            }
         }
-        .scrollIndicators(.hidden)
     }
 
     private func dateButton(for date: Date) -> some View {
         let selected = showsDateControls
-            ? selectedDateFilter.map { Calendar.current.isDate(date, inSameDayAs: $0) } ?? false
+            ? dateMode == .day && Calendar.current.isDate(date, inSameDayAs: periodAnchor)
             : !isShowingAllDates && Calendar.current.isDate(date, inSameDayAs: selectedDate)
         let title = Calendar.current.isDateInToday(date)
             ? String(localized: "今天", locale: locale)
@@ -761,7 +741,7 @@ struct TripListDashboardView: View {
             let day = Calendar.current.startOfDay(for: date)
             isShowingAllDates = false
             selectedDateTimestamp = day.timeIntervalSince1970
-            if showsDateControls { selectedDateFilter = day }
+            if showsDateControls { selectedDateFilter = day; dateMode = .day; periodAnchor = day }
         } label: {
             VStack(spacing: 3) {
                 Text(title).font(.system(size: 11, weight: .medium)).lineLimit(1).minimumScaleFactor(0.7)
@@ -807,12 +787,6 @@ enum TripListFilter: String, CaseIterable, Identifiable {
         case .history: "历史"
         }
     }
-}
-
-enum TripDateMode: String, CaseIterable, Identifiable {
-    case sevenDays, month
-    var id: Self { self }
-    var title: String { self == .sevenDays ? "周" : "月历" }
 }
 
 /// A top-down airplane silhouette whose nose always points to the right.

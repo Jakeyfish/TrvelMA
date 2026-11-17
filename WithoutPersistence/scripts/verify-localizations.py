@@ -11,6 +11,7 @@ catalog=json.loads((root/'Localizable.xcstrings').read_text())['strings']
 languages=['zh-Hans','zh-Hant','en','es','ja','ko']
 files=['Views/Settings/PrivacyPolicyView.swift','Views/Login/CloudAccountDeletionView.swift','Views/Login/ExpiredAccountArchiveView.swift','Views/Purchases/PurchasePlansView.swift','Models/StorePurchaseManager.swift','Views/Wallet/AgencyStatementExport.swift','Views/Wallet/AgencyStatementView.swift']
 keys=set()
+files.append('Views/Trips/TripPeriodSelector.swift')
 for name in files:
  for text in re.findall(r'"([^"\n]*[\u4e00-\u9fff][^"\n]*)"',(root/name).read_text()):
   # Interpolated business strings, separators and comments are not catalog lookup keys.

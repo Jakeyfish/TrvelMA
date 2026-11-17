@@ -1,5 +1,21 @@
 // Shared-domain rules matching the iOS client. No network or account state.
 export const LA = 'America/Los_Angeles';
+// Text alone identifies a search, not a verified routing destination.
+export function safeNavigationURL(address, provider = 'appleMaps') {
+  const value = String(address || '').trim();
+  if (!value) return null;
+  const pieces = value.split(',').map(s => s.trim());
+  const numeric = /^[-+]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][-+]?\d+)?$/;
+  const point = pieces.length === 2 && pieces.every(s => numeric.test(s))
+    && Math.abs(Number(pieces[0])) <= 90 && Math.abs(Number(pieces[1])) <= 180
+    ? pieces.map(Number).join(',') : null;
+  const google = provider === 'googleMaps';
+  const url = new URL(google ? `https://www.google.com/maps/${point ? 'dir' : 'search'}/` : 'https://maps.apple.com/');
+  if (google) url.searchParams.set('api','1');
+  url.searchParams.set(google ? (point ? 'destination' : 'query') : (point ? 'daddr' : 'q'), point || value);
+  if (point) url.searchParams.set(google ? 'travelmode' : 'dirflg', google ? 'driving' : 'd');
+  return url.href;
+}
 export function partsInZone(value, zone = LA) {
   return Object.fromEntries(new Intl.DateTimeFormat('en-CA', {timeZone:zone,year:'numeric',month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit',second:'2-digit',hourCycle:'h23'}).formatToParts(new Date(value)).filter(x=>x.type!=='literal').map(x=>[x.type,x.value]));
 }

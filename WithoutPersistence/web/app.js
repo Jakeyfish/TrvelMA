@@ -1,13 +1,13 @@
-import { statementPDF } from "./statement-pdf.mjs?v=20261116-finance-v1";
-import { localized } from "./localization.mjs?v=20261116-finance-v1";
+import { statementPDF } from "./statement-pdf.mjs?v=20261116-trip-period-v1";
+import { localized } from "./localization.mjs?v=20261116-trip-period-v1";
 const uiLanguage = () => normalizedLanguageCode((state.archiveMode ? state.archiveData?.user_settings?.[0]?.language_code : null) || state.settings?.language_code || readInterfaceLanguage());
 const ui = (key, ...args) => localized(key, uiLanguage(), ...args);
-import { flightDisplayName, flightStatusLabel, telephoneNumber, tripTelephoneContacts, financialCategoryGroups, statementMoney, agencyStatementTrips, statementAgencyKey, buildAgencyStatement, pickupReminders, recognizePickup, matchPickupAgency, partsInZone, zonedISO, parseFlights, flightID, makeFlightSnapshot, readFlightSnapshot, routeMatches, compareTrips, settlementPayload } from './parity.mjs?v=20261116-finance-v1';
+import { flightDisplayName, flightStatusLabel, safeNavigationURL, telephoneNumber, tripTelephoneContacts, financialCategoryGroups, statementMoney, agencyStatementTrips, statementAgencyKey, buildAgencyStatement, pickupReminders, recognizePickup, matchPickupAgency, partsInZone, zonedISO, parseFlights, flightID, makeFlightSnapshot, readFlightSnapshot, routeMatches, compareTrips, settlementPayload } from './parity.mjs?v=20261116-trip-period-v1';
 let airportCrosswalk = [];
 const airportCrosswalkReady = fetch('./assets/airport-crosswalk.json').then(r => { if (!r.ok) throw Error('机场对照表不可用'); return r.json(); }).then(data => { airportCrosswalk = data.airports; }).catch(() => {});
 const SUPABASE_URL = "https://lbdfqzeiweqbsklklcqr.supabase.co";
 const SUPABASE_PUBLISHABLE_KEY = "sb_publishable_d4tmuPirsf8-wUDO0Frd7w_PcXME6rs";
-const WEB_BUILD = "20261116-finance-v1";
+const WEB_BUILD = "20261116-trip-period-v1";
 const SESSION_KEY = "yunsheng.web.session.v1";
 const OFFLINE_CACHE_PREFIX = "yunsheng.web.offline-cache.v1.";
 const OFFLINE_QUEUE_PREFIX = "yunsheng.web.offline-queue.v1.";
@@ -63,7 +63,8 @@ const state = {
   tripFilter: "all",
   homeDate: "",
   tripDate: "",
-  tripDateMode: "seven",
+  tripDateMode: "all",
+  tripPeriodAnchor: new Date(),
   tripCalendarMonth: new Date(new Date().getFullYear(), new Date().getMonth(), 1),
   expandedFlights: new Set(),
   settlementDraft: null,
@@ -1016,6 +1017,7 @@ function renderApp() {
       </main>
     </div>`;
   renderConnectionStatus();
+  positionTripDateStrip();
 }
 
 function renderPage() {
@@ -1105,13 +1107,44 @@ function renderHome() {
     </div>`;
 }
 
+function tripPeriodInterval(period = state.tripDateMode, anchor = state.tripPeriodAnchor) {
+  const start = new Date(anchor.getFullYear(), anchor.getMonth(), anchor.getDate());
+  if (period === "week") start.setDate(start.getDate() - ((start.getDay() + 6) % 7));
+  if (period === "month") start.setDate(1);
+  if (period === "year") start.setMonth(0, 1);
+  const end = new Date(start);
+  if (period === "week") end.setDate(end.getDate() + 7);
+  else if (period === "month") end.setMonth(end.getMonth() + 1);
+  else if (period === "year") end.setFullYear(end.getFullYear() + 1);
+  else end.setDate(end.getDate() + 1);
+  return {start, end};
+}
+
+function renderTripPeriodSelector() {
+  const {start, end} = tripPeriodInterval();
+  const last = new Date(end); last.setDate(last.getDate() - 1);
+  const options = state.tripDateMode === 'year' ? {year:'numeric'} : state.tripDateMode === 'month' ? {year:'numeric',month:'long'} : {year:'numeric',month:'long',day:'numeric'};
+  const formatter = new Intl.DateTimeFormat(uiLanguage(), options);
+  const title = state.tripDateMode === 'week' ? `${formatter.format(start)} – ${formatter.format(last)}` : formatter.format(start);
+  return `<div class="finance-period-picker" role="group" aria-label="${escapeHTML(ui('选择日期'))}">${[["day","天"],["week","周"],["month","本月"],["year","年"]].map(([mode,label])=>`<button class="finance-period-option ${state.tripDateMode===mode?'active':''}" aria-pressed="${state.tripDateMode===mode}" data-action="trip-date-mode" data-mode="${mode}">${escapeHTML(ui(label))}</button>`).join('')}</div><div class="wallet-date-navigator finance-date-navigator" data-trip-date-navigator><button class="button" data-action="trip-period-shift" data-step="-1" aria-label="${escapeHTML(ui('上一段日期'))}">${appIcon('chevron.left')}</button><strong>${escapeHTML(title)}</strong><button class="button" data-action="trip-period-shift" data-step="1" aria-label="${escapeHTML(ui('下一段日期'))}">${appIcon('chevron.right')}</button></div>`;
+}
+function positionTripDateStrip() {
+  if (state.page !== 'trips') return;
+  const strip = document.querySelector('[data-trip-calendar]');
+  const date = dateInput(state.tripPeriodAnchor);
+  const card = strip?.querySelector(`[data-date="${date}"]`);
+  if (card) strip.scrollLeft = card.offsetLeft - strip.offsetLeft;
+}
+
 function filteredTrips() {
   const today = dateInput(new Date());
+  const {start, end} = tripPeriodInterval();
   return state.trips.filter(trip => {
     if (state.tripFilter === "pending" && (trip.is_completed || trip.is_cancelled)) return false;
     if (state.tripFilter === "unpaid" && trip.is_paid) return false;
     if (state.tripFilter === "history" && dateInput(trip.appointment_date) >= today) return false;
-    if (state.tripDate && dateInput(trip.appointment_date) !== state.tripDate) return false;
+    const tripDay = new Date(`${dateInput(trip.appointment_date)}T12:00:00`);
+    if (state.tripDateMode !== "all" && !(tripDay >= start && tripDay < end)) return false;
     return tripMatchesSearch(trip);
   }).sort(compareTrips);
 }
@@ -1119,11 +1152,11 @@ function filteredTrips() {
 function renderTrips() {
   const trips = filteredTrips();
   const filters = [["all", "全部"], ["pending", "待执行"], ["unpaid", "未收款"], ["history", "历史"]];
-  const dates = tripDates(state.trips);
+  const dates = [...new Set([...tripDates(state.trips), dateInput(new Date()), dateInput(state.tripPeriodAnchor)])].sort();
   const statuses = `<div class="tabs">${filters.map(([key, label]) => `<button class="tab ${state.tripFilter === key ? "active" : ""}" data-action="trip-filter" data-filter="${key}">${label}</button>`).join("")}</div>`;
   return `<section class="trip-dashboard">
-    <div class="trip-mode-switch"><button class="${state.tripDateMode === "seven" ? "active" : ""}" data-action="trip-date-mode" data-mode="seven">周</button><button class="${state.tripDateMode === "month" ? "active" : ""}" data-action="trip-date-mode" data-mode="month">月历</button></div>
-    ${state.tripDateMode === "seven" ? renderDateStrip(dates, state.tripDate, state.trips, state.trips.length, !state.tripDate) : renderMonthCalendar(state.trips)}
+    ${renderTripPeriodSelector()}
+    <div class="trip-date-strip" data-trip-calendar>${dates.map(date=>renderDateCard(date, state.tripDateMode === 'day' && date === dateInput(state.tripPeriodAnchor), state.trips.filter(trip=>dateInput(trip.appointment_date)===date).length)).join('')}</div>
     <div class="page-tools trip-search-tools"><label class="search-wrap">${appIcon("magnifyingglass")}<input class="search-input" data-search="trips" value="${escapeHTML(state.search)}" placeholder="搜索客户、地点、航班"></label><button class="button primary" data-action="new-trip">${appIcon("plus")} 新增行程</button></div>
     ${statuses}
     <div class="section-heading"><h2>${filters.find(([key]) => key === state.tripFilter)?.[1]}行程</h2><small>${trips.length} 条</small></div>
@@ -2337,7 +2370,7 @@ window.addEventListener("online", () => {
 
 function updatePageContent() {
   const content = document.getElementById("pageContent");
-  if (content) content.innerHTML = renderPage();
+  if (content) { content.innerHTML = renderPage(); positionTripDateStrip(); }
 }
 
 let pendingTripCompletion = null;
@@ -3012,9 +3045,8 @@ document.addEventListener("click", async event => {
       const input = target === "start" ? form?.elements.location_start : target === "end" ? form?.elements.location_end : form?.querySelector(`[data-stop-index="${target.split(":")[1]}"]`);
       const address = input?.value.trim();
       if (!address) throw new Error("请先输入或选择地址。");
-      const encoded = encodeURIComponent(address);
-      const url = (getAccountPreference("navigation") || "appleMaps") === "googleMaps" ? `https://www.google.com/maps/dir/?api=1&destination=${encoded}&travelmode=driving` : `https://maps.apple.com/?daddr=${encoded}&dirflg=d`;
-      window.open(url, "_blank", "noopener");
+      const url = safeNavigationURL(address, getAccountPreference("navigation") || "appleMaps");
+      if (url) window.open(url, "_blank", "noopener");
     }
     else if (action === "lookup-flight") await lookupFlight(button.closest("form"));
     else if (action === "select-flight-candidate") {
@@ -3025,18 +3057,30 @@ document.addEventListener("click", async event => {
     else if (action === "refresh-flight-card") await refreshFlightCard(state.trips.find(t => t.id === button.dataset.id));
     else if (action === "recognize-pickup") previewPickup(button.closest('form'));
     else if (action === "apply-pickup") applyPickup();
-    else if (action === "trip-filter") { state.tripFilter = button.dataset.filter; state.tripDate = ""; updatePageContent(); }
+    else if (action === "trip-filter") {
+      state.tripFilter = button.dataset.filter;
+      if (state.tripFilter === 'all') { state.tripDateMode = 'all'; state.tripPeriodAnchor = new Date(); }
+      updatePageContent();
+    }
     else if (action === "trip-date") {
       if (state.page === "home") state.homeDate = button.dataset.date;
-      else state.tripDate = button.dataset.date;
+      else { state.tripDate = button.dataset.date; state.tripDateMode = "day"; state.tripPeriodAnchor = new Date(`${button.dataset.date}T12:00:00`); }
       updatePageContent();
     }
     else if (action === "trip-date-all") {
       if (state.page === "home") state.homeDate = "";
-      else state.tripDate = "";
+      else { state.tripDate = ""; state.tripDateMode = "all"; state.tripPeriodAnchor = new Date(); }
       updatePageContent();
     }
-    else if (action === "trip-date-mode") { state.tripDateMode = button.dataset.mode; updatePageContent(); }
+    else if (action === "trip-date-mode") {
+      if (!["day", "week", "month", "year"].includes(button.dataset.mode)) return;
+      state.tripDateMode = button.dataset.mode; updatePageContent();
+    }
+    else if (action === "trip-period-shift") {
+      if (state.tripDateMode === "all") state.tripDateMode = "day";
+      state.tripPeriodAnchor = shiftFinanceAnchor(state.tripPeriodAnchor, state.tripDateMode, Number(button.dataset.step));
+      updatePageContent();
+    }
     else if (action === "calendar-month") { state.tripCalendarMonth = new Date(state.tripCalendarMonth.getFullYear(), state.tripCalendarMonth.getMonth() + Number(button.dataset.step), 1); updatePageContent(); }
     else if (action === "flight-toggle") {
       if (state.expandedFlights.has(button.dataset.id)) state.expandedFlights.delete(button.dataset.id);

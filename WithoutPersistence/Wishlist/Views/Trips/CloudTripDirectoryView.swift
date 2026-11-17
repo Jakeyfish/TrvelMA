@@ -156,7 +156,8 @@ private struct CloudTripScheduleView: View {
     @State private var selectedFilter: TripListFilter = .all
     @State private var selectedDate: Date?
     @AppStorage("tripList.selectedDateTimestamp") private var selectedDateTimestamp = Date.now.timeIntervalSince1970
-    @State private var dateMode: TripDateMode = .sevenDays
+    @State private var dateMode: TripDateMode = .all
+    @State private var periodAnchor = Calendar.current.startOfDay(for: Date.now)
     @State private var isShowingAllDates = true
     @State private var completionTrip: CloudOnlineRepository.CloudTripRecord?
     @State private var pendingCompletionTrip: CloudOnlineRepository.CloudTripRecord?
@@ -171,7 +172,7 @@ private struct CloudTripScheduleView: View {
         let trips = showsDateControls
             ? directory.trips
             : directory.trips.filter { !$0.isCancelled && !$0.isCompleted && calendar.startOfDay(for: $0.appointmentDate.cloudDate) >= calendar.startOfDay(for: .now) }
-        return Array(Set(trips.map { calendar.startOfDay(for: $0.appointmentDate.cloudDate) })).sorted()
+        return Array(Set(trips.map { calendar.startOfDay(for: $0.appointmentDate.cloudDate) } + (showsDateControls ? [calendar.startOfDay(for: .now), calendar.startOfDay(for: periodAnchor)] : []))).sorted()
     }
 
     private var visibleTrips: [CloudOnlineRepository.CloudTripRecord] {
@@ -194,8 +195,8 @@ private struct CloudTripScheduleView: View {
             guard matchesStatus else { return false }
             if !showsDateControls, !isShowingAllDates,
                let selectedDate, !calendar.isDate(date, inSameDayAs: selectedDate) { return false }
-            if showsDateControls, let selectedDate,
-               !calendar.isDate(date, inSameDayAs: selectedDate) { return false }
+            if showsDateControls,
+               !dateMode.includes(date, anchor: periodAnchor, calendar: calendar) { return false }
             guard !query.isEmpty else { return true }
             return [trip.customerName, trip.customerContact, trip.serviceType, trip.locationStart,
                     trip.stops.map(\.address).joined(separator: " "), trip.locationEnd, trip.flightInfo,
@@ -222,36 +223,8 @@ private struct CloudTripScheduleView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
             if showsDateControls {
-                HStack(spacing: 5) {
-                    ForEach(TripDateMode.allCases) { mode in
-                        Button { dateMode = mode } label: {
-                            Text(LocalizedStringKey(mode.title))
-                                .font(.subheadline.weight(.semibold))
-                                .foregroundStyle(dateMode == mode ? Color.accentColor : Color.secondary)
-                                .frame(maxWidth: .infinity, minHeight: 36)
-                                .background(dateMode == mode ? Color.accentColor.opacity(0.10) : Color.clear, in: RoundedRectangle(cornerRadius: 10))
-                        }.buttonStyle(.plain)
-                    }
-                }
-                .padding(4)
-                .background(Color(.secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 14))
+                TripPeriodSelector(period: $dateMode, anchor: $periodAnchor)
             }
-
-            if showsDateControls && dateMode == .month {
-                DatePicker("选择日期", selection: Binding(
-                    get: { selectedDate ?? dateNavigationAnchor },
-                    set: {
-                        let day = Calendar.current.startOfDay(for: $0)
-                        selectedDate = day
-                        selectedDateTimestamp = day.timeIntervalSince1970
-                    }
-                ), displayedComponents: .date)
-                    .datePickerStyle(.graphical)
-                    .tint(.accentColor)
-                    .padding(8)
-                    .background(Color(.secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 16))
-            }
-
             dateNavigationStrip
 
             HStack(spacing: 10) {
@@ -272,7 +245,10 @@ private struct CloudTripScheduleView: View {
             if showsDateControls {
                 HStack(spacing: 7) {
                     ForEach(TripListFilter.allCases) { filter in
-                        Button { selectedFilter = filter; selectedDate = nil } label: {
+                        Button {
+                            selectedFilter = filter
+                            if filter == .all { dateMode = .all; periodAnchor = Calendar.current.startOfDay(for: .now) }
+                        } label: {
                             Text(LocalizedStringKey(filter.title))
                                 .font(.system(size: 12, weight: .semibold))
                                 .foregroundStyle(selectedFilter == filter ? Color.accentColor : Color.secondary)
@@ -389,20 +365,31 @@ private struct CloudTripScheduleView: View {
     }
 
     private var dateNavigationStrip: some View {
-        ScrollView(.horizontal) {
-            HStack(spacing: 8) {
-                allTripsButton
-                ForEach(datesWithTrips, id: \.self) { date in
-                    dateButton(for: date)
+        ScrollViewReader { proxy in
+            ScrollView(.horizontal) {
+                HStack(spacing: 8) {
+                    if !showsDateControls { allTripsButton }
+                    ForEach(datesWithTrips, id: \.self) { day in
+                        dateButton(for: day).id(day)
+                    }
                 }
             }
+            .scrollIndicators(.hidden)
+            .onAppear {
+                if showsDateControls { proxy.scrollTo(Calendar.current.startOfDay(for: .now), anchor: .leading) }
+            }
+            .onChange(of: periodAnchor) { _, day in
+                if showsDateControls { proxy.scrollTo(Calendar.current.startOfDay(for: day), anchor: .leading) }
+            }
+            .onChange(of: datesWithTrips) { _, _ in
+                if showsDateControls { proxy.scrollTo(Calendar.current.startOfDay(for: periodAnchor), anchor: .leading) }
+            }
         }
-        .scrollIndicators(.hidden)
     }
 
     private func dateButton(for date: Date) -> some View {
         let selected = showsDateControls
-            ? selectedDate.map { Calendar.current.isDate(date, inSameDayAs: $0) } ?? false
+            ? dateMode == .day && Calendar.current.isDate(date, inSameDayAs: periodAnchor)
             : !isShowingAllDates && selectedDate.map { Calendar.current.isDate(date, inSameDayAs: $0) } == true
         let title = Calendar.current.isDateInToday(date)
             ? String(localized: "今天", locale: locale)
@@ -417,6 +404,7 @@ private struct CloudTripScheduleView: View {
             isShowingAllDates = false
             selectedDate = day
             selectedDateTimestamp = day.timeIntervalSince1970
+            if showsDateControls { dateMode = .day; periodAnchor = day }
         } label: {
             VStack(spacing: 3) {
                 Text(title).font(.system(size: 11, weight: .medium)).lineLimit(1).minimumScaleFactor(0.7)

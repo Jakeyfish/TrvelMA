@@ -4753,3 +4753,58 @@ final class ExpiredArchiveRefreshRegressionTests: XCTestCase {
         XCTAssertTrue(state.snapshot.isEmpty); XCTAssertFalse(state.canExport)
     }
 }
+
+final class TripPeriodFilteringTests: XCTestCase {
+    func testQuickOptionsDoNotDuplicateExistingAllEntry() {
+        XCTAssertEqual(TripDateMode.quickOptions, [.day, .week, .month, .year])
+        XCTAssertFalse(TripDateMode.quickOptions.contains(.all))
+    }
+
+    func testAllDoesNotRestrictTheListToItsTodayAnchor() {
+        let anchor = date(2026, 11, 16)
+        XCTAssertTrue(TripDateMode.all.includes(date(2025, 1, 1), anchor: anchor, calendar: calendar))
+        XCTAssertTrue(TripDateMode.all.includes(date(2027, 12, 31), anchor: anchor, calendar: calendar))
+        XCTAssertEqual(TripDateMode.all.component, .day)
+    }
+
+    private var calendar: Calendar {
+        var value = Calendar(identifier: .gregorian)
+        value.timeZone = TimeZone(identifier: "America/Los_Angeles")!
+        return value
+    }
+    private func date(_ year: Int, _ month: Int, _ day: Int, _ hour: Int = 12) -> Date {
+        calendar.date(from: DateComponents(year: year, month: month, day: day, hour: hour))!
+    }
+    func testDayUsesLocalCalendarAndExclusiveEnd() {
+        let anchor = date(2026, 11, 16)
+        XCTAssertTrue(TripDateMode.day.includes(date(2026, 11, 16, 0), anchor: anchor, calendar: calendar))
+        XCTAssertFalse(TripDateMode.day.includes(date(2026, 11, 15, 23), anchor: anchor, calendar: calendar))
+        XCTAssertFalse(TripDateMode.day.includes(date(2026, 11, 17, 0), anchor: anchor, calendar: calendar))
+    }
+    func testSundayStillBelongsToMondayWeekAcrossYearBoundary() {
+        let anchor = date(2027, 1, 3)
+        let range = TripDateMode.week.interval(anchor: anchor, calendar: calendar)
+        XCTAssertEqual(range.start, date(2026, 12, 28, 0))
+        XCTAssertEqual(range.end, date(2027, 1, 4, 0))
+        XCTAssertTrue(TripDateMode.week.includes(anchor, anchor: anchor, calendar: calendar))
+        XCTAssertFalse(TripDateMode.week.includes(range.end, anchor: anchor, calendar: calendar))
+    }
+    func testMonthIncludesLeapDayButNotNextMonth() {
+        let anchor = date(2028, 2, 15)
+        XCTAssertTrue(TripDateMode.month.includes(date(2028, 2, 29), anchor: anchor, calendar: calendar))
+        XCTAssertFalse(TripDateMode.month.includes(date(2028, 3, 1, 0), anchor: anchor, calendar: calendar))
+    }
+    func testYearAndStatusIndependentRangeDoesNotIncludeNextYear() {
+        let anchor = date(2026, 11, 16)
+        XCTAssertTrue(TripDateMode.year.includes(date(2026, 1, 1, 0), anchor: anchor, calendar: calendar))
+        XCTAssertTrue(TripDateMode.year.includes(date(2026, 12, 31, 23), anchor: anchor, calendar: calendar))
+        XCTAssertFalse(TripDateMode.year.includes(date(2027, 1, 1, 0), anchor: anchor, calendar: calendar))
+    }
+    func testDSTAndMonthNavigationUseCalendarNotFixedSeconds() {
+        let anchor = date(2026, 3, 8)
+        XCTAssertEqual(TripDateMode.day.interval(anchor: anchor, calendar: calendar).duration, 23 * 3600)
+        let fall = date(2026, 11, 1)
+        XCTAssertEqual(TripDateMode.day.interval(anchor: fall, calendar: calendar).duration, 25 * 3600)
+        XCTAssertEqual(TripDateMode.month.shifted(date(2028, 1, 31), by: 1, calendar: calendar), date(2028, 2, 29))
+    }
+}
