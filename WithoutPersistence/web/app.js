@@ -1,13 +1,13 @@
-import { statementPDF } from "./statement-pdf.mjs?v=20261116-card-polish-v1";
-import { localized } from "./localization.mjs?v=20261116-card-polish-v1";
+import { statementPDF } from "./statement-pdf.mjs?v=20261117-customer-net-v1";
+import { localized } from "./localization.mjs?v=20261117-customer-net-v1";
 const uiLanguage = () => normalizedLanguageCode((state.archiveMode ? state.archiveData?.user_settings?.[0]?.language_code : null) || state.settings?.language_code || readInterfaceLanguage());
 const ui = (key, ...args) => localized(key, uiLanguage(), ...args);
-import { flightDisplayName, flightStatusLabel, safeNavigationURL, telephoneNumber, tripTelephoneContacts, financialCategoryGroups, statementMoney, agencyStatementTrips, statementAgencyKey, buildAgencyStatement, pickupReminders, recognizePickup, matchPickupAgency, partsInZone, zonedISO, parseFlights, flightID, makeFlightSnapshot, readFlightSnapshot, routeMatches, compareTrips, settlementPayload } from './parity.mjs?v=20261116-card-polish-v1';
+import { flightDisplayName, flightStatusLabel, safeNavigationURL, telephoneNumber, tripTelephoneContacts, financialCategoryGroups, statementMoney, agencyStatementTrips, statementAgencyKey, buildAgencyStatement, pickupReminders, recognizePickup, matchPickupAgency, partsInZone, zonedISO, parseFlights, flightID, makeFlightSnapshot, readFlightSnapshot, routeMatches, compareTrips, settlementPayload } from './parity.mjs?v=20261117-customer-net-v1';
 let airportCrosswalk = [];
 const airportCrosswalkReady = fetch('./assets/airport-crosswalk.json').then(r => { if (!r.ok) throw Error('机场对照表不可用'); return r.json(); }).then(data => { airportCrosswalk = data.airports; }).catch(() => {});
 const SUPABASE_URL = "https://lbdfqzeiweqbsklklcqr.supabase.co";
 const SUPABASE_PUBLISHABLE_KEY = "sb_publishable_d4tmuPirsf8-wUDO0Frd7w_PcXME6rs";
-const WEB_BUILD = "20261116-card-polish-v1";
+const WEB_BUILD = "20261117-customer-net-v1";
 const SESSION_KEY = "yunsheng.web.session.v1";
 const OFFLINE_CACHE_PREFIX = "yunsheng.web.offline-cache.v1.";
 const OFFLINE_QUEUE_PREFIX = "yunsheng.web.offline-queue.v1.";
@@ -1245,7 +1245,7 @@ function openCustomerDetail(customer) {
     return `<div class="detail-record"><div><strong>${escapeHTML(kind)}${item.is_default ? ' <small class="pill accent">默认</small>' : ""}</strong><span>${escapeHTML(value)}</span></div>${quickActions}</div>`;
   }).join("") || (customer.email ? `<div class="detail-record"><div><strong>邮箱${contacts.length ? "" : ' <small class="pill accent">默认</small>'}</strong><span>${escapeHTML(customer.email)}</span></div><nav class="contact-quick-actions"><a class="button small" href="mailto:${escapeHTML(customer.email)}">发邮件</a></nav></div>` : '<p class="empty-hint">暂无联系方式</p>');
   const addressHTML = addresses.map(item => '<div class="detail-record"><div><strong>' + escapeHTML(item.label || "常用地址") + (item.is_default ? ' <small class="pill accent">默认</small>' : '') + '</strong><span>' + escapeHTML(item.address) + '</span></div><button class="button small" data-action="navigate-saved-address" data-address="' + escapeHTML(item.address) + '">使用默认导航</button></div>').join("") || '<p class="empty-hint">暂无常用地址</p>';
-  const tripHTML = related.map(trip => '<button class="customer-history-row" data-action="view-trip" data-id="' + trip.id + '"><span><small>出行日期</small><strong>' + dateOnly(trip.appointment_date) + '</strong></span><span><small>目的地</small><strong>' + escapeHTML(trip.location_end || "—") + '</strong></span><span><small>车费</small><strong>' + currency(trip.price) + '</strong></span></button>').join("") || '<p class="empty-hint">暂无出行记录</p>';
+  const tripHTML = related.map(trip => '<button class="customer-history-row" data-action="view-trip" data-id="' + trip.id + '"><span><small>出行日期</small><strong>' + dateOnly(trip.appointment_date) + '</strong></span><span><small>目的地</small><strong>' + escapeHTML(trip.location_end || "—") + '</strong></span><span><small>净收入</small><strong>' + currency(netIncome(trip)) + '</strong></span></button>').join("") || '<p class="empty-hint">暂无出行记录</p>';
   const agencyInfo = Number(customer.category) === 2 ? `<section class="form-section"><div class="form-section-title"><div><h3>旅行社信息</h3></div></div><div class="detail-grid"><div><small>旅行社代码</small><strong>${escapeHTML(customer.travel_agency_code || "未选择")}</strong></div><div><small>旅行社名称</small><strong>${escapeHTML(customer.travel_agency_name || "未选择")}</strong></div></div></section>` : "";
   const remark = customer.remark ? `<section class="form-section"><div class="form-section-title"><div><h3>备注</h3></div></div><p class="trip-memo">${escapeHTML(customer.remark)}</p></section>` : "";
   showModal("客户资料", '<section class="customer-detail-hero"><div class="customer-initial">' + escapeHTML((customer.name || "?").slice(0, 1)) + '</div><div><h3>' + escapeHTML(customer.name) + '</h3><small>' + (Number(customer.category) === 2 ? "旅行社" : "普通客户") + ' · ' + escapeHTML(languageName(customer.language_preference)) + '</small></div></section>' + agencyInfo +

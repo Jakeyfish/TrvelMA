@@ -639,7 +639,7 @@ private struct CustomerTripRecordRow: View {
                 .frame(maxWidth: .infinity, alignment: .leading)
             valueColumn("目的地", value: booking.locationEnd.isEmpty ? "未填写" : booking.locationEnd)
                 .frame(maxWidth: .infinity, alignment: .leading)
-            valueColumn("车费", value: BaseCurrencyCatalog.format(booking.price, countryCode: currencyCountry))
+            valueColumn("净收入", value: BaseCurrencyCatalog.format(booking.price + booking.tip + booking.expenseAdjustments.reduce(0) { $0 + ($1.isAddition ? abs($1.amount) : -abs($1.amount)) }, countryCode: currencyCountry))
                 .frame(maxWidth: .infinity, alignment: .trailing)
         }
         .padding(.vertical, 3)
@@ -647,8 +647,8 @@ private struct CustomerTripRecordRow: View {
     }
 
     private func valueColumn(_ title: String, value: String) -> some View {
-        VStack(alignment: title == "车费" ? .trailing : .leading, spacing: 4) {
-            Text(title)
+        VStack(alignment: title == "净收入" ? .trailing : .leading, spacing: 4) {
+            Text(LocalizedStringKey(title))
                 .font(.system(size: 11, weight: .medium))
                 .foregroundStyle(.secondary)
             Text(value)

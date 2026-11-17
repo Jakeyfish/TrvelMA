@@ -822,3 +822,9 @@ test('card PNG export wraps full email and never draws registered name',async()=
  assert.ok(drawn.join('').includes('very.long.complete.email.address.for.wrapping@example.com'));
  assert.ok(c.canvas.height>=670);
 });
+
+test('customer history rows show net income including tips and both expense directions',()=>{
+ const c=boot();vm.runInContext(`state.customers=[{id:'qa',name:'QA'}];state.trips=[{id:'net',customer_id:'qa',customer_name:'QA',appointment_date:'2026-11-17',appointment_time:'2026-11-17T12:00:00Z',price:100,tip:20,expenses:[{is_addition:true,amount:10},{is_addition:false,amount:25}]}];showModal=(title,html)=>{globalThis.customerHTML=html;};openCustomerDetail(state.customers[0]);`,c);
+ assert.match(c.customerHTML,/<small>净收入<\/small><strong>[^<]*105\.00/);
+ assert.doesNotMatch(c.customerHTML,/<small>车费<\/small>/);
+});

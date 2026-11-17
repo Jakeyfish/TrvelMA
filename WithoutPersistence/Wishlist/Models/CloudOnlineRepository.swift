@@ -89,6 +89,11 @@ enum CloudOnlineRepository {
         let isCancelled: Bool
         let currencyCode: String
 
+        var expenses: [TripExpenseRecord] = []
+        var netIncome: Double {
+            price + tip + expenses.reduce(0) { $0 + ($1.isAddition ? abs($1.amount) : -abs($1.amount)) }
+        }
+
         var contribution: Double { price + tip }
 
         enum CodingKeys: String, CodingKey {
@@ -492,8 +497,14 @@ enum CloudOnlineRepository {
             var request = URLRequest(url: SupabaseAuthClient.endpoint(path: "/rest/v1/trips", queryItems: query))
             request.httpMethod = "GET"
             setAuthHeaders(on: &request, accessToken: accessToken)
-            let data = try await perform(request, table: .trips)
-            return try JSONDecoder().decode([CustomerTripRecord].self, from: data)
+            let tripRequest = request
+            async let data = perform(tripRequest, table: .trips)
+            async let expenseData = fetchRows(.tripExpenses, ownerID: verifiedAccount.id, accessToken: accessToken)
+            var trips = try JSONDecoder().decode([CustomerTripRecord].self, from: await data)
+            let expenses = try JSONDecoder().decode([TripExpenseRecord].self, from: await expenseData)
+            let byTrip = Dictionary(grouping: expenses, by: \.tripID)
+            for index in trips.indices { trips[index].expenses = byTrip[trips[index].id] ?? [] }
+            return trips
         }
     }
 

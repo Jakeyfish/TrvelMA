@@ -296,7 +296,7 @@ private struct CloudCustomerDetailView: View {
                 .frame(maxWidth: .infinity, alignment: .leading)
             customerTripValue("目的地", value: trip.locationEnd.isEmpty ? "未填写" : trip.locationEnd)
                 .frame(maxWidth: .infinity, alignment: .leading)
-            customerTripValue("车费", value: formatCustomerCurrency(trip.price, code: directory.currencyCode))
+            customerTripValue("净收入", value: formatCustomerCurrency(trip.netIncome, code: directory.currencyCode))
                 .frame(maxWidth: .infinity, alignment: .trailing)
         }.padding(.vertical, 3).font(.system(size: 11))
     }
@@ -330,7 +330,7 @@ private struct CloudCustomerDetailView: View {
     }
 
     private func customerTripValue(_ title: String, value: String) -> some View {
-        VStack(alignment: title == "车费" ? .trailing : .leading, spacing: 4) {
+        VStack(alignment: title == "净收入" ? .trailing : .leading, spacing: 4) {
             Text(LocalizedStringKey(title)).font(.system(size: 11, weight: .medium)).foregroundStyle(.secondary)
             Text(value).font(.system(size: 11, weight: .medium)).foregroundStyle(.primary).lineLimit(2).fixedSize(horizontal: false, vertical: true)
         }

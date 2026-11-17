@@ -5014,3 +5014,50 @@ final class BusinessCardExportRenderingTests: XCTestCase {
         }
     }
 }
+
+final class CustomerHistoryNetIncomeTests: XCTestCase {
+    func testHistoryNetIncludesTipAdditionsAndDeductions() {
+        var trip = CloudOnlineRepository.CustomerTripRecord(id: "t", customerID: "c", customerName: "QA", serviceType: "接机", appointmentDate: "2026-11-17", locationEnd: "QA", price: 100, tip: 20, isPaid: false, isCompleted: false, isCancelled: false, currencyCode: "USD")
+        trip.expenses = [
+            .init(id: "a", tripID: "t", position: 0, isAddition: true, title: "Extra", amount: -10),
+            .init(id: "d", tripID: "t", position: 1, isAddition: false, title: "Parking", amount: -25)
+        ]
+        XCTAssertEqual(trip.netIncome, 105)
+        trip.expenses = [.init(id: "d", tripID: "t", position: 0, isAddition: false, title: "Cost", amount: 150)]
+        XCTAssertEqual(trip.netIncome, -30)
+    }
+}
+
+final class CustomerHistoryExpenseLoadingTests: XCTestCase {
+    @MainActor func testHistoryAttachesOnlyItsTripExpensesAndPropagatesExpenseFailure() async throws {
+        let owner = "00000000-0000-0000-0000-000000000001"
+        let customer = "00000000-0000-0000-0000-000000000002"
+        let email = "history-net@example.invalid"
+        let oldScope = DataOwnership.activeScope
+        DataOwnership.activateCloud(email: email)
+        XCTAssertTrue(URLProtocol.registerClass(SyncFixtureProtocol.self))
+        var failExpenses = false
+        SyncFixtureProtocol.handle = { fixture in
+            let path = fixture.request.url!.path
+            if path == "/auth/v1/user" { fixture.respond("{\"id\":\"\(owner)\",\"email\":\"\(email)\"}"); return }
+            let query = URLComponents(url: fixture.request.url!, resolvingAgainstBaseURL: false)!.queryItems ?? []
+            XCTAssertEqual(query.first { $0.name == "owner_id" }?.value, "eq.\(owner)")
+            XCTAssertEqual(query.first { $0.name == "deleted_at" }?.value, "is.null")
+            if path.hasSuffix("trip_expenses") {
+                if failExpenses { fixture.respond("{\"message\":\"fixture failure\"}", status: 500); return }
+                fixture.respond("[{\"id\":\"e\",\"trip_id\":\"t\",\"position\":0,\"is_addition\":false,\"title\":\"Cost\",\"amount\":25},{\"id\":\"other\",\"trip_id\":\"other\",\"position\":0,\"is_addition\":false,\"title\":\"Other\",\"amount\":999}]")
+            } else {
+                XCTAssertEqual(query.first { $0.name == "customer_id" }?.value, "eq.\(customer)")
+                fixture.respond("[{\"id\":\"t\",\"customer_id\":\"\(customer)\",\"customer_name\":\"QA\",\"service_type\":\"接机\",\"appointment_date\":\"2026-11-17\",\"location_end\":\"QA\",\"price\":100,\"tip\":20,\"is_paid\":false,\"is_completed\":false,\"is_cancelled\":false,\"currency_code\":\"USD\"}]")
+            }
+        }
+        defer { SyncFixtureProtocol.handle = nil; URLProtocol.unregisterClass(SyncFixtureProtocol.self); DataOwnership.activateLocal(scope: oldScope) }
+        let account = CloudOnlineRepository.Account(id: owner, email: email)
+        let trips = try await CloudOnlineRepository.fetchCustomerTrips(customerID: customer, account: account, accessToken: "fixture-only")
+        XCTAssertEqual(trips.first?.netIncome, 95)
+        XCTAssertEqual(trips.first?.expenses.count, 1)
+        failExpenses = true
+        do { _ = try await CloudOnlineRepository.fetchCustomerTrips(customerID: customer, account: account, accessToken: "fixture-only"); XCTFail("Cannot display fare as net when expenses fail") }
+        catch { }
+    }
+}
