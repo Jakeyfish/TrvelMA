@@ -12,6 +12,8 @@ languages=['zh-Hans','zh-Hant','en','es','ja','ko']
 files=['Views/Settings/PrivacyPolicyView.swift','Views/Login/CloudAccountDeletionView.swift','Views/Login/ExpiredAccountArchiveView.swift','Views/Purchases/PurchasePlansView.swift','Models/StorePurchaseManager.swift','Views/Wallet/AgencyStatementExport.swift','Views/Wallet/AgencyStatementView.swift']
 keys=set()
 files.append('Views/Trips/TripPeriodSelector.swift')
+files.append('Views/Settings/AppSettingsView.swift')
+keys.add("请先在设置的“合作旅行社”中添加旅行社。")
 for name in files:
  for text in re.findall(r'"([^"\n]*[\u4e00-\u9fff][^"\n]*)"',(root/name).read_text()):
   # Interpolated business strings, separators and comments are not catalog lookup keys.

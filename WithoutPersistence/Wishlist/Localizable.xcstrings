@@ -1,6 +1,457 @@
 {
   "sourceLanguage" : "zh-Hans",
   "strings" : {
+  "此操作将删除此设备上的全部账户及相关本地资料，并清空登录状态和本地缓存。删除后无法恢复。本地账号的删除不影响其他云端账号。": {
+  "extractionState": "manual",
+  "localizations": {
+    "zh-Hans": {
+      "stringUnit": {
+        "state": "translated",
+        "value": "此操作将删除此设备上的全部账户及相关本地资料，并清空登录状态和本地缓存。删除后无法恢复。本地账号的删除不影响其他云端账号。"
+      }
+    },
+    "zh-Hant": {
+      "stringUnit": {
+        "state": "translated",
+        "value": "此操作將刪除此裝置上的所有帳號及相關本機資料，並清除登入狀態與本機快取。刪除後無法復原。刪除本機帳號不影響其他雲端帳號。"
+      }
+    },
+    "en": {
+      "stringUnit": {
+        "state": "translated",
+        "value": "This deletes all accounts and their local data on this device, and clears sign-in state and local caches. Deletion cannot be undone. Deleting local accounts does not affect other cloud accounts."
+      }
+    },
+    "es": {
+      "stringUnit": {
+        "state": "translated",
+        "value": "Se eliminarán todas las cuentas y sus datos locales de este dispositivo, así como la sesión y las cachés locales. No se puede deshacer. Las demás cuentas en la nube no se verán afectadas."
+      }
+    },
+    "ja": {
+      "stringUnit": {
+        "state": "translated",
+        "value": "この端末のすべてのアカウントと関連するローカルデータを削除し、ログイン状態とキャッシュを消去します。元に戻せません。ローカルアカウントの削除は他のクラウドアカウントに影響しません。"
+      }
+    },
+    "ko": {
+      "stringUnit": {
+        "state": "translated",
+        "value": "이 기기의 모든 계정과 관련 로컬 데이터를 삭제하고 로그인 상태와 캐시를 지웁니다. 삭제는 되돌릴 수 없습니다. 로컬 계정 삭제는 다른 클라우드 계정에 영향을 주지 않습니다."
+      }
+    }
+  }
+},
+  "请先在设置的“合作旅行社”中添加旅行社。": {
+  "extractionState": "manual",
+  "localizations": {
+    "zh-Hans": {
+      "stringUnit": {
+        "state": "translated",
+        "value": "请先在设置的“合作旅行社”中添加旅行社。"
+      }
+    },
+    "zh-Hant": {
+      "stringUnit": {
+        "state": "translated",
+        "value": "請先在設定的「合作旅行社」中新增旅行社。"
+      }
+    },
+    "en": {
+      "stringUnit": {
+        "state": "translated",
+        "value": "Add an agency under Cooperative agencies in Settings first."
+      }
+    },
+    "es": {
+      "stringUnit": {
+        "state": "translated",
+        "value": "Primero añade una agencia en Agencias colaboradoras, en Ajustes."
+      }
+    },
+    "ja": {
+      "stringUnit": {
+        "state": "translated",
+        "value": "設定の「提携旅行会社」で旅行会社を追加してください。"
+      }
+    },
+    "ko": {
+      "stringUnit": {
+        "state": "translated",
+        "value": "설정의 제휴 여행사에서 여행사를 먼저 추가하세요."
+      }
+    }
+  }
+},
+  "更改本位币不会自动换算已保存的金额。": {
+  "extractionState": "manual",
+  "localizations": {
+    "zh-Hans": {
+      "stringUnit": {
+        "state": "translated",
+        "value": "更改本位币不会自动换算已保存的金额。"
+      }
+    },
+    "zh-Hant": {
+      "stringUnit": {
+        "state": "translated",
+        "value": "變更本位幣不會自動換算已儲存的金額。"
+      }
+    },
+    "en": {
+      "stringUnit": {
+        "state": "translated",
+        "value": "Changing the base currency does not convert saved amounts."
+      }
+    },
+    "es": {
+      "stringUnit": {
+        "state": "translated",
+        "value": "Cambiar la moneda base no convierte los importes guardados."
+      }
+    },
+    "ja": {
+      "stringUnit": {
+        "state": "translated",
+        "value": "基準通貨を変更しても保存済みの金額は換算されません。"
+      }
+    },
+    "ko": {
+      "stringUnit": {
+        "state": "translated",
+        "value": "기준 통화를 변경해도 저장된 금액은 환산되지 않습니다."
+      }
+    }
+  }
+},
+  "账号与数据安全": {
+  "extractionState": "manual",
+  "localizations": {
+    "zh-Hans": {
+      "stringUnit": {
+        "state": "translated",
+        "value": "账号与数据安全"
+      }
+    },
+    "zh-Hant": {
+      "stringUnit": {
+        "state": "translated",
+        "value": "帳號與資料安全"
+      }
+    },
+    "en": {
+      "stringUnit": {
+        "state": "translated",
+        "value": "Account & data security"
+      }
+    },
+    "es": {
+      "stringUnit": {
+        "state": "translated",
+        "value": "Seguridad de cuenta y datos"
+      }
+    },
+    "ja": {
+      "stringUnit": {
+        "state": "translated",
+        "value": "アカウントとデータの安全"
+      }
+    },
+    "ko": {
+      "stringUnit": {
+        "state": "translated",
+        "value": "계정 및 데이터 보안"
+      }
+    }
+  }
+},
+  "航班查询": {
+  "extractionState": "manual",
+  "localizations": {
+    "zh-Hans": {
+      "stringUnit": {
+        "state": "translated",
+        "value": "航班查询"
+      }
+    },
+    "zh-Hant": {
+      "stringUnit": {
+        "state": "translated",
+        "value": "航班查詢"
+      }
+    },
+    "en": {
+      "stringUnit": {
+        "state": "translated",
+        "value": "Flight lookup"
+      }
+    },
+    "es": {
+      "stringUnit": {
+        "state": "translated",
+        "value": "Consultar vuelos"
+      }
+    },
+    "ja": {
+      "stringUnit": {
+        "state": "translated",
+        "value": "フライト検索"
+      }
+    },
+    "ko": {
+      "stringUnit": {
+        "state": "translated",
+        "value": "항공편 조회"
+      }
+    }
+  }
+},
+  "联系支持": {
+  "extractionState": "manual",
+  "localizations": {
+    "zh-Hans": {
+      "stringUnit": {
+        "state": "translated",
+        "value": "联系支持"
+      }
+    },
+    "zh-Hant": {
+      "stringUnit": {
+        "state": "translated",
+        "value": "聯絡支援"
+      }
+    },
+    "en": {
+      "stringUnit": {
+        "state": "translated",
+        "value": "Contact support"
+      }
+    },
+    "es": {
+      "stringUnit": {
+        "state": "translated",
+        "value": "Contactar con soporte"
+      }
+    },
+    "ja": {
+      "stringUnit": {
+        "state": "translated",
+        "value": "サポートに連絡"
+      }
+    },
+    "ko": {
+      "stringUnit": {
+        "state": "translated",
+        "value": "지원 문의"
+      }
+    }
+  }
+},
+  "数据同步": {
+  "extractionState": "manual",
+  "localizations": {
+    "zh-Hans": {
+      "stringUnit": {
+        "state": "translated",
+        "value": "数据同步"
+      }
+    },
+    "zh-Hant": {
+      "stringUnit": {
+        "state": "translated",
+        "value": "資料同步"
+      }
+    },
+    "en": {
+      "stringUnit": {
+        "state": "translated",
+        "value": "Data sync"
+      }
+    },
+    "es": {
+      "stringUnit": {
+        "state": "translated",
+        "value": "Sincronización"
+      }
+    },
+    "ja": {
+      "stringUnit": {
+        "state": "translated",
+        "value": "データ同期"
+      }
+    },
+    "ko": {
+      "stringUnit": {
+        "state": "translated",
+        "value": "데이터 동기화"
+      }
+    }
+  }
+},
+  "帮助与关于": {
+  "extractionState": "manual",
+  "localizations": {
+    "zh-Hans": {
+      "stringUnit": {
+        "state": "translated",
+        "value": "帮助与关于"
+      }
+    },
+    "zh-Hant": {
+      "stringUnit": {
+        "state": "translated",
+        "value": "說明與關於"
+      }
+    },
+    "en": {
+      "stringUnit": {
+        "state": "translated",
+        "value": "Help & about"
+      }
+    },
+    "es": {
+      "stringUnit": {
+        "state": "translated",
+        "value": "Ayuda e información"
+      }
+    },
+    "ja": {
+      "stringUnit": {
+        "state": "translated",
+        "value": "ヘルプと情報"
+      }
+    },
+    "ko": {
+      "stringUnit": {
+        "state": "translated",
+        "value": "도움말 및 정보"
+      }
+    }
+  }
+},
+  "个人资料": {
+  "extractionState": "manual",
+  "localizations": {
+    "zh-Hans": {
+      "stringUnit": {
+        "state": "translated",
+        "value": "个人资料"
+      }
+    },
+    "zh-Hant": {
+      "stringUnit": {
+        "state": "translated",
+        "value": "個人資料"
+      }
+    },
+    "en": {
+      "stringUnit": {
+        "state": "translated",
+        "value": "Profile"
+      }
+    },
+    "es": {
+      "stringUnit": {
+        "state": "translated",
+        "value": "Perfil"
+      }
+    },
+    "ja": {
+      "stringUnit": {
+        "state": "translated",
+        "value": "プロフィール"
+      }
+    },
+    "ko": {
+      "stringUnit": {
+        "state": "translated",
+        "value": "개인 정보"
+      }
+    }
+  }
+},
+  "业务与服务": {
+  "extractionState": "manual",
+  "localizations": {
+    "zh-Hans": {
+      "stringUnit": {
+        "state": "translated",
+        "value": "业务与服务"
+      }
+    },
+    "zh-Hant": {
+      "stringUnit": {
+        "state": "translated",
+        "value": "業務與服務"
+      }
+    },
+    "en": {
+      "stringUnit": {
+        "state": "translated",
+        "value": "Business & services"
+      }
+    },
+    "es": {
+      "stringUnit": {
+        "state": "translated",
+        "value": "Gestión y servicios"
+      }
+    },
+    "ja": {
+      "stringUnit": {
+        "state": "translated",
+        "value": "業務とサービス"
+      }
+    },
+    "ko": {
+      "stringUnit": {
+        "state": "translated",
+        "value": "업무 및 서비스"
+      }
+    }
+  }
+},
+  "常用偏好": {
+  "extractionState": "manual",
+  "localizations": {
+    "zh-Hans": {
+      "stringUnit": {
+        "state": "translated",
+        "value": "常用偏好"
+      }
+    },
+    "zh-Hant": {
+      "stringUnit": {
+        "state": "translated",
+        "value": "常用偏好"
+      }
+    },
+    "en": {
+      "stringUnit": {
+        "state": "translated",
+        "value": "Preferences"
+      }
+    },
+    "es": {
+      "stringUnit": {
+        "state": "translated",
+        "value": "Preferencias"
+      }
+    },
+    "ja": {
+      "stringUnit": {
+        "state": "translated",
+        "value": "よく使う設定"
+      }
+    },
+    "ko": {
+      "stringUnit": {
+        "state": "translated",
+        "value": "자주 쓰는 설정"
+      }
+    }
+  }
+},
   "出发航站楼": {
     "extractionState": "manual",
     "localizations": {

@@ -24,28 +24,12 @@ struct WishlistView: View {
 
     /// Indicates whether the sheet to add a trip is being presented.
     @State private var isPresentingAddTrip = false
-    @State private var isPresentingLanguageSettings = false
-    @State private var isPresentingNavigationSettings = false
-    @State private var isPresentingBaseCurrencySettings = false
-    @State private var isPresentingFlightSettings = false
-    @State private var isPresentingCloudSyncSettings = false
-    @State private var isPresentingExpenseItems = false
-    @State private var isPresentingPrivacyPolicy = false
-    @State private var isPresentingBuildInformation = false
-    @State private var isPresentingCooperativeAgencies = false
+    @State private var isPresentingSettings = false
     @State private var isPerson = false
-    @State private var showingCloudDeletion = false
-    @State private var accountDeletionAlert: AccountDeletionAlert?
+    @State private var pendingPurchasePlans = false
 
     /// The namespace used for coordinating a navigation transition.
     @Namespace private var namespace
-
-    private var appBuildInformation: String {
-        let version = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "—"
-        let build = Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String ?? "—"
-        let locale = AppLanguageSettings.currentLocale
-        return "\(String(localized: "App 版本", locale: locale))：\(version)\n\(String(localized: "构建号", locale: locale))：\(build)"
-    }
 
     private var accountEmailWidth: CGFloat {
         min(max(CGFloat(auth.currentEmail.count) * 6.2 + 16, 122), 205)
@@ -144,101 +128,17 @@ struct WishlistView: View {
 
                 ToolbarItemGroup(placement: .topBarTrailing) {
                     HStack(spacing: 6) {
-                        Menu {
-                            Button {
-                                isPresentingCooperativeAgencies = true
-                            } label: {
-                                Label("合作旅行社", systemImage: "building.2.fill")
-                            }
-                        } label: {
+                        Button { isPerson = true } label: {
                             ToolbarCircleIcon(systemName: "person.fill")
                         }
+                        .accessibilityLabel("我的账号")
                         .matchedTransitionSource(id: "person", in: namespace)
 
-                        Menu {
-                            Button {
-                                isPresentingLanguageSettings = true
-                            } label: {
-                                Label("语言设置", systemImage: "globe")
-                            }
-
-                            Button {
-                                isPresentingNavigationSettings = true
-                            } label: {
-                                Label("默认导航", systemImage: "arrow.triangle.turn.up.right.diamond")
-                            }
-
-                            Button {
-                                isPresentingBaseCurrencySettings = true
-                            } label: {
-                                Label("本位币设置", systemImage: "dollarsign.circle")
-                            }
-
-                            Button {
-                                isPresentingFlightSettings = true
-                            } label: {
-                                Label("航班查询设置", systemImage: "airplane")
-                            }
-
-                            Button {
-                                isPresentingCloudSyncSettings = true
-                            } label: {
-                                Label("数据同步设置", systemImage: "arrow.triangle.2.circlepath.icloud")
-                            }
-
-                            Button {
-                                isPresentingExpenseItems = true
-                            } label: {
-                                Label("费用项目管理", systemImage: "list.bullet.rectangle")
-                            }
-
-                            Button {
-                                isPresentingPrivacyPolicy = true
-                            } label: {
-                                Label("隐私政策", systemImage: "hand.raised.fill")
-                            }
-
-                            if BillingReleaseConfiguration.plansVisible {
-                                Button {
-                                    NotificationCenter.default.post(name: .requestPurchasePlans, object: nil)
-                                } label: {
-                                    Label("版本与购买", systemImage: "cart")
-                                }
-                            }
-
-                            Button {
-                                isPresentingBuildInformation = true
-                            } label: {
-                                Label("版本信息", systemImage: "info.circle")
-                            }
-
-                            if auth.isCloudAccount {
-                                Button(role: .destructive) {
-                                    accountDeletionAlert = .cloudLocalDataConfirmation
-                                } label: {
-                                    Label("清除此账号的本机资料", systemImage: "externaldrive.badge.xmark")
-                                }
-                                .disabled(auth.isCloudSyncInProgress)
-                            }
-
-                            Button(role: .destructive) {
-                                if auth.isCloudAccount { showingCloudDeletion = true } else { accountDeletionAlert = .confirmation }
-                            } label: {
-                                Label("删除账户", systemImage: "person.crop.circle.badge.xmark")
-                            }
-
-                            Divider()
-
-                            Button(role: .destructive) {
-                                auth.logout()
-                            } label: {
-                                Label("退出登录", systemImage: "rectangle.portrait.and.arrow.right")
-                            }
-                        } label: {
+                        Button { isPresentingSettings = true } label: {
                             ToolbarCircleIcon(systemName: "gearshape")
                         }
+                        .accessibilityLabel("设置")
                         .matchedTransitionSource(id: "setup", in: namespace)
-                        .menuStyle(.borderlessButton)
 
                         Button {
                             isPresentingAddTrip = true
@@ -261,77 +161,19 @@ struct WishlistView: View {
                         .navigationTransition(.zoom(sourceID: "addTrip", in: namespace))
                 }
             }
-            .sheet(isPresented: $isPresentingLanguageSettings) {
-                LanguageSettingsView()
+            .sheet(isPresented: $isPresentingSettings, onDismiss: presentPendingPurchasePlans) {
+                AppSettingsView(onPurchase: {
+                    pendingPurchasePlans = true
+                    isPresentingSettings = false
+                })
             }
-            .sheet(isPresented: $isPresentingNavigationSettings) {
-                DefaultNavigationSettingsView()
+            .sheet(isPresented: $isPerson, onDismiss: presentPendingPurchasePlans) {
+                MyAccountSettingsView(onPurchase: {
+                    pendingPurchasePlans = true
+                    isPerson = false
+                })
             }
-            .sheet(isPresented: $isPresentingFlightSettings) {
-                VariFlightSettingsView()
-            }
-            .sheet(isPresented: $isPresentingCloudSyncSettings) {
-                CloudSyncPreferenceView()
-            }
-            .sheet(isPresented: $isPresentingBaseCurrencySettings) {
-                BaseCurrencySettingsView()
-            }
-            .adaptiveFormPresentation(isPresented: $isPresentingExpenseItems) {
-                ExpenseItemManagementView()
-            }
-            .sheet(isPresented: $isPresentingPrivacyPolicy) {
-                PrivacyPolicyView()
-            }
-            .alert("版本信息", isPresented: $isPresentingBuildInformation) {
-                Button("关闭", role: .cancel) { }
-            } message: {
-                Text(appBuildInformation)
-            }
-            .adaptiveFormPresentation(isPresented: $isPresentingCooperativeAgencies) {
-                if auth.serverEntitlement?.edition == .cloud {
-                    CloudTravelAgencyDirectoryView()
-                } else {
-                    TravelAgencyListView()
-                }
-            }
-            .sheet(isPresented: $showingCloudDeletion) { CloudAccountDeletionView() }
-            .alert(item: $accountDeletionAlert) { alert in
-                switch alert {
-                case .confirmation:
-                    Alert(
-                        title: Text("确定删除账户？"),
-                        message: Text("此操作将删除此设备上的全部账户及相关本地资料，并清空登录状态和本地缓存。删除后无法恢复。本地账号的删除不影响其他云端账号。"),
-                        primaryButton: .destructive(Text("删除"), action: deleteAccount),
-                        secondaryButton: .cancel(Text("取消"))
-                    )
-                case .cloudLocalDataConfirmation:
-                    Alert(
-                        title: Text("清除本机资料？"),
-                        message: Text("只会删除当前登录账号保存在此设备上的行程管家资料和缓存。云端数据与其他账号不受影响。清除后无法从本机恢复；云端仍有资料时，可以再次同步下载。"),
-                        primaryButton: .destructive(Text("清除本机资料"), action: clearCloudAccountLocalData),
-                        secondaryButton: .cancel(Text("取消"))
-                    )
-                case .failure(let message):
-                    Alert(
-                        title: Text("删除失败"),
-                        message: Text(message),
-                        dismissButton: .default(Text("关闭"))
-                    )
-                case .cloudLocalDataFailure(let message):
-                    Alert(
-                        title: Text("清除失败"),
-                        message: Text(message),
-                        dismissButton: .default(Text("关闭"))
-                    )
-                case .cloudLocalDataSuccess:
-                    Alert(
-                        title: Text("本机资料已清除"),
-                        message: Text("当前账号保存在此设备上的资料和缓存已清除。云端数据与其他账号没有更改。"),
-                        dismissButton: .default(Text("关闭"))
-                    )
-                }
-            }
-            
+
             .toolbarTitleDisplayMode(.inline)
             .toolbarRole(.editor)
             .font(.system(size: 12))
@@ -342,40 +184,10 @@ struct WishlistView: View {
         }
     }
 
-    private func deleteAccount() {
-        do {
-            try auth.deleteAllLocalData(context: modelContext)
-            dataSource.clearAllUserData()
-        } catch {
-            accountDeletionAlert = .failure(error.localizedDescription)
-        }
-    }
-
-    private func clearCloudAccountLocalData() {
-        do {
-            try auth.clearCurrentCloudAccountLocalData(context: modelContext)
-            accountDeletionAlert = .cloudLocalDataSuccess
-        } catch {
-            accountDeletionAlert = .cloudLocalDataFailure(error.localizedDescription)
-        }
-    }
-}
-
-private enum AccountDeletionAlert: Identifiable {
-    case confirmation
-    case failure(String)
-    case cloudLocalDataConfirmation
-    case cloudLocalDataFailure(String)
-    case cloudLocalDataSuccess
-
-    var id: String {
-        switch self {
-        case .confirmation: "confirmation"
-        case .failure: "failure"
-        case .cloudLocalDataConfirmation: "cloud-local-data-confirmation"
-        case .cloudLocalDataFailure: "cloud-local-data-failure"
-        case .cloudLocalDataSuccess: "cloud-local-data-success"
-        }
+    private func presentPendingPurchasePlans() {
+        guard pendingPurchasePlans else { return }
+        pendingPurchasePlans = false
+        NotificationCenter.default.post(name: .requestPurchasePlans, object: nil)
     }
 }
 
@@ -1527,7 +1339,7 @@ private enum ExpenseItemCatalog {
     }
 }
 
-private struct ExpenseItemManagementView: View {
+struct ExpenseItemManagementView: View {
     @Environment(\.dismiss) private var dismiss
     @State private var expenseNames: [String] = []
     @State private var newExpenseName = ""

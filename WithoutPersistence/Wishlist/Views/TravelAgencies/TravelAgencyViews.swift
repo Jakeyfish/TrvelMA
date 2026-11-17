@@ -27,7 +27,7 @@ struct TravelAgencySelectionView: View {
                     ContentUnavailableView(
                         searchText.isEmpty ? "暂无合作旅行社" : "没有找到旅行社",
                         systemImage: searchText.isEmpty ? "building.2" : "magnifyingglass",
-                        description: Text(searchText.isEmpty ? "请先在头像菜单的“合作旅行社”中添加旅行社。" : "请尝试其他代码或名称。")
+                        description: Text(searchText.isEmpty ? "请先在设置的“合作旅行社”中添加旅行社。" : "请尝试其他代码或名称。")
                     )
                 } else {
                     ForEach(matchingAgencies, id: \.uuid) { agency in
