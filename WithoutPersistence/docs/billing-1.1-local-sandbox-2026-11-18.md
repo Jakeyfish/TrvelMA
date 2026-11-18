@@ -11,3 +11,9 @@
 证据：协作工作区deliverables/2026-11-18-yearly-sandbox/local-purchase-success.png（无密码）。
 
 恢复证据：local-restore-success.png。没有再次购买或改账号。下一步需在独立本地账号路径检查无云端/在线航班权限，保留02云端账号用于08:53:56后的自然到期验收。
+
+## 进程重新启动核验
+
+08:17通过devicectl --terminate-existing重新启动同一App，不卸载、不清资料、不换账号。重新打开版本与购买并完成商品加载，本地版仍显示“已购买”且按钮禁用。这是进程重启后重新读取StoreKit权益证据，不等于卸载重装恢复。
+
+静态调用链：AuthViewModel.canQueryFlights要求有效云端身份与授权；WishlistView列表及详情、NewTripFormModel和VariFlightSettingsView均引用该权限；VariFlightClient.lookupCandidates无令牌/空令牌在网络请求前拒绝。当前仍为02云端身份，未把静态核对冒充本地账号真机航班拦截验收。生产历史凭据仍未采集，firstPaidLocalBuild=nil保持不变。
