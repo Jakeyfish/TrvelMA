@@ -28,3 +28,36 @@
 - 真机重新读取交易诊断：历史9/已验证9/Sandbox9/本账号9/可申请9，与后台2笔月付+7笔年付一致。
 - 打开沙盒退款测试后，Apple系统页实际仍显示“无法连接／重试”。未提交退款、未重复购买，保留证据refund-unavailable.png；已关闭错误页，不重复重试。退款撤销及跨端失效仍为阻碍项，不判通过。
 - 本轮仅文档更新，无产品代码或发布包变化，因此无需重新部署App/Web。
+
+## 退款再次复核
+
+- 2026-11-18真机07:25再次打开退款入口，Apple系统页仍为“无法连接”，未进入原因表单、未提交退款；已关闭，不循环重试。
+- 代码复核StorePurchaseManager.requestSandboxRefund：遍历已验证交易，通过SandboxRefundPolicy按环境、账号所有权、云端商品、撤销与升级状态过滤，再选择purchaseDate最新的一笔；不存在固定选择旧月付交易的实现。
+- Apple开发者论坛 https://developer.apple.com/forums/thread/846103 有其他开发者报告相同系统退款页故障，包括自动续订商品、iOS27.2和替代API路径。帖子是开发者报告，不是Apple工程师的官方根因确认。仅可作为外部故障线索，不能据此证明本项目无问题或退款通过。
+- 后续仍需真实原因表单提交、REFUND签名通知、台账revoked_at及App/Web授权失效闭环。不得把系统回调success单独作为退款完成依据。
+
+## 真机退款失败日志定位（07:34 PST）
+
+使用macOS控制台选择02测试iPad，先筛选refund，开始短时流式日志并在Apple错误页点击一次重试，随后暂停采集；没有保存完整设备日志、凭据、交易ID或设备标识。
+
+确认的错误链：
+- Apple进程AMSEngagementViewService请求Apple Sandbox主机mzstorekit-sb.itunes.apple.com的/inApps/v1/refund/info/<redacted>。
+- 系统amsaccountsd生成请求签名头；这不等于认证最终成功。
+- 同一请求链返回AMSErrorDomain Code=306：Reached max retry count / Task reached max retry count (3 / 3)。
+- AMSUIWebView报告Action failed，错误元数据AMSStatusCode=200，随后实际UI显示“无法连接”。HTTP200不代表表单业务初始化成功。
+
+已定位失败在Apple系统退款表单读取退款信息的阶段，尚未进入原因表单和提交阶段，不是本App向Supabase提交退款失败。不能凭此排除所有账号/网络因素，或断言Apple内部服务端唯一根因；需Apple依据系统诊断继续判定。该错误链与论坛thread/846103其他开发者报告相符，但论坛不是官方故障确认。此证据优先于此前仅凭截图的推断。
+
+官方测试文档：https://developer.apple.com/documentation/storekit/testing-refund-requests 支持Sandbox退款，需要原因表单提交后再核验revocationDate及REFUND签名通知。当前均未完成。建议向Apple Feedback报告此可复现错误；未经用户明确授权不对外发送诊断。
+
+## 年付自然到期验收基线
+
+2026-11-18 15:49:47 UTC只读查询：年付7笔、有效1、授权active，交易与授权到期均15:53:56 UTC。等待自然到期，不改数据库期限或取消购买。
+
+本地买断准备复核：LegacyLocalAccessPolicy.allowsLocalPurchase在cutoverConfigured=false且尚无本地购买时允许既有专用Sandbox验收；因此无需配置firstPaidLocalBuild即可测试。此前口头称“受收费分界阻止”不准确，已更正。生产收费与本地门禁仍关闭。
+
+15:54:14 UTC到原期限后只读复核：年付自动续期至第8笔、有效1，交易及授权到期均16:53:56 UTC，status=active。Web重新加载显示洛杉矶08:53，客户1条保留。故没有发生自然到期，不能判定到期只读已通过。已请求仅关闭02沙盒年付自动续订的确认，尚未执行，不改服务端期限。
+
+## 关闭02沙盒年付自动续订
+
+经用户明确确认，仅操作iPad设置→开发者→02沙盒Apple账户→管理→订阅→云端版年付。本人完成系统密码验证后，代理点取消订阅并确认，Apple详情实际显示“已取消订阅／订阅将于11月18日到期”，按钮变为续订。未点击续订、未退款、未清历史、未修改服务端授权。当前最近后台到期为16:53:56 UTC（洛杉矶08:53:56），到期后仍需真实App/Web只读与导出核验；取消续订本身不等于到期失效。证据yearly-renewal-cancelled.png。
