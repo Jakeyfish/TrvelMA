@@ -1,4 +1,10 @@
 export const translations = {
+  "恢复只读设备": {"zh-Hant": "恢復唯讀裝置", "en": "Restore read-only access", "es": "Restaurar acceso de solo lectura", "ja": "読み取り専用アクセスを復元", "ko": "읽기 전용 접근 복구", "zh-Hans": "恢复只读设备"},
+  "替换旧设备": {"zh-Hant": "替換舊裝置", "en": "Replace old device", "es": "Sustituir dispositivo anterior", "ja": "古い端末を置き換える", "ko": "이전 기기 교체", "zh-Hans": "替换旧设备"},
+  "生成配对码": {"zh-Hant": "產生配對碼", "en": "Generate pairing code", "es": "Generar código de vinculación", "ja": "コードを発行", "ko": "페어링 코드 생성", "zh-Hans": "生成配对码"},
+  "没有可替换的旧设备。": {"zh-Hant": "沒有可替換的舊裝置。", "en": "No old device can be replaced.", "es": "No hay dispositivos que se puedan sustituir.", "ja": "置き換え可能な端末がありません。", "ko": "교체할 수 있는 기기가 없습니다.", "zh-Hans": "没有可替换的旧设备。"},
+  "在 App 输入此配对码，五分钟内有效。": {"zh-Hant": "在 App 輸入此配對碼，五分鐘內有效。", "en": "Enter this code in the app within five minutes.", "es": "Introduce este código en la app en cinco minutos.", "ja": "5分以内にアプリで入力してください。", "ko": "5분 이내에 앱에 코드를 입력하세요.", "zh-Hans": "在 App 输入此配对码，五分钟内有效。"},
+  "恢复只读设备失败，请检查当前密码后重试。": {"zh-Hant": "恢復唯讀裝置失敗，請檢查目前密碼後重試。", "en": "Could not restore access. Check your password and try again.", "es": "No se pudo restaurar el acceso. Revisa la contraseña y reintenta.", "ja": "復元できませんでした。パスワードを確認してください。", "ko": "복구하지 못했습니다. 비밀번호를 확인하고 다시 시도하세요.", "zh-Hans": "恢复只读设备失败，请检查当前密码后重试。"},
   "名片图片已下载，可通过设备分享功能发送。": {"zh-Hant": "名片圖片已下載，可透過裝置分享功能傳送。", "en": "Card image downloaded. You can share it from your device.", "es": "Imagen descargada. Puedes compartirla desde tu dispositivo.", "ja": "名刺画像をダウンロードしました。端末から共有できます。", "ko": "명함 이미지가 다운로드되었습니다. 기기에서 공유할 수 있습니다.", "zh-Hans": "名片图片已下载，可通过设备分享功能发送。"},
   "无法生成名片图片，请重试。": {"zh-Hant": "無法產生名片圖片，請重試。", "en": "Unable to create the card image. Please try again.", "es": "No se pudo crear la imagen. Inténtalo de nuevo.", "ja": "名刺画像を作成できません。再試行してください。", "ko": "명함 이미지를 생성할 수 없습니다. 다시 시도하세요.", "zh-Hans": "无法生成名片图片，请重试。"},
   "分享名片": {"zh-Hant": "分享名片", "en": "Share card", "es": "Compartir tarjeta", "ja": "名刺を共有", "ko": "명함 공유", "zh-Hans": "分享名片"},

@@ -977,11 +977,89 @@ function archiveRecordDetails(row) {
   const fields={customer_name:'客人',name:'名称',appointment_date:'接载日期',appointment_time:'接载时间',price:'金额',tip:'小费',location_start:'起始点',location_end:'目的地',customer_contact:'联系方式',phone:'电话',email:'邮箱',address:'地址',value:'内容',label:'类别',title:'项目',amount:'金额',service_type:'行程类型',flight_info:'航班',memo:'备注',travel_agency_name:'旅行社',travel_agency_order_number:'旅行社订单号'};
   return Object.entries(fields).filter(([key])=>row[key]!==null&&row[key]!==undefined&&row[key]!=='').map(([key,label])=>`<p><strong>${escapeHTML(ui(label))}：</strong>${escapeHTML(String(row[key]))}</p>`).join('') || `<p>${escapeHTML(ui('完整资料包含在导出文件中。'))}</p>`;
 }
+async function requestExpiredDeviceRecovery(owner, body) {
+  const session = await currentSession();
+  if (!owner || !state.archiveMode || state.user?.id !== owner || session?.user?.id !== owner) {
+    throw new Error(ui("登录状态已失效，请重新登录。"));
+  }
+  const response = await fetch(apiURL("/functions/v1/expired-device-recovery"), {
+    method: "POST",
+    headers: {
+      apikey: SUPABASE_PUBLISHABLE_KEY,
+      Authorization: `Bearer ${session.access_token}`,
+      "x-account-device-id": accountDeviceID(),
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(body),
+  });
+  if (!response.ok) throw new Error(ui("恢复只读设备失败，请检查当前密码后重试。"));
+  return response.json();
+}
+
+function bindExpiredDeviceRecovery() {
+  const panel = document.getElementById("expired-device-recovery");
+  if (!panel?.querySelector) return;
+  const form = panel.querySelector("form");
+  const status = panel.querySelector("output");
+  const select = form.elements.replacedDevice;
+  const owner = state.user?.id;
+  panel.querySelector("button[type=button]").addEventListener("click", async (event) => {
+    const trigger = event.currentTarget;
+    trigger.disabled = true;
+    status.textContent = "";
+    try {
+      const { devices } = await requestExpiredDeviceRecovery(owner, { action: "devices" });
+      select.replaceChildren();
+      for (const device of devices) {
+        const date = new Date(device.last_seen_at).toLocaleString();
+        select.add(new Option(`${device.device_type} · ${date} · ${device.device_id.slice(-6)}`, device.device_id));
+      }
+      form.hidden = !select.options.length;
+      if (form.hidden) status.textContent = ui("没有可替换的旧设备。");
+    } catch (error) {
+      status.textContent = error.message;
+    } finally {
+      trigger.disabled = false;
+    }
+  });
+  form.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const submit = form.querySelector("button[type=submit]");
+    if (submit.disabled) return;
+    const passwordField = form.elements.password;
+    const password = passwordField.value;
+    passwordField.value = "";
+    submit.disabled = true;
+    status.textContent = "";
+    try {
+      const { code } = await requestExpiredDeviceRecovery(owner, {
+        action: "issue", replacedDevice: select.value, password,
+      });
+      if (state.user?.id !== owner || !state.archiveMode || !panel.isConnected) return;
+      form.hidden = true;
+      status.textContent = `${ui("在 App 输入此配对码，五分钟内有效。")} ${code}`;
+    } catch (error) {
+      status.textContent = error.message;
+    } finally {
+      submit.disabled = false;
+    }
+  });
+}
+
 function renderExpiredArchive() {
   const data = state.archiveData;
   if (!data) return;
   const sections = [['trips','行程'],['customers','客户'],['travel_agencies','旅行社'],['trip_expenses','费用明细'],['customer_contacts','联系方式'],['customer_addresses','客户地址'],['trip_stops','停靠点'],['user_settings','设置与名片资料']];
-  document.getElementById('app').innerHTML = `<main class="expired-archive"><section class="panel"><h1>${escapeHTML(ui('账号已到期 · 资料只读'))}</h1><p>${escapeHTML(ui('已有资料仍可查看和导出。新增、编辑、结算、航班刷新和同步已暂停。'))}</p><p>${escapeHTML(ui('导出的 JSON 文件包含个人及业务资料，请妥善保管。'))}</p><button class="button primary" data-action="export-expired-archive">${escapeHTML(ui('导出全部资料'))}</button> <button class="button" data-action="retry-expired-archive">${escapeHTML(ui('重新检查授权'))}</button> <button class="button" data-action="signout">${escapeHTML(ui('退出登录'))}</button> <button class="button danger" data-action="delete-cloud-account">${escapeHTML(ui('删除云端账号'))}</button></section>${sections.map(([key,title])=>`<section class="panel"><h2>${escapeHTML(ui(title))} · ${(data[key]||[]).length}</h2>${(data[key]||[]).map(row=>`<details class="archive-record"><summary>${escapeHTML(row.customer_name||row.name||row.title||row.address||ui(title))} ${key==='trips'?escapeHTML(row.appointment_date||''):''}</summary>${archiveRecordDetails(row)}</details>`).join('')}</section>`).join('')}</main>`;
+  document.getElementById('app').innerHTML = `<main class="expired-archive"><section class="panel"><h1>${escapeHTML(ui('账号已到期 · 资料只读'))}</h1><p>${escapeHTML(ui('已有资料仍可查看和导出。新增、编辑、结算、航班刷新和同步已暂停。'))}</p><p>${escapeHTML(ui('导出的 JSON 文件包含个人及业务资料，请妥善保管。'))}</p><button class="button primary" data-action="export-expired-archive">${escapeHTML(ui('导出全部资料'))}</button> <button class="button" data-action="retry-expired-archive">${escapeHTML(ui('重新检查授权'))}</button> <button class="button" data-action="signout">${escapeHTML(ui('退出登录'))}</button> <button class="button danger" data-action="delete-cloud-account">${escapeHTML(ui('删除云端账号'))}</button></section><section class="panel" id="expired-device-recovery" ${state.user?.id === "86361373-d4ba-4fc6-8f38-420367b6484e" ? "" : "hidden"}>
+    <button type="button" class="button">${escapeHTML(ui("恢复只读设备"))}</button>
+    <form method="post" hidden>
+      <label>${escapeHTML(ui("替换旧设备"))}<select name="replacedDevice" required></select></label>
+      <label>${escapeHTML(ui("当前密码"))}<input name="password" type="password" autocomplete="current-password" required></label>
+      <button type="submit" class="button">${escapeHTML(ui("生成配对码"))}</button>
+    </form>
+    <output aria-live="polite"></output>
+  </section>${sections.map(([key,title])=>`<section class="panel"><h2>${escapeHTML(ui(title))} · ${(data[key]||[]).length}</h2>${(data[key]||[]).map(row=>`<details class="archive-record"><summary>${escapeHTML(row.customer_name||row.name||row.title||row.address||ui(title))} ${key==='trips'?escapeHTML(row.appointment_date||''):''}</summary>${archiveRecordDetails(row)}</details>`).join('')}</section>`).join('')}</main>`;
+  bindExpiredDeviceRecovery();
 }
 function exportExpiredArchive() {
   if (!state.archiveMode || !state.archiveData) return;

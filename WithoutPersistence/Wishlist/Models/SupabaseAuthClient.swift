@@ -1,5 +1,6 @@
 import Foundation
 import UIKit
+import OSLog
 
 /// Minimal Supabase Auth REST client. The publishable key is designed to be shipped
 /// in a client app; authorization is still enforced by Supabase RLS policies.
@@ -225,6 +226,20 @@ enum SupabaseAuthClient {
         guard result.deleted else { throw AuthError.message(AppLocalization.text("服务器未确认账号删除，请稍后重试。")) }
     }
 
+    static func completeExpiredDevicePairing(code: UUID, accessToken: String) async throws {
+        var request = URLRequest(url: endpoint(path: "/rest/v1/rpc/complete_expired_device_pairing"))
+        request.httpMethod = "POST"
+        request.timeoutInterval = requestTimeout
+        request.setValue(publishableKey, forHTTPHeaderField: "apikey")
+        request.setValue("Bearer \(accessToken)", forHTTPHeaderField: "Authorization")
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.httpBody = try JSONSerialization.data(withJSONObject: [
+            "p_code": code.uuidString, "p_device": accountDeviceID, "p_type": accountDeviceType
+        ])
+        let (data, response) = try await URLSession.shared.data(for: request)
+        try validate(response, data: data)
+    }
+
     static func readExpiredArchive(accessToken: String) async throws -> Data {
         var request = URLRequest(url: endpoint(path: "/rest/v1/rpc/read_expired_account_archive"))
         request.httpMethod = "POST"
@@ -235,6 +250,18 @@ enum SupabaseAuthClient {
         applyAccountDeviceHeader(to: &request)
         request.httpBody = Data("{}".utf8)
         let (data,response) = try await URLSession.shared.data(for: request)
+        if let http = response as? HTTPURLResponse, !(200..<300).contains(http.statusCode) {
+            let payload = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any]
+            let reason: String
+            switch payload?["message"] as? String {
+            case "Registered device required": reason = "registration_required"
+            case "Expired account archive unavailable": reason = "archive_unavailable"
+            case "Authentication required": reason = "authentication_required"
+            default: reason = "other"
+            }
+            Logger(subsystem: "com.yunshengtech.travelmanager", category: "ExpiredArchive")
+                .error("Archive request failed: HTTP \(http.statusCode, privacy: .public), reason \(reason, privacy: .public)")
+        }
         try validate(response,data:data)
         return data
     }

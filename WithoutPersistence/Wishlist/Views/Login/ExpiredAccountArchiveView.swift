@@ -20,6 +20,9 @@ struct ExpiredAccountArchiveView: View {
     @State private var error = ""
     @State private var exporting = false
     @State private var showingDeletion = false
+    @State private var showingPairing = false
+    @State private var pairingCode = ""
+    @State private var isPairing = false
     private let sections = [("trips","行程"),("customers","客户"),("travel_agencies","旅行社"),("trip_expenses","费用明细"),("customer_contacts","联系方式"),("customer_addresses","客户地址"),("trip_stops","停靠点"),("user_settings","设置与名片资料")]
     private let fields = [("customer_name","客人"),("name","名称"),("appointment_date","接载日期"),("appointment_time","接载时间"),("price","金额"),("tip","小费"),("location_start","起始点"),("location_end","目的地"),("customer_contact","联系方式"),("phone","电话"),("email","邮箱"),("address","地址"),("value","内容"),("label","类别"),("title","项目"),("amount","金额"),("service_type","行程类型"),("flight_info","航班"),("memo","备注"),("travel_agency_name","旅行社"),("travel_agency_order_number","旅行社订单号")]
 
@@ -32,6 +35,10 @@ struct ExpiredAccountArchiveView: View {
                     if busy { ProgressView() }
                     if !error.isEmpty { Text(error).foregroundStyle(.red) }
                     Button("导出全部资料") { exporting = true }.disabled(readState.owner != archiveOwner || !readState.canExport)
+                    if archiveOwner.lowercased() == "ystechnology02@yahoo.com", !error.isEmpty {
+                        Button("恢复只读设备") { pairingCode = ""; showingPairing = true }
+                            .disabled(busy || isPairing)
+                    }
                     Button("重新加载资料") { Task { await load() } }.disabled(busy)
                     Button("重新检查授权") { Task { await auth.retryServerEntitlementLookup() } }.disabled(busy)
                     if BillingReleaseConfiguration.plansVisible && auth.canManageCloudPurchases {
@@ -58,6 +65,19 @@ struct ExpiredAccountArchiveView: View {
                 }
             }
             .navigationTitle("账号已到期 · 资料只读")
+            .alert("恢复只读设备", isPresented: $showingPairing) {
+                TextField("配对码", text: $pairingCode)
+                    .textInputAutocapitalization(.never)
+                    .autocorrectionDisabled()
+                Button("取消", role: .cancel) { pairingCode = "" }
+                Button("确认") {
+                    let code = UUID(uuidString: pairingCode.trimmingCharacters(in: .whitespacesAndNewlines))
+                    pairingCode = ""
+                    Task { await pairDevice(code) }
+                }
+            } message: {
+                Text("请输入已登记的网页版生成的配对码。")
+            }
             .sheet(isPresented: $showingDeletion) { CloudAccountDeletionView() }
             .fileExporter(isPresented: $exporting, document: AccountArchiveDocument(data: exportData), contentType: .json, defaultFilename: AppLocalization.text("TrvelMA-资料备份")) { result in
                 if case .failure(let failure) = result { error = failure.localizedDescription }
@@ -75,6 +95,24 @@ struct ExpiredAccountArchiveView: View {
             if let value = row[key] as? String, !value.isEmpty { return value }
         }
         return fallback
+    }
+
+    @MainActor private func pairDevice(_ code: UUID?) async {
+        guard !isPairing, !busy, !archiveOwner.isEmpty else { return }
+        guard let code else { error = AppLocalization.text("配对码无效或已过期。"); return }
+        let owner = archiveOwner
+        isPairing = true
+        defer { isPairing = false }
+        do {
+            let token = await auth.refreshCloudAccessToken()
+            guard archiveOwner == owner, let token else { return }
+            try await SupabaseAuthClient.completeExpiredDevicePairing(code: code, accessToken: token)
+            guard archiveOwner == owner else { return }
+            await load()
+        } catch {
+            guard archiveOwner == owner else { return }
+            self.error = AppLocalization.text("恢复只读设备失败，请在网页版重新获取配对码。")
+        }
     }
 
     @MainActor private func load() async {
