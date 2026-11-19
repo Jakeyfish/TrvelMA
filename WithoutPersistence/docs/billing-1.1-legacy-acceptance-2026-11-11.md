@@ -37,3 +37,9 @@ firstPaidLocalBuild=nil，Release 正式收费入口继续关闭。实际本地�
 - 本轮未修改 UI/六语言、云端权限、Web 或生产数据库；不执行真实购买，也不把本地 StoreKit 回归当 Apple Sandbox 验收。
 - 本轮日志留存到协作工作区 deliverables/2026-11-11-billing-1.1-local-access-state/。
 - 新增权限状态后再次执行上述 Release 模拟器构建命令：BUILD SUCCEEDED；`git diff --check` 通过。未执行真机、生产历史凭据或完整 App 回归，界面路由接入后仍需扩大验证范围。
+
+## Max 真机与正式凭据诊断候选包（2026-11-18）
+
+- Max 的 App Store 购买历史中可见本 App（用户确认）。保留数据覆盖安装开发签名 1.1(14)，通过临时 DEBUG 启动参数读取到已验证的 Sandbox 凭据，原始构建号为 1.0，随后以常规方式重新启动。购买历史与此沙盒结果均无法证明正式环境凭据可用。
+- 仅在编译时设置 `LEGACY_STORE_EVIDENCE` 时，版本弹窗才读取已验签且 App 标识匹配的凭据，并显示环境及原始构建号。诊断不保存凭据。正式收费分界和门禁保持关闭。
+- 启用该编译条件的 Release 模拟器构建与 iOS 签名归档通过。归档路径为 `/tmp/trvelma-legacy-evidence-1.1-15.xcarchive`，已核对构建号 15 并通过 `codesign --verify --strict`。未上传或发布；尚未验证正式分发安装后的弹窗结果、老用户升级或重装。

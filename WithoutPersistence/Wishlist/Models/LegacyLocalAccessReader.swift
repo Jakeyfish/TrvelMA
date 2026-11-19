@@ -3,6 +3,21 @@ import StoreKit
 /// No persistent cache or explicit AppTransaction.refresh()/AppStore.sync() call.
 /// Sandbox fixtures never confer production legacy access.
 enum LegacyLocalAccessReader {
+    /// Shows only verification, environment, and build information. No signed payload is retained.
+    static func diagnosticSummary() async -> String {
+        do {
+            guard case .verified(let transaction) = try await AppTransaction.shared else {
+                return "App Store: signature unverified"
+            }
+            guard transaction.bundleID == Bundle.main.bundleIdentifier else {
+                return "App Store: bundle mismatch"
+            }
+            return "App Store: \(transaction.environment.rawValue) · CFBundleVersion: \(transaction.originalAppVersion)"
+        } catch {
+            return "App Store: evidence unavailable"
+        }
+    }
+
     static func decision(expectedBundleID: String, firstPaidBuild: String?) async -> LegacyLocalAccessDecision {
         guard firstPaidBuild != nil else { return .notConfigured }
         do {

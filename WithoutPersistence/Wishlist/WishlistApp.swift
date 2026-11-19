@@ -6,6 +6,9 @@ The main app structure.
 */
 
 import SwiftUI
+#if DEBUG
+import StoreKit
+#endif
 import SwiftData
 import UserNotifications
 import UIKit
@@ -91,7 +94,17 @@ struct WishlistApp: App {
 
     var body: some Scene {
         WindowGroup {
-            RootView()
+            Group {
+                #if DEBUG
+                if ProcessInfo.processInfo.arguments.contains("--legacy-store-evidence") {
+                    LegacyStoreEvidenceProbe()
+                } else {
+                    RootView()
+                }
+                #else
+                RootView()
+                #endif
+            }
                 .environment(auth)
                 .environment(dataStore)
                 .environment(languageSettings)
@@ -115,3 +128,32 @@ struct WishlistApp: App {
 }
 
 
+
+
+#if DEBUG
+private struct LegacyStoreEvidenceProbe: View {
+    @State private var result = "Checking App Store evidence…"
+
+    var body: some View {
+        Text(verbatim: result)
+            .padding()
+            .task {
+                do {
+                    switch try await AppTransaction.shared {
+                    case .verified(let transaction):
+                        guard transaction.bundleID == Bundle.main.bundleIdentifier else {
+                            result = "App Store evidence: bundle mismatch"
+                            return
+                        }
+                        result = "App Store evidence: verified \(transaction.environment.rawValue), original build \(transaction.originalAppVersion)"
+                    case .unverified:
+                        result = "App Store evidence: signature unverified"
+                    }
+                } catch {
+                    result = "App Store evidence: unavailable"
+                }
+                print(result)
+            }
+    }
+}
+#endif

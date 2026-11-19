@@ -17,6 +17,9 @@ struct AppSettingsView: View {
     @State private var page: SettingsPage?
     @State private var purchaseAfterChildDismiss = false
     @State private var showsVersion = false
+    #if LEGACY_STORE_EVIDENCE
+    @State private var storeEvidence = ""
+    #endif
     let onPurchase: () -> Void
 
     var body: some View {
@@ -141,7 +144,20 @@ struct AppSettingsView: View {
                 }
             }
             .alert("版本信息", isPresented: $showsVersion) { Button("关闭", role: .cancel) {} }
-                message: { Text(verbatim: SettingsBuildInformation.text) }
+                message: {
+                    #if LEGACY_STORE_EVIDENCE
+                    Text(verbatim: [SettingsBuildInformation.text, storeEvidence].filter { !$0.isEmpty }.joined(separator: "\n"))
+                    #else
+                    Text(verbatim: SettingsBuildInformation.text)
+                    #endif
+                }
+            #if LEGACY_STORE_EVIDENCE
+            .task(id: showsVersion) {
+                guard showsVersion else { storeEvidence = ""; return }
+                let summary = await LegacyLocalAccessReader.diagnosticSummary()
+                if !Task.isCancelled && showsVersion { storeEvidence = summary }
+            }
+            #endif
         }
         .font(.body)
         .environment(\.locale, languageSettings.locale)
