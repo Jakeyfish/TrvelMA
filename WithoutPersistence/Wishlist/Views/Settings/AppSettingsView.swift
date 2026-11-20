@@ -16,11 +16,7 @@ struct AppSettingsView: View {
     @AppStorage(BaseCurrencyCatalog.countryCodeKey) private var currency = BaseCurrencyCatalog.defaultCountryCode
     @State private var page: SettingsPage?
     @State private var purchaseAfterChildDismiss = false
-    @State private var showsVersion = false
-    #if LEGACY_STORE_EVIDENCE
-    @State private var storeEvidence = ""
-    @State private var loadsStoreEvidence = false
-    #endif
+    @State private var requestsVersion = false
     let onPurchase: () -> Void
 
     var body: some View {
@@ -106,11 +102,7 @@ struct AppSettingsView: View {
                                 tile("版本与购买", subtitle: "恢复购买", icon: "cart") { onPurchase() }
                             } else {
                                 tile("版本信息", subtitle: "构建号", icon: "info.circle") {
-                                    #if LEGACY_STORE_EVIDENCE
-                                    loadsStoreEvidence = true
-                                    #else
-                                    showsVersion = true
-                                    #endif
+                                    requestsVersion = true
                                 }
                             }
                             tile("帮助与关于", subtitle: "隐私政策", icon: "questionmark.circle") { page = .about }
@@ -150,24 +142,7 @@ struct AppSettingsView: View {
                 case .about: SettingsAboutView()
                 }
             }
-            .alert("版本信息", isPresented: $showsVersion) { Button("关闭", role: .cancel) {} }
-                message: {
-                    #if LEGACY_STORE_EVIDENCE
-                    Text(verbatim: [SettingsBuildInformation.text, storeEvidence].filter { !$0.isEmpty }.joined(separator: "\n"))
-                    #else
-                    Text(verbatim: SettingsBuildInformation.text)
-                    #endif
-                }
-            #if LEGACY_STORE_EVIDENCE
-            .task(id: loadsStoreEvidence) {
-                guard loadsStoreEvidence else { return }
-                let summary = await LegacyLocalAccessReader.diagnosticSummary()
-                guard !Task.isCancelled else { return }
-                storeEvidence = summary
-                showsVersion = true
-                loadsStoreEvidence = false
-            }
-            #endif
+            .modifier(SettingsVersionAlert(requested: $requestsVersion))
         }
         .font(.body)
         .environment(\.locale, languageSettings.locale)
@@ -187,6 +162,33 @@ struct AppSettingsView: View {
             .frame(maxWidth: .infinity, minHeight: 64, alignment: .leading).padding(12)
             .background(Color(.secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 17))
         }.buttonStyle(.plain)
+    }
+}
+
+private struct SettingsVersionAlert: ViewModifier {
+    @Binding var requested: Bool
+    @State private var isPresented = false
+    @State private var message = ""
+
+    func body(content: Content) -> some View {
+        content
+            .alert("版本信息", isPresented: $isPresented) {
+                Button("关闭", role: .cancel) {}
+            } message: {
+                Text(verbatim: message)
+            }
+            .task(id: requested) {
+                guard requested else { return }
+                var details = SettingsBuildInformation.text
+                #if LEGACY_STORE_EVIDENCE
+                let evidence = await LegacyLocalAccessReader.diagnosticSummary()
+                details += "\n" + evidence
+                #endif
+                guard !Task.isCancelled else { return }
+                message = details
+                isPresented = true
+                requested = false
+            }
     }
 }
 
@@ -238,11 +240,11 @@ struct MyAccountSettingsView: View {
 private struct SettingsAboutView: View {
     @Environment(\.dismiss) private var dismiss
     @State private var showPrivacy = false
-    @State private var showVersion = false
+    @State private var requestsVersion = false
     var body: some View {
         NavigationStack {
             List {
-                Button("版本信息") { showVersion = true }
+                Button("版本信息") { requestsVersion = true }
                 Button("隐私政策") { showPrivacy = true }
                 Link("联系支持", destination: URL(string: "mailto:jason5101.wu@gmail.com")!)
             }
@@ -251,8 +253,7 @@ private struct SettingsAboutView: View {
             .navigationBarTitleDisplayMode(.inline)
             .toolbar { ToolbarItem(placement: .cancellationAction) { Button("关闭") { dismiss() } } }
             .sheet(isPresented: $showPrivacy) { PrivacyPolicyView() }
-            .alert("版本信息", isPresented: $showVersion) { Button("关闭", role: .cancel) {} }
-                message: { Text(verbatim: SettingsBuildInformation.text) }
+            .modifier(SettingsVersionAlert(requested: $requestsVersion))
         }
     }
 }
