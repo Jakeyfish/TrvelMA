@@ -19,6 +19,7 @@ struct AppSettingsView: View {
     @State private var showsVersion = false
     #if LEGACY_STORE_EVIDENCE
     @State private var storeEvidence = ""
+    @State private var loadsStoreEvidence = false
     #endif
     let onPurchase: () -> Void
 
@@ -104,7 +105,13 @@ struct AppSettingsView: View {
                             if BillingReleaseConfiguration.plansVisible {
                                 tile("版本与购买", subtitle: "恢复购买", icon: "cart") { onPurchase() }
                             } else {
-                                tile("版本信息", subtitle: "构建号", icon: "info.circle") { showsVersion = true }
+                                tile("版本信息", subtitle: "构建号", icon: "info.circle") {
+                                    #if LEGACY_STORE_EVIDENCE
+                                    loadsStoreEvidence = true
+                                    #else
+                                    showsVersion = true
+                                    #endif
+                                }
                             }
                             tile("帮助与关于", subtitle: "隐私政策", icon: "questionmark.circle") { page = .about }
                         }
@@ -152,10 +159,13 @@ struct AppSettingsView: View {
                     #endif
                 }
             #if LEGACY_STORE_EVIDENCE
-            .task(id: showsVersion) {
-                guard showsVersion else { storeEvidence = ""; return }
+            .task(id: loadsStoreEvidence) {
+                guard loadsStoreEvidence else { return }
                 let summary = await LegacyLocalAccessReader.diagnosticSummary()
-                if !Task.isCancelled && showsVersion { storeEvidence = summary }
+                guard !Task.isCancelled else { return }
+                storeEvidence = summary
+                showsVersion = true
+                loadsStoreEvidence = false
             }
             #endif
         }
