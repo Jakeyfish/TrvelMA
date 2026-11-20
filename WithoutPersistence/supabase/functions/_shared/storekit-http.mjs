@@ -80,7 +80,8 @@ export function purchaseHandler(context) {
       const { data, error } = await deps.auth.auth.getUser(match[1]);
       if (error || !data?.user?.id) return reply(401, { error: 'AUTH_REQUIRED' });
       const body = await readJSON(request, 70000);
-      const result = await verifyPurchase({ signedTransaction: body.signedTransaction, ownerID: data.user.id }, deps);
+      const result = await verifyPurchase({ signedTransaction: body.signedTransaction, ownerID: data.user.id },
+        deps.forPayload ? deps.forPayload(body.signedTransaction, false) : deps);
       return reply(200, result);
     } catch (error) { return failure(error, 'PURCHASE_VERIFICATION_FAILED'); }
   };
@@ -92,7 +93,8 @@ export function notificationHandler(context) {
     try {
       const deps = context();
       const body = await readJSON(request, 270000);
-      await verifyNotification(body.signedPayload, deps);
+      await verifyNotification(body.signedPayload,
+        deps.forPayload ? deps.forPayload(body.signedPayload, true) : deps);
       return reply(200, { received: true });
     } catch (error) { return failure(error, 'NOTIFICATION_VERIFICATION_FAILED'); }
   };

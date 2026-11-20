@@ -43,3 +43,15 @@ Cloud transactions are verified by our server and bound to the signed-in account
 The separate 14-day registration trial does not require a payment method and does not charge automatically. It is not an introductory App Store subscription offer.
 
 Before using this template, replace or supplement it with the final approved existing-user migration behavior and the completed real Sandbox acceptance results. Do not claim those checks are complete while they remain pending.
+
+## 离线上架复核
+
+- 商品资料文件中的买断、月付与年付 ID、美国测试价格（29.99／9.99／99.99 美元）和计费周期已与本地 StoreKit 配置逐项匹配。三个商品及订阅组的六种语言草稿齐全。后台实际价格、地区、文案和审核截图仍需以 App Store Connect 为准。
+- 生产通知上线前先确定沙盒和生产的路由方式。当前两个服务端入口共用同一个环境配置，验签器按该配置选择一个环境。直接将现有配置从 Sandbox 切换为 Production 会停止接受原沙盒通知。上线准备须分别验证正确环境的签名可入账、交叉环境被拒绝，以及回滚后仍能处理沙盒。当前保持收费关闭。
+
+### 双环境验签与回滚
+
+- 两个 Edge Function 均已接入可选的 `STOREKIT_ENVIRONMENT=Dual`。请求内的环境声明仅用于挑选 Apple 验签器。每次只运行该环境的验签，失败即拒绝。签名中的环境、App 标识和交易归属仍须通过原有校验。
+- 部署代码时可保留原 `Sandbox` 配置。启用 Dual 后，只要 `STOREKIT_PRODUCTION_ENABLED` 未设为 `true`，Production 请求仍拒绝。沙盒仍要求账号在沙盒名单内。数据库仍限制同一账号的付费台账归属一个环境，因此沙盒与正式测试账号需要分开。
+- 无数据库迁移。回滚时将环境恢复为 `Sandbox` 并关闭生产开关，必要时恢复两个 Edge Function 的上一版完整部署。
+- 隔离后端测试 89 项通过，两个 Deno 入口类型检查通过。尚未部署，也未设置生产通知地址或验证 Apple 真实双环境投递。

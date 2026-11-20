@@ -104,6 +104,47 @@ test('full ES256 JWS passes forced Edge APIs; tampering, app and environment mis
   await assert.rejects(()=>verifyPurchase({signedTransaction:sign({...payload,bundleId:'wrong.app'}),ownerID:owner},deps));
   await assert.rejects(()=>verifyPurchase({signedTransaction:sign({...payload,environment:'Production'}),ownerID:owner},deps));
   assert.equal(writes,1,'Only the fully verified matching transaction can persist');
+  const { purchaseHandler, notificationHandler } = await import('../functions/_shared/storekit-http.mjs');
+  const { storekitEnvironment } = await import('../functions/_shared/storekit-environment.mjs');
+  const accepted = [];
+  const context = productionEnabled => () => ({
+    auth: { auth: { getUser: async () => ({ data: { user: { id: owner } } }) } },
+    forPayload(jws, notification) {
+      const environment = storekitEnvironment('Dual', productionEnabled, jws, notification);
+      return {
+        environment,
+        verifier: new SignedDataVerifier([root.raw], false, environment, bundleID, 6830031504),
+        persist: async event => {
+          accepted.push(event.environment);
+          return { recorded: true };
+        },
+      };
+    },
+  });
+  const post = (handler, field, value, productionEnabled = true) =>
+    handler(context(productionEnabled))(new Request('https://example.invalid', {
+      method: 'POST',
+      headers: { authorization: 'Bearer test-fixture' },
+      body: JSON.stringify({ [field]: value }),
+    }));
+  const notification = (environment, signedTransactionInfo) => ({
+    notificationType: 'DID_RENEW', signedDate: now,
+    data: { appAppleId: 6830031504, bundleId: bundleID, environment, signedTransactionInfo },
+  });
+  const sandbox = sign(payload);
+  const production = sign({ ...payload, environment: 'Production' });
+  for (const [environment, transaction] of [['Sandbox', sandbox], ['Production', production]]) {
+    assert.equal((await post(purchaseHandler, 'signedTransaction', transaction)).status, 200);
+    const outer = sign(notification(environment, transaction));
+    assert.equal((await post(notificationHandler, 'signedPayload', outer)).status, 200);
+  }
+  const modified = sandbox.split('.');
+  modified[1] = Buffer.from(JSON.stringify({ ...payload, environment: 'Production' })).toString('base64url');
+  assert.equal((await post(purchaseHandler, 'signedTransaction', modified.join('.'))).status, 400);
+  assert.equal((await post(notificationHandler, 'signedPayload', sign(notification('Production', sandbox)))).status, 400);
+  assert.equal((await post(notificationHandler, 'signedPayload', sign(notification('Production', production)), false)).status, 503);
+  assert.equal((await post(notificationHandler, 'signedPayload', sign(notification('Sandbox', sandbox)), false)).status, 200);
+  assert.deepEqual(accepted, ['Sandbox', 'Sandbox', 'Production', 'Production', 'Sandbox']);
  } finally {Object.defineProperty(prototype,'asymmetricKeyDetails',detailsDescriptor);crypto.X509Certificate=original;rmSync(dir,{recursive:true,force:true});}
 });
 

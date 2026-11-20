@@ -168,3 +168,52 @@ test('verification diagnostics categorize known key errors without logging trans
   const output=logs.join('\n');assert.ok(!output.includes('signed-fixture-secret'));assert.ok(!output.includes('raw-private-payload'));assert.ok(!output.includes('secret-fixture-token'));
  } finally {console.warn=original;}
 });
+
+test('dual purchase and notification dispatch preserve signature and environment checks', async () => {
+  const { storekitEnvironment } = await import('../functions/_shared/storekit-environment.mjs');
+  const jws = claim => 'e30.' + Buffer.from(JSON.stringify(claim)).toString('base64url') + '.c2ln';
+  for (const notification of [false, true]) {
+    for (const [hint, verified, enabled, status] of [
+      ['Sandbox', 'Sandbox', false, 200],
+      ['Production', 'Production', true, 200],
+      ['Production', 'Production', false, 503],
+      ['Sandbox', 'Production', true, 400],
+      ['Production', 'Sandbox', true, 400],
+      ['Sandbox', null, true, 400],
+      ['Xcode', 'Sandbox', true, 400],
+    ]) {
+      const { deps, calls } = fixture();
+      const original = deps.verifier;
+      deps.forPayload = (signed, isNotification) => {
+        assert.equal(isNotification, notification);
+        return {
+          ...deps,
+          environment: storekitEnvironment('Dual', enabled, signed, isNotification),
+          verifier: {
+            verifyAndDecodeTransaction: async value => {
+              if (!verified) throw Error('INVALID_SIGNATURE');
+              return { ...await original.verifyAndDecodeTransaction(value), environment: verified };
+            },
+            verifyAndDecodeNotification: async value => {
+              if (!verified) throw Error('INVALID_SIGNATURE');
+              const event = await original.verifyAndDecodeNotification(value);
+              return { ...event, data: { ...event.data, environment: verified } };
+            },
+          },
+        };
+      };
+      const body = notification
+        ? { signedPayload: jws({ data: { environment: hint } }) }
+        : { signedTransaction: jws({ environment: hint }) };
+      const handler = notification ? notificationHandler : purchaseHandler;
+      const response = await handler(() => deps)(new Request('https://example.invalid', {
+        method: 'POST', headers: { authorization: 'Bearer fixture-token' }, body: JSON.stringify(body),
+      }));
+      assert.equal(response.status, status, JSON.stringify({ notification, hint, verified, enabled }));
+      assert.equal(calls.persist, status === 200 ? 1 : 0);
+    }
+  }
+  assert.equal(storekitEnvironment('Sandbox', false), 'Sandbox');
+  assert.throws(() => storekitEnvironment('Production', false), /BILLING_DISABLED/);
+  assert.throws(() => storekitEnvironment('Dual', true, 'bad'), /INVALID_JWS/);
+});
