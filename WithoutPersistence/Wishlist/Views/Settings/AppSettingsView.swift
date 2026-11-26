@@ -1,4 +1,5 @@
 import SwiftUI
+import UserNotifications
 import SwiftData
 
 private enum SettingsPage: String, Identifiable {
@@ -224,6 +225,16 @@ struct MyAccountSettingsView: View {
                     NavigationLink { AccountSecuritySettingsView() } label: {
                         Label("账号与数据安全", systemImage: "lock.shield")
                     }
+                    if auth.isCloudAccount {
+                        if BillingReleaseConfiguration.salesEnabled {
+                            NavigationLink { FlightBeanWalletView() } label: {
+                                HStack { SilverBeanIcon(); Text("邀请赚云豆") }
+                            }
+                        }
+                        NavigationLink { FlightMessageInboxView() } label: {
+                            Label("航班管家", systemImage: "airplane")
+                        }
+                    }
                     if BillingReleaseConfiguration.plansVisible {
                         Button(action: onPurchase) { Label("版本与购买", systemImage: "cart") }
                     }
@@ -233,6 +244,200 @@ struct MyAccountSettingsView: View {
             .navigationTitle("我的账号")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar { ToolbarItem(placement: .cancellationAction) { Button("关闭") { dismiss() }.font(.body) } }
+        }
+    }
+}
+
+struct SilverBeanIcon: View {
+    var body: some View {
+        Capsule()
+            .fill(LinearGradient(colors: [.white, Color(white: 0.50)], startPoint: .topLeading, endPoint: .bottomTrailing))
+            .overlay(Capsule().strokeBorder(Color.secondary.opacity(0.4), lineWidth: 1))
+            .frame(width: 20, height: 13)
+            .rotationEffect(.degrees(-28))
+            .accessibilityHidden(true)
+    }
+}
+
+struct FlightBeanWalletView: View {
+    @Environment(AuthViewModel.self) private var auth
+    @State private var wallet: SupabaseAuthClient.FlightBeanWallet?
+    @State private var invite = ""
+    @State private var error = false
+    @State private var saving = false
+
+    var body: some View {
+        List {
+            if let wallet {
+                Section {
+                    LabeledContent { Text(wallet.balance, format: .number) } label: {
+                        HStack { SilverBeanIcon(); Text("云豆余额") }
+                    }
+                    if let period = wallet.period_end,
+                       let date = ISO8601DateFormatter().date(from: period) {
+                        LabeledContent("当前订阅周期结束", value: date.formatted(.dateTime.year().month().day()))
+                    }
+                }
+                Section("邀请赚云豆") {
+                    Text(wallet.invite_code).font(.system(.caption, design: .monospaced)).textSelection(.enabled)
+                    ShareLink(item: wallet.invite_code) { Label("分享邀请码", systemImage: "square.and.arrow.up") }
+                    if !wallet.referral_bound {
+                        TextField("邀请码", text: $invite).textInputAutocapitalization(.characters).autocorrectionDisabled()
+                        Button("绑定邀请码") { Task { await bind() } }
+                            .disabled(invite.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || saving)
+                    }
+                }
+                Section("云豆明细") {
+                    ForEach(wallet.entries) { entry in
+                        LabeledContent(entryLabel(entry.kind), value: entry.amount.formatted(.number.sign(strategy: .always())))
+                    }
+                }
+            }
+            if error { Text("暂时无法完成操作，请重试。").foregroundStyle(.secondary) }
+        }
+        .navigationTitle("云豆")
+        .task(id: auth.currentEmail) { wallet = nil; await load() }
+        .refreshable { await load() }
+    }
+
+    private func entryLabel(_ kind: String) -> LocalizedStringKey {
+        switch kind {
+        case "subscription": return "订阅发放"
+        case "refresh": return "航班刷新"
+        case "referral": return "邀请奖励"
+        case "subscription_refund", "referral_refund": return "退款扣回"
+        default: return "云豆"
+        }
+    }
+
+    private func load() async {
+        guard let access = auth.cloudAccessToken else { return }
+        let email = auth.currentEmail
+        do {
+            let result = try await SupabaseAuthClient.flightBeanWallet(accessToken: access)
+            guard !Task.isCancelled, auth.currentEmail == email else { return }
+            wallet = result
+            error = false
+        } catch {
+            if !Task.isCancelled, auth.currentEmail == email { self.error = true }
+        }
+    }
+
+    private func bind() async {
+        guard let access = auth.cloudAccessToken else { return }
+        let email = auth.currentEmail
+        saving = true
+        defer { saving = false }
+        do {
+            let bound = try await SupabaseAuthClient.bindFlightBeanInvite(invite, accessToken: access)
+            guard auth.currentEmail == email else { return }
+            guard bound else { error = true; return }
+            invite = ""
+            await load()
+        } catch {
+            if auth.currentEmail == email { self.error = true }
+        }
+    }
+}
+
+enum FlightPushPreference {
+    private static func key(_ email: String) -> String { "flight.push.enabled." + email.lowercased() }
+    static func isEnabled(email: String) -> Bool { UserDefaults.standard.bool(forKey: key(email)) }
+    static func set(_ enabled: Bool, email: String) { UserDefaults.standard.set(enabled, forKey: key(email)) }
+}
+
+private struct FlightMessageInboxView: View {
+    @Environment(AuthViewModel.self) private var auth
+    @State private var messages: [SupabaseAuthClient.FlightMessage] = []
+    @State private var failed = false
+
+    @State private var pushEnabled = false
+    @State private var pushFailed = false
+    @State private var enrollingEmail: String?
+
+    var body: some View {
+        List {
+            Section {
+                Button { Task { await changePush() } } label: {
+                    Text(LocalizedStringKey(pushEnabled ? "关闭航班推送" : "开启航班推送"))
+                }
+                .disabled(enrollingEmail != nil)
+                Text("通知包含客人名称及航班信息。").font(.footnote).foregroundStyle(.secondary)
+                if pushFailed { Text("航班推送暂不可用。").foregroundStyle(.secondary) }
+            }
+            if failed { Text("暂时无法完成操作，请重试。") }
+            else if messages.isEmpty { Text("暂无航班消息") }
+            ForEach(messages) { message in
+                VStack(alignment: .leading, spacing: 6) {
+                    Text(message.title).font(.headline)
+                    Text(message.body)
+                    Text(message.created_at).font(.caption).foregroundStyle(.secondary)
+                }
+            }
+        }
+        .navigationTitle("航班管家")
+        .task(id: auth.currentEmail) {
+            messages = []
+            enrollingEmail = nil
+            pushEnabled = FlightPushPreference.isEnabled(email: auth.currentEmail)
+            await load()
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .flightPushRegistered)) { event in
+            guard let email = enrollingEmail else { return }
+            Task { await finishPush(event.object as? String, email: email) }
+        }
+        .refreshable { await load() }
+    }
+
+    private func changePush() async {
+        pushFailed = false
+        let email = auth.currentEmail
+        if pushEnabled {
+            guard let access = auth.cloudAccessToken else { return }
+            do {
+                guard try await SupabaseAuthClient.setFlightPushDevice(token: nil, accessToken: access) else {
+                    pushFailed = true
+                    return
+                }
+                FlightPushPreference.set(false, email: email)
+                if auth.currentEmail == email { pushEnabled = false }
+            } catch { pushFailed = true }
+            return
+        }
+        do {
+            guard try await UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound]) else {
+                pushFailed = true
+                return
+            }
+            guard auth.currentEmail == email else { return }
+            enrollingEmail = email
+            UIApplication.shared.registerForRemoteNotifications()
+        } catch { pushFailed = true }
+    }
+
+    private func finishPush(_ token: String?, email: String) async {
+        defer { if enrollingEmail == email { enrollingEmail = nil } }
+        guard auth.currentEmail == email else { return }
+        guard let token, let access = auth.cloudAccessToken else { pushFailed = true; return }
+        do {
+            let registered = try await SupabaseAuthClient.setFlightPushDevice(token: token, accessToken: access)
+            guard auth.currentEmail == email else { return }
+            FlightPushPreference.set(registered, email: email)
+            pushEnabled = registered
+            pushFailed = !registered
+        } catch { pushFailed = true }
+    }
+
+    private func load() async {
+        guard let access = auth.cloudAccessToken else { return }
+        let email = auth.currentEmail
+        do {
+            let result = try await SupabaseAuthClient.flightMessages(accessToken: access)
+            guard !Task.isCancelled, auth.currentEmail == email else { return }
+            messages = result
+            failed = false
+        } catch {
+            if !Task.isCancelled, auth.currentEmail == email { failed = true }
         }
     }
 }

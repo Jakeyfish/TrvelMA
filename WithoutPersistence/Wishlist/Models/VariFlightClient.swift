@@ -19,6 +19,11 @@ struct VariFlightLookupResult: Codable, Hashable, Identifiable {
     var actualArrival: String? = nil
     var estimatedArrival: String? = nil
     var scheduledArrival: String? = nil
+    var departureAirportCode: String? = nil
+    var arrivalAirportCode: String? = nil
+    var automaticRefreshState: String? = nil
+    var automaticDepartureState: String? = nil
+    var originalScheduledDeparture: String? = nil
 
     var displayDeparture: (time: String?, label: String) {
         if let actualDeparture { return (actualDeparture, "实际起飞") }
@@ -382,7 +387,7 @@ struct VariFlightClient {
             let message: String
             if let payload = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any],
                let serverMessage = payload["error"] as? String {
-                message = serverMessage
+                message = AppLocalization.text(serverMessage)
             } else {
                 switch http.statusCode {
                 case 401: message = String(localized: "飞友 API 密钥无效，请检查设置。", locale: AppLanguageSettings.currentLocale)
@@ -409,7 +414,8 @@ struct VariFlightClient {
         locationStart: String,
         locationEnd: String,
         cloudAccessToken: String? = nil,
-        forceRefresh: Bool = false
+        forceRefresh: Bool = false,
+        selectedFlight: VariFlightLookupResult? = nil
     ) async throws -> [VariFlightLookupResult] {
         let airportHint: (code: String, isArrival: Bool)?
         if serviceType == "接机", let code = Self.explicitAirportCode(in: locationStart) {
@@ -418,6 +424,21 @@ struct VariFlightClient {
             airportHint = (code, false)
         } else {
             airportHint = nil
+        }
+
+        if forceRefresh {
+            let departure = selectedFlight.flatMap { $0.departureAirportCode ?? Self.airportCode(in: $0.departureAirport) }
+                ?? (airportHint?.isArrival == false ? airportHint?.code : nil)
+            let arrival = selectedFlight.flatMap { $0.arrivalAirportCode ?? Self.airportCode(in: $0.arrivalAirport) }
+                ?? (airportHint?.isArrival == true ? airportHint?.code : nil)
+            let candidates = try await lookupCandidates(flightNumber: flightNumber, flightDate: flightDate,
+                cloudAccessToken: cloudAccessToken, forceRefresh: true,
+                departureAirport: departure, arrivalAirport: arrival)
+            let matching = candidates.filter {
+                Self.candidateMatchesTripRoute($0, serviceType: serviceType, locationStart: locationStart, locationEnd: locationEnd)
+            }
+            guard !matching.isEmpty else { throw VariFlightClientError.flightNotFound }
+            return matching
         }
 
         let initial: [VariFlightLookupResult]
@@ -813,7 +834,9 @@ struct VariFlightClient {
             scheduledDeparture: fields[.scheduledDeparture],
             actualArrival: fields[.actualArrival],
             estimatedArrival: fields[.estimatedArrival],
-            scheduledArrival: fields[.scheduledArrival]
+            scheduledArrival: fields[.scheduledArrival],
+            departureAirportCode: fields[.departureCode], arrivalAirportCode: fields[.arrivalCode],
+            originalScheduledDeparture: fields[.originalScheduledDeparture]
         )
     }
 
@@ -840,7 +863,10 @@ struct VariFlightClient {
                     scheduledDeparture: result.scheduledDeparture ?? previous.scheduledDeparture,
                     actualArrival: result.actualArrival ?? previous.actualArrival,
                     estimatedArrival: result.estimatedArrival ?? previous.estimatedArrival,
-                    scheduledArrival: result.scheduledArrival ?? previous.scheduledArrival
+                    scheduledArrival: result.scheduledArrival ?? previous.scheduledArrival,
+                    departureAirportCode: result.departureAirportCode ?? previous.departureAirportCode,
+                    arrivalAirportCode: result.arrivalAirportCode ?? previous.arrivalAirportCode,
+                    originalScheduledDeparture: result.originalScheduledDeparture ?? previous.originalScheduledDeparture
                 )
             } else {
                 positions[result.id] = merged.count
@@ -852,6 +878,7 @@ struct VariFlightClient {
 
     private enum FlightField { case airline, departureAirport, arrivalAirport, departureTerminal, arrivalTerminal, departure, arrival, baggage, status
         case actualDeparture, estimatedDeparture, scheduledDeparture, actualArrival, estimatedArrival, scheduledArrival
+        case departureCode, arrivalCode, originalScheduledDeparture
     }
 
     private func fields(from value: Any) -> [FlightField: String]? {
@@ -881,7 +908,12 @@ struct VariFlightClient {
         var result: [FlightField: String] = [:]
         for (key, value) in object.sorted(by: { $0.key < $1.key }) {
             let field: FlightField
-            switch normalizedKey(key) {
+            let normalized = normalizedKey(key)
+            if let code = value as? String, code.range(of: #"^[A-Za-z]{3}$"#, options: .regularExpression) != nil {
+                if normalized == "flightdepcode" { result[.departureCode] = code.uppercased() }
+                if normalized == "flightarrcode" { result[.arrivalCode] = code.uppercased() }
+            }
+            switch normalized {
             case "flightstate", "flightstatus", "status", "航班状态", "航班狀態":
                 field = .status
             case "airline", "airlinename", "carrier", "carriername", "airlinetitle", "flightcompany":
@@ -894,6 +926,8 @@ struct VariFlightClient {
                 field = .actualDeparture
             case "flightdeptimereadydate", "estimateddeparturetime", "estimateddeparture", "etd":
                 field = .estimatedDeparture
+            case "fflightdeptimeplandate", "originalscheduleddeparture":
+                field = .originalScheduledDeparture
             case "flightdeptimeplandate", "scheduleddeparturetime", "scheduleddeparture", "std":
                 field = .scheduledDeparture
             case "flightarrtimedate", "actualarrivaltime", "actualarrival", "ata":
@@ -941,10 +975,13 @@ struct VariFlightClient {
         let patterns: [(FlightField, String)] = [
             (.status, #"(?:FlightState|FlightStatus|航班状态|航班狀態|status)[\"']?\s*[:：]\s*[\"']?([^\"'\n,，;；}]+)"#),
             (.airline, #"(?:FlightCompany|航空公司|航司|airline(?:\s*name)?|carrier)[\"']?\s*[:：]\s*[\"']?([^\"'\n,，;；}]+)"#),
+            (.departureCode, #"FlightDepcode[\"']?\s*[:：]\s*[\"']?([A-Za-z]{3})\b"#),
             (.departureAirport, #"(?:FlightDepcode|FlightDepAirport|FlightDep|FlightDept|departureAirport|departureAirportName|depAirport|depAirportName|departureStation|起飞机场|出发机场|出发地|departure\s*airport|origin|from)[\"']?\s*[:：]\s*[\"']?([^\"'\n,，;；}]+)"#),
+            (.arrivalCode, #"FlightArrcode[\"']?\s*[:：]\s*[\"']?([A-Za-z]{3})\b"#),
             (.arrivalAirport, #"(?:FlightArrcode|FlightArrAirport|FlightArr|arrivalAirport|arrivalAirportName|arrAirport|arrAirportName|arrivalStation|到达机场|目的机场|到达地|arrival\s*airport|destination|to)[\"']?\s*[:：]\s*[\"']?([^\"'\n,，;；}]+)"#),
             (.actualDeparture, #"(?<![A-Za-z])(?:FlightDeptimeDate|actualDepartureTime|actualDeparture|ATD|actual\s+departure(?:\s*time)?|实际起飞(?:时间)?)[\"']?\s*[:：]\s*[\"']?([^\"'\n,，;；}]+)"#),
             (.estimatedDeparture, #"(?<![A-Za-z])(?:FlightDeptimeReadyDate|estimatedDepartureTime|estimatedDeparture|ETD|estimated\s+departure(?:\s*time)?|预计起飞(?:时间)?)[\"']?\s*[:：]\s*[\"']?([^\"'\n,，;；}]+)"#),
+            (.originalScheduledDeparture, #"(?:FFlightDeptimePlanDate|originalScheduledDeparture)[\"']?\s*[:：]\s*[\"']?([^\"'\n,，;；}]+)"#),
             (.scheduledDeparture, #"(?<![A-Za-z])(?:FlightDeptimePlanDate|scheduledDepartureTime|scheduledDeparture|STD|scheduled\s+departure(?:\s*time)?|计划起飞(?:时间)?)[\"']?\s*[:：]\s*[\"']?([^\"'\n,，;；}]+)"#),
             (.departure, #"(?<![A-Za-z])(?:起飞时间|departure(?:\s*time)?)[\"']?\s*[:：]\s*[\"']?([^\"'\n,，;；}]+)"#),
             (.actualArrival, #"(?<![A-Za-z])(?:FlightArrtimeDate|actualArrivalTime|actualArrival|ATA|actual\s+arrival(?:\s*time)?|实际到达(?:时间)?)[\"']?\s*[:：]\s*[\"']?([^\"'\n,，;；}]+)"#),

@@ -275,6 +275,68 @@ enum SupabaseAuthClient {
         return data
     }
 
+    struct FlightBeanWallet: Decodable {
+        struct Entry: Decodable, Identifiable {
+            let id: Int
+            let kind: String
+            let amount: Int
+            let created_at: String
+        }
+        let balance: Int
+        let invite_code: String
+        let entries: [Entry]
+        let period_end: String?
+        let referral_bound: Bool
+    }
+
+    struct FlightMessage: Decodable, Identifiable {
+        let id: String
+        let title: String
+        let body: String
+        let created_at: String
+    }
+
+    static func flightBeanWallet(accessToken: String) async throws -> FlightBeanWallet {
+        try await post(path: "/rest/v1/rpc/flight_bean_wallet", body: [:], accessToken: accessToken, includeDeviceHeader: true)
+    }
+
+    static func bindFlightBeanInvite(_ code: String, accessToken: String) async throws -> Bool {
+        try await post(path: "/rest/v1/rpc/bind_flight_bean_invite", body: ["p_code": code],
+                       accessToken: accessToken, includeDeviceHeader: true)
+    }
+
+    static func setFlightPushDevice(token: String?, accessToken: String) async throws -> Bool {
+        var body: [String: Any] = ["p_device": accountDeviceID]
+        if let token {
+            body["p_token"] = token
+            #if DEBUG
+            body["p_environment"] = "development"
+            #else
+            body["p_environment"] = "production"
+            #endif
+        }
+        return try await post(path: "/rest/v1/rpc/set_flight_push_device", body: body,
+                              accessToken: accessToken, includeDeviceHeader: true)
+    }
+
+    static func flightMessages(accessToken: String) async throws -> [FlightMessage] {
+        try await post(path: "/rest/v1/rpc/flight_message_inbox", body: [:], accessToken: accessToken, includeDeviceHeader: true)
+    }
+
+    struct FlightAutoPreferences: Decodable, Equatable {
+        var international: Int
+        var domestic: Int
+        var followup: Int
+    }
+
+    static func flightAutoPreferences(accessToken: String, saving values: FlightAutoPreferences? = nil) async throws -> FlightAutoPreferences {
+        let body: [String: Any] = values.map {
+            ["p_international": $0.international, "p_domestic": $0.domestic, "p_followup": $0.followup]
+        } ?? [:]
+        return try await post(path: "/rest/v1/rpc/flight_auto_preferences", body: body,
+                              accessToken: accessToken, includeDeviceHeader: true)
+    }
+
     private static func post<T: Decodable>(path: String, queryItems: [URLQueryItem] = [], body: [String: Any], accessToken: String? = nil, includeDeviceHeader: Bool = false) async throws -> T {
         var request = URLRequest(url: endpoint(path: path, queryItems: queryItems))
         request.timeoutInterval = requestTimeout

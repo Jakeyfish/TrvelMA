@@ -816,7 +816,10 @@ private struct FinancialSnapshotRecordCard: View {
     }
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
-            Label(value("类型"), systemImage: value("类型").contains("送") ? "airplane.departure" : "airplane.arrival")
+            HStack(spacing: 6) {
+                Label(LocalizedStringKey(value("类型")), systemImage: value("类型").contains("送") ? "airplane.departure" : "airplane.arrival")
+                TripAgencyBadge(orderSource: value("旅行社").isEmpty ? "" : "旅行社订单", agencyName: value("旅行社"))
+            }
                 .font(.subheadline.weight(.medium)).foregroundStyle(Color.accentColor)
             HStack(spacing: 6) {
                 fact("\(value("人数")) 位乘客", icon: "person.fill")

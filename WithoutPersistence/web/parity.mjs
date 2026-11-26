@@ -68,16 +68,19 @@ export function recognizePickup(raw, now = new Date()) {
 const aliases={
  status:["flightstate","flightstatus","status","航班状态","航班狀態"],
  airlineName:['airline','airlinename','carrier','carriername','airlinetitle','flightcompany'],
- departureAirport:['departureairport','departureairportname','depairport','depairportname','departurestation','depname','dep','flightdept','flightdep','flightdepairport','flightdepcode','起飞机场','出发机场','origin','from'],
- arrivalAirport:['arrivalairport','arrivalairportname','arrairport','arrairportname','arrivalstation','arrname','arr','flightarr','flightarrairport','flightarrcode','到达机场','目的机场','destination','to'],
+ departureAirport:['departureairport','departureairportname','depairport','depairportname','departurestation','depname','dep','flightdept','flightdep','flightdepairport','起飞机场','出发机场','origin','from'],
+ arrivalAirport:['arrivalairport','arrivalairportname','arrairport','arrairportname','arrivalstation','arrname','arr','flightarr','flightarrairport','到达机场','目的机场','destination','to'],
  departureTime:['departuretime','departuredatetime','deptime','depttime'],
  estimatedArrivalTime:['arrivaldatetime','arrivaltime','arrtime'],
  actualDeparture:['flightdeptimedate', 'actualdeparturetime', 'actualdeparture', 'atd', '实际起飞'],
  estimatedDeparture:['flightdeptimereadydate', 'estimateddeparturetime', 'estimateddeparture', 'etd', '预计起飞'],
+ originalScheduledDeparture:['fflightdeptimeplandate','originalscheduleddeparture'],
  scheduledDeparture:['flightdeptimeplandate', 'scheduleddeparturetime', 'scheduleddeparture', 'std', '计划起飞'],
  actualArrival:['flightarrtimedate', 'actualarrivaltime', 'actualarrival', 'ata', '实际到达'],
  estimatedArrival:['flightarrtimereadydate', 'estimatedarrivaltime', 'estimatedarrivedtime', 'arrivalestimatedtime', 'eta', '预计到达'],
  scheduledArrival:['flightarrtimeplandate', 'scheduledarrivaltime', 'scheduledarrival', 'sta', '计划到达'],
+ departureAirportCode:['flightdepcode','departureairportcode'],
+ arrivalAirportCode:['flightarrcode','arrivalairportcode'],
  departureTerminal:['flighthterminal','flightdeptterminal','flightdeptterminalname','departureterminal','departureterminalname','depterminal','depterminalname','deptterminal','terminaldeparture','terminal','出发航站楼','起飞航站楼'],
  arrivalTerminal:['flightterminal','flightarrterminal','flightarrterminalname','arrivalterminal','arrivalterminalname','arrterminal','arrterminalname','terminalarrival','terminalarr','arriveterminal','到达航站楼','到达航站区'],
  baggageCarousel:['baggagecarousel','flightarrbaggagecarousel','carousel','baggageclaim','baggageclaimbelt','luggagecarousel']
@@ -100,6 +103,10 @@ export function flightDisplayTimes(flight) {
 
 export function parseFlights(payload) {
   function record(fields) {
+    fields.departureAirport ||= fields.departureAirportCode;
+    fields.arrivalAirport ||= fields.arrivalAirportCode;
+    if (!fields.departureAirport) delete fields.departureAirport;
+    if (!fields.arrivalAirport) delete fields.arrivalAirport;
     const departure = fields.scheduledDeparture || fields.departureTime || fields.estimatedDeparture || fields.actualDeparture;
     if (departure) fields.departureTime = departure;
     const arrival = fields.estimatedArrival || fields.scheduledArrival || fields.estimatedArrivalTime || fields.actualArrival;

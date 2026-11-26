@@ -976,3 +976,30 @@ body { background: var(--bg); color: var(--text); }
 
 .business-card-export { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 18px; }
 .preview-heading > div { min-width: 0; overflow-wrap: anywhere; }
+
+
+.trip-agency-badge {
+  display: inline-grid;
+  place-items: center;
+  inline-size: 1.5rem;
+  block-size: 1.5rem;
+  border: 1px solid currentColor;
+  border-radius: 50%;
+  margin-inline-start: 0.35rem;
+  font-size: 0.72rem;
+  line-height: 1;
+  vertical-align: middle;
+}
+
+
+.silver-bean {
+  display: inline-block;
+  inline-size: 1.15rem;
+  block-size: 0.72rem;
+  border-radius: 999px;
+  transform: rotate(-28deg);
+  background: linear-gradient(145deg, #fff, #8a8d94);
+  border: 1px solid #777b83;
+}
+.bean-entries li { display: flex; gap: 0.75rem; padding-block: 0.35rem; }
+.bean-entries small { margin-inline-start: auto; }

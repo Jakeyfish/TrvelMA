@@ -67,7 +67,20 @@ private struct AdaptiveItemFormPresentationModifier<Item: Identifiable, Presente
     }
 }
 
+extension Notification.Name {
+    static let flightPushRegistered = Notification.Name("flightPushRegistered")
+}
+
 final class WishlistApplicationDelegate: NSObject, UIApplicationDelegate {
+    func application(_ application: UIApplication, didRegisterForRemoteNotificationsWithDeviceToken deviceToken: Data) {
+        let value = deviceToken.map { String(format: "%02x", $0) }.joined()
+        NotificationCenter.default.post(name: .flightPushRegistered, object: value)
+    }
+
+    func application(_ application: UIApplication, didFailToRegisterForRemoteNotificationsWithError error: Error) {
+        NotificationCenter.default.post(name: .flightPushRegistered, object: nil)
+    }
+
     func application(
         _ application: UIApplication,
         supportedInterfaceOrientationsFor window: UIWindow?
@@ -111,6 +124,16 @@ struct WishlistApp: App {
                 .environment(\.locale, languageSettings.locale)
                 .modelContainer(dataStore.activeContainer)
                .environment(dataSource)
+               .onReceive(NotificationCenter.default.publisher(for: .flightPushRegistered)) { event in
+                   guard let token = event.object as? String, let access = auth.cloudAccessToken,
+                         FlightPushPreference.isEnabled(email: auth.currentEmail) else { return }
+                   Task { _ = try? await SupabaseAuthClient.setFlightPushDevice(token: token, accessToken: access) }
+               }
+               .task(id: auth.currentEmail) {
+                   if auth.canQueryFlights, FlightPushPreference.isEnabled(email: auth.currentEmail) {
+                       UIApplication.shared.registerForRemoteNotifications()
+                   }
+               }
                .onChange(of: scenePhase) { _, newPhase in
                    if newPhase == .active {
                        auth.refreshSessionIfNeeded()

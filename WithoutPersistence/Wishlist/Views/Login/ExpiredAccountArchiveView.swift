@@ -55,7 +55,22 @@ struct ExpiredAccountArchiveView: View {
                                 ForEach(fields, id: \.0) { field in
                                     if let value = row[field.0], !(value is NSNull) {
                                         let text = String(describing: value)
-                                        if !text.isEmpty { LabeledContent(AppLocalization.text(field.1), value: field.0 == "service_type" ? AppLocalization.text(text) : text).textSelection(.enabled) }
+                                        if !text.isEmpty {
+                                            LabeledContent {
+                                                if field.0 == "service_type" {
+                                                    HStack(spacing: 6) {
+                                                        Text(AppLocalization.text(text))
+                                                        TripAgencyBadge(orderSource: row["order_source"] as? String ?? "",
+                                                                        agencyName: row["travel_agency_name"] as? String ?? "")
+                                                    }
+                                                } else {
+                                                    Text(text)
+                                                }
+                                            } label: {
+                                                Text(AppLocalization.text(field.1))
+                                            }
+                                            .textSelection(.enabled)
+                                        }
                                     }
                                 }
                                 if section.0 == "user_settings" { Text("完整资料包含在导出文件中。").foregroundStyle(.secondary) }

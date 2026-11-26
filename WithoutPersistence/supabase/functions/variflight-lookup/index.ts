@@ -1,3 +1,5 @@
+import { successfulFlightResponse } from "../_shared/variflight-response.ts";
+import { queryVariFlight } from "../_shared/variflight-provider.ts";
 import { createClient } from "npm:@supabase/supabase-js@2";
 
 const corsHeaders = {
@@ -36,10 +38,11 @@ Deno.serve(async (request) => {
   const { data: { user }, error: userError } = await supabase.auth.getUser();
   if (userError || !user) return jsonError(401, "登录状态无效，请重新登录。");
 
+  const ownerID = user.id;
   const { data: entitlement, error: entitlementError } = await supabase
     .from("account_entitlements")
     .select("edition,status,expires_at")
-    .eq("owner_id", user.id)
+    .eq("owner_id", ownerID)
     .maybeSingle();
   if (entitlementError) {
     console.error("Unable to verify VariFlight entitlement", entitlementError.message);
@@ -82,16 +85,16 @@ Deno.serve(async (request) => {
     ? createClient(supabaseUrl, serviceRoleKey, { auth: { persistSession: false, autoRefreshToken: false } })
     : null;
 
-  if (!forceRefresh && cache) {
+  if (cache) {
     const { data: cached, error: cacheError } = await cache
       .from("variflight_response_cache")
-      .select("response_text,content_type")
+      .select("response_text,content_type,created_at")
       .eq("query_hash", queryHash)
       .gt("expires_at", new Date().toISOString())
       .maybeSingle();
     if (cacheError) {
       console.error("Unable to read VariFlight response cache", cacheError.message);
-    } else if (cached) {
+    } else if (cached && (!forceRefresh || Date.now() - Date.parse(cached.created_at) < 30_000) && successfulFlightResponse(cached.response_text)) {
       return new Response(cached.response_text, {
         status: 200,
         headers: { ...corsHeaders, "Cache-Control": "no-store", "Content-Type": cached.content_type },
@@ -99,57 +102,49 @@ Deno.serve(async (request) => {
     }
   }
 
+  const charge = forceRefresh && Deno.env.get("FLIGHT_BEANS_ENFORCED") === "true";
+  const hold = charge ? crypto.randomUUID() : null;
+  if (hold) {
+    if (!cache) return jsonError(503, "航班查询服务尚未完成配置。");
+    const { data: reserved, error } = await cache.rpc("reserve_flight_bean", { p_owner: ownerID, p_hold: hold });
+    if (error) return jsonError(503, "暂时无法确认云豆余额，请稍后重试。");
+    if (!reserved) return jsonError(429, "云豆余额不足，请在我的账号查看云豆。");
+  }
+  async function finishCharge(success: boolean) {
+    if (!hold || !cache) return true;
+    const { data, error } = await cache.rpc("finish_flight_bean", { p_owner: ownerID, p_hold: hold, p_charge: success });
+    return !error && data === true;
+  }
   const { data: allowed, error: quotaError } = await supabase.rpc("consume_variflight_quota");
   if (quotaError) {
+    await finishCharge(false);
     console.error("Unable to consume VariFlight quota", quotaError.message);
     return jsonError(503, "暂时无法确认航班查询额度，请稍后重试。");
   }
-  if (allowed !== true) return jsonError(429, "查询次数已达上限，请稍后再试。");
+  if (allowed !== true) {
+    await finishCharge(false);
+    return jsonError(429, "查询次数已达上限，请稍后再试。");
+  }
 
   let upstream: Response;
+  let responseText: string;
   try {
-    upstream = await fetch("https://ai.variflight.com/servers/aviation/mcp", {
-      method: "POST",
-      redirect: "error",
-      headers: {
-        "X-API-Key": variflightKey,
-        Accept: "application/json, text/event-stream",
-        "Content-Type": "application/json",
-        "MCP-Protocol-Version": "2025-03-26",
-      },
-      body: JSON.stringify({
-        jsonrpc: "2.0",
-        id: 1,
-        method: "tools/call",
-        params: {
-          name: "searchFlightsByNumber",
-          arguments: {
-            fnum: flightNumber,
-            date: flightDate,
-            ...(departureAirport ? { dep: departureAirport } : {}),
-            ...(arrivalAirport ? { arr: arrivalAirport } : {}),
-          },
-        },
-      }),
-    });
-  } catch (error) {
-    console.error("VariFlight upstream request failed", error instanceof Error ? error.message : "unknown error");
+    upstream = await queryVariFlight(variflightKey, flightNumber, flightDate, departureAirport, arrivalAirport);
+    responseText = await upstream.text();
+  } catch {
+    await finishCharge(false);
     return jsonError(502, "无法连接飞友航班服务，请稍后重试。");
   }
 
+  if (!upstream.ok || !successfulFlightResponse(responseText)) {
+    await finishCharge(false);
+    return jsonError(upstream.status === 403 ? 503 : 502, "飞友航班查询失败，请稍后重试。");
+  }
+  if (!await finishCharge(true)) return jsonError(503, "暂时无法结算云豆，请稍后重试。");
   const headers = new Headers(corsHeaders);
   headers.set("Cache-Control", "no-store");
   const contentType = upstream.headers.get("Content-Type") ?? "application/json; charset=utf-8";
   headers.set("Content-Type", contentType);
-  if (!upstream.ok) {
-    // Do not pass upstream diagnostics through; they can contain provider details.
-    console.error("VariFlight upstream returned HTTP", upstream.status);
-    const status = upstream.status === 401 ? 502 : upstream.status === 403 ? 503 : 502;
-    return jsonError(status, upstream.status === 403
-      ? "航班查询服务暂不可用，请联系管理员检查服务额度。"
-      : "飞友航班查询失败，请稍后重试。");
-  }
-  const responseText = await upstream.text();
   const ttlMilliseconds = flightDate > new Date().toISOString().slice(0, 10)
     ? 6 * 60 * 60 * 1000
     : 2 * 60 * 1000;
@@ -162,6 +157,7 @@ Deno.serve(async (request) => {
         response_text: responseText,
         content_type: contentType,
         expires_at: expiresAt,
+        created_at: new Date().toISOString(),
       }, { onConflict: "query_hash" });
     if (cacheWriteError) console.error("Unable to write VariFlight response cache", cacheWriteError.message);
     await cache.from("variflight_response_cache").delete().lt("expires_at", new Date().toISOString());

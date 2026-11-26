@@ -632,6 +632,22 @@ private struct RightFacingAirplane: Shape {
     }
 }
 
+struct TripAgencyBadge: View {
+    let orderSource: String
+    let agencyName: String
+
+    var body: some View {
+        let name = agencyName.trimmingCharacters(in: .whitespacesAndNewlines)
+        if orderSource == "旅行社订单", let initial = name.first {
+            Text(String(initial))
+                .font(.caption2.weight(.semibold))
+                .frame(minWidth: 20, minHeight: 20)
+                .background(Circle().strokeBorder(Color.accentColor.opacity(0.55)))
+                .accessibilityLabel(Text(verbatim: name))
+        }
+    }
+}
+
 struct FlightInformationPanel: View {
     @Environment(\.locale) private var locale
     let flightNumber: String
@@ -648,10 +664,11 @@ struct FlightInformationPanel: View {
     var body: some View {
         Group {
             if let error {
-                Text(error)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .frame(maxWidth: .infinity, alignment: .leading)
+                VStack(alignment: .leading, spacing: 10) {
+                    Text(error).font(.caption).foregroundStyle(.secondary)
+                    if let result { flightContent(result) }
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
             } else if isLoading {
                 HStack(spacing: 8) {
                     ProgressView()
@@ -696,6 +713,12 @@ struct FlightInformationPanel: View {
                     alignment: .trailing,
                     timeZoneOnLeading: true
                 )
+            }
+            if result.automaticDepartureState == "unconfirmed", result.actualDeparture == nil {
+                Text("起飞待确认").font(.caption).foregroundStyle(.secondary)
+            }
+            if result.automaticRefreshState == "unconfirmed" {
+                Text("落地待确认").font(.caption).foregroundStyle(.secondary)
             }
             HStack(alignment: .top, spacing: 12) {
                 VStack(alignment: .leading, spacing: 3) {
@@ -950,7 +973,10 @@ private struct TripManagementCard: View {
                                 TripCardAmountText(tripID: String(describing: booking.id), value: BaseCurrencyCatalog.format(booking.price, countryCode: baseCurrencyCountry))
                                     .font(.headline.weight(.bold)).lineLimit(1).minimumScaleFactor(0.75)
                             }
-                            Label(LocalizedStringKey(booking.serviceType), systemImage: serviceIcon)
+                            HStack(spacing: 6) {
+                                Label(LocalizedStringKey(booking.serviceType), systemImage: serviceIcon)
+                                TripAgencyBadge(orderSource: booking.orderSource, agencyName: booking.travelAgencyName)
+                            }
                                 .font(.subheadline.weight(.medium)).foregroundStyle(Color.accentColor)
                             HStack(spacing: 6) {
                                 infoPill(Text(passengerCountLabel(booking.customerCount)), icon: "person.fill")
@@ -1169,7 +1195,8 @@ private struct TripManagementCard: View {
                     locationStart: booking.locationStart,
                     locationEnd: booking.locationEnd,
                     cloudAccessToken: cloudAccessToken,
-                    forceRefresh: forceRefresh
+                    forceRefresh: forceRefresh,
+                    selectedFlight: flightLookupResult
                 )
                 guard requestContext == savedFlightDisplayContext else {
                     isLookingUpFlight = false
@@ -2085,7 +2112,8 @@ private struct TripBrowseView: View {
                     locationStart: booking.locationStart,
                     locationEnd: booking.locationEnd,
                     cloudAccessToken: cloudAccessToken,
-                    forceRefresh: forceRefresh
+                    forceRefresh: forceRefresh,
+                    selectedFlight: flightLookupResult
                 )
                 guard requestContext == savedFlightDisplayContext else {
                     isLookingUpFlight = false

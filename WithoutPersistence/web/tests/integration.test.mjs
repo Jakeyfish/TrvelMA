@@ -828,3 +828,44 @@ test('customer history rows show net income including tips and both expense dire
  assert.match(c.customerHTML,/<small>净收入<\/small><strong>[^<]*105\.00/);
  assert.doesNotMatch(c.customerHTML,/<small>车费<\/small>/);
 });
+
+test('agency initials appear beside service type in live and finance snapshot cards only for agency orders', () => {
+  const c = boot();
+  c.trip = {id:'qa', service_type:'接机', order_source:'旅行社订单', travel_agency_name:' 云盛 & 合作'};
+  for (const options of ['{}','{readOnly:true}']) {
+    const html = vm.runInContext(`renderTripCard(trip,${options})`,c);
+    assert.match(html, /接机<span class="trip-agency-badge"[^>]*>云<\/span>/);
+    assert.match(html, /云盛 &amp; 合作/);
+  }
+  c.trip.order_source = '普通客户';
+  assert.doesNotMatch(vm.runInContext('renderTripCard(trip)', c), /trip-agency-badge/);
+});
+
+test('automatic flight settings save independently; invalid minutes cause no write', async () => {
+  const c = boot();
+  c.calls = [];
+  c.form = {values:{flight_international:'70', flight_domestic:'42', flight_followup:'4'}};
+  vm.runInContext(`request=async(path,options)=>{calls.push({path,...options}); return {international:70,domestic:42,followup:4};};`,c);
+  await vm.runInContext('submitFlightAutoSettings(form)',c);
+  assert.equal(c.calls.length,1);
+  assert.equal(c.calls[0].path,'rpc/flight_auto_preferences');
+  assert.equal(c.calls[0].queueOffline,false);
+  assert.equal(vm.runInContext('state.settings.flight_followup_delay',c),4);
+  c.form.values.flight_followup = '';
+  await assert.rejects(vm.runInContext('submitFlightAutoSettings(form)',c));
+  assert.equal(c.calls.length,1);
+});
+
+test('a forced refresh makes one upstream lookup for the selected flight leg', async () => {
+  const c = boot();
+  c.calls = [];
+  c.trip = {flight_info:'JX2',flight_date:'2026-11-25',service_type:'接机',location_start:'LAX',
+    flight_selection_snapshot:parity.makeFlightSnapshot('JX2','2026-11-25',
+      {departureAirport:'TPE',arrivalAirport:'LAX',departureAirportCode:'TPE',arrivalAirportCode:'LAX'})};
+  vm.runInContext(`queryFlights=async(...args)=>{calls.push(args);return [{departureAirport:'TPE',arrivalAirport:'LAX'}];};`,c);
+  await vm.runInContext("queryTripFlights('JX2','2026-11-25',trip,{forceRefresh:true})",c);
+  assert.equal(c.calls.length,1);
+  assert.equal(c.calls[0][2].arrivalAirport,'LAX');
+  assert.equal(c.calls[0][2].departureAirport,'TPE');
+  assert.equal(c.calls[0][3],true);
+});

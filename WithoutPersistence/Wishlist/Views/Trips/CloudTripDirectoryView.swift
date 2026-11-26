@@ -539,7 +539,10 @@ private struct CloudTripManagementCard: View {
                                 TripCardAmountText(tripID: String(describing: trip.id), value: cloudMoney(trip.price, code: trip.currencyCode))
                                     .font(.headline.weight(.bold)).lineLimit(1).minimumScaleFactor(0.75)
                             }
-                            Label(LocalizedStringKey(trip.serviceType), systemImage: serviceIcon)
+                            HStack(spacing: 6) {
+                                Label(LocalizedStringKey(trip.serviceType), systemImage: serviceIcon)
+                                TripAgencyBadge(orderSource: trip.orderSource, agencyName: trip.travelAgencyName)
+                            }
                                 .font(.subheadline.weight(.medium)).foregroundStyle(Color.accentColor)
                             HStack(spacing: 6) {
                                 cloudInfoPill(count: trip.customerCount, singular: "passenger", plural: "passengers", icon: "person.fill", isBag: false)
@@ -732,7 +735,8 @@ private struct CloudTripManagementCard: View {
                     locationStart: trip.locationStart,
                     locationEnd: trip.locationEnd,
                     cloudAccessToken: accessToken,
-                    forceRefresh: forceRefresh
+                    forceRefresh: forceRefresh,
+                    selectedFlight: flightLookupResult
                 )
                 guard requestContext == savedFlightDisplayContext else {
                     isLookingUpFlight = false
@@ -872,7 +876,8 @@ private struct CloudTripRow: View {
                     .font(.subheadline.weight(.semibold))
             }
             HStack(spacing: 8) {
-                Text(trip.serviceType)
+                Text(LocalizedStringKey(trip.serviceType))
+                TripAgencyBadge(orderSource: trip.orderSource, agencyName: trip.travelAgencyName)
                 Text("·")
                 Text(trip.appointmentDate.cloudDateText)
                 if !trip.flightInfo.isEmpty { Text("· \(trip.flightInfo)") }
@@ -1308,7 +1313,8 @@ private struct CloudTripDetailView: View {
                     locationStart: trip.locationStart,
                     locationEnd: trip.locationEnd,
                     cloudAccessToken: accessToken,
-                    forceRefresh: forceRefresh
+                    forceRefresh: forceRefresh,
+                    selectedFlight: flightLookupResult
                 )
                 guard requestContext == savedFlightDisplayContext else {
                     isLookingUpFlight = false

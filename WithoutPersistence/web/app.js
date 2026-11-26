@@ -1,13 +1,13 @@
-import { statementPDF } from "./statement-pdf.mjs?v=20261125-flight-times-v1";
-import { localized } from "./localization.mjs?v=20261125-flight-times-v1";
+import { statementPDF } from "./statement-pdf.mjs?v=20261126-flight-beans-v1";
+import { localized } from "./localization.mjs?v=20261126-flight-beans-v1";
 const uiLanguage = () => normalizedLanguageCode((state.archiveMode ? state.archiveData?.user_settings?.[0]?.language_code : null) || state.settings?.language_code || readInterfaceLanguage());
 const ui = (key, ...args) => localized(key, uiLanguage(), ...args);
-import { flightDisplayName, flightStatusLabel, safeNavigationURL, telephoneNumber, tripTelephoneContacts, financialCategoryGroups, statementMoney, agencyStatementTrips, statementAgencyKey, buildAgencyStatement, pickupReminders, recognizePickup, matchPickupAgency, partsInZone, zonedISO, parseFlights, flightID, makeFlightSnapshot, readFlightSnapshot, routeMatches, lookupTripFlightCandidates, compareTrips, settlementPayload, flightDisplayTimes } from './parity.mjs?v=20261125-flight-times-v1';
+import { flightDisplayName, flightStatusLabel, safeNavigationURL, telephoneNumber, tripTelephoneContacts, financialCategoryGroups, statementMoney, agencyStatementTrips, statementAgencyKey, buildAgencyStatement, pickupReminders, recognizePickup, matchPickupAgency, partsInZone, zonedISO, parseFlights, flightID, makeFlightSnapshot, readFlightSnapshot, routeMatches, lookupTripFlightCandidates, compareTrips, settlementPayload, flightDisplayTimes } from './parity.mjs?v=20261126-flight-beans-v1';
 let airportCrosswalk = [];
 const airportCrosswalkReady = fetch('./assets/airport-crosswalk.json').then(r => { if (!r.ok) throw Error('机场对照表不可用'); return r.json(); }).then(data => { airportCrosswalk = data.airports; }).catch(() => {});
 const SUPABASE_URL = "https://lbdfqzeiweqbsklklcqr.supabase.co";
 const SUPABASE_PUBLISHABLE_KEY = "sb_publishable_d4tmuPirsf8-wUDO0Frd7w_PcXME6rs";
-const WEB_BUILD = "20261125-flight-times-v1";
+const WEB_BUILD = "20261126-flight-beans-v1";
 const SESSION_KEY = "yunsheng.web.session.v1";
 const OFFLINE_CACHE_PREFIX = "yunsheng.web.offline-cache.v1.";
 const OFFLINE_QUEUE_PREFIX = "yunsheng.web.offline-queue.v1.";
@@ -975,7 +975,7 @@ async function loadExpiredArchive() {
 }
 function archiveRecordDetails(row) {
   const fields={customer_name:'客人',name:'名称',appointment_date:'接载日期',appointment_time:'接载时间',price:'金额',tip:'小费',location_start:'起始点',location_end:'目的地',customer_contact:'联系方式',phone:'电话',email:'邮箱',address:'地址',value:'内容',label:'类别',title:'项目',amount:'金额',service_type:'行程类型',flight_info:'航班',memo:'备注',travel_agency_name:'旅行社',travel_agency_order_number:'旅行社订单号'};
-  return Object.entries(fields).filter(([key])=>row[key]!==null&&row[key]!==undefined&&row[key]!=='').map(([key,label])=>`<p><strong>${escapeHTML(ui(label))}：</strong>${escapeHTML(String(row[key]))}</p>`).join('') || `<p>${escapeHTML(ui('完整资料包含在导出文件中。'))}</p>`;
+  return Object.entries(fields).filter(([key])=>row[key]!==null&&row[key]!==undefined&&row[key]!=='').map(([key,label])=>`<p><strong>${escapeHTML(ui(label))}：</strong>${escapeHTML(String(row[key]))}${key === 'service_type' ? tripAgencyBadge(row) : ''}</p>`).join('') || `<p>${escapeHTML(ui('完整资料包含在导出文件中。'))}</p>`;
 }
 async function requestExpiredDeviceRecovery(owner, body) {
   const session = await currentSession();
@@ -1181,7 +1181,7 @@ function renderHome() {
       <div class="section-heading"><h2>待执行行程</h2><small>${visible.length}</small></div>
       ${visible.length ? `<div class="trip-list">${visible.map(renderTripCard).join("")}</div>` : emptyState(state.search ? "没有找到行程" : "目前没有待执行行程", state.search ? "请更换搜索内容。" : "新增行程后会显示在这里。", "trip")}
     </section>
-    ${upcoming.length ? `<aside class="panel home-next-trip"><div class="section-heading"><h2>${escapeHTML(ui('接载时间'))}</h2>${appIcon('clock.fill')}</div><div class="home-next-time">${timeOnly(upcoming[0].appointment_time)}</div><p class="home-next-date">${dateOnly(upcoming[0].appointment_date)}</p><strong>${escapeHTML(upcoming[0].customer_name || ui('未填写客户'))}</strong><span class="pill accent">${escapeHTML(upcoming[0].service_type || ui('行程'))}</span><div class="home-next-route"><p>${appIcon('mappin.and.ellipse')}${escapeHTML(upcoming[0].location_start || '—')}</p><p>${appIcon('flag.checkered')}${escapeHTML(upcoming[0].location_end || '—')}</p></div><button class="button small" data-action="view-trip" data-id="${escapeHTML(upcoming[0].id)}">${escapeHTML(ui('详细信息'))}${appIcon('chevron.right')}</button></aside>` : ''}
+    ${upcoming.length ? `<aside class="panel home-next-trip"><div class="section-heading"><h2>${escapeHTML(ui('接载时间'))}</h2>${appIcon('clock.fill')}</div><div class="home-next-time">${timeOnly(upcoming[0].appointment_time)}</div><p class="home-next-date">${dateOnly(upcoming[0].appointment_date)}</p><strong>${escapeHTML(upcoming[0].customer_name || ui('未填写客户'))}</strong><span class="pill accent">${escapeHTML(upcoming[0].service_type || ui('行程'))}${tripAgencyBadge(upcoming[0])}</span><div class="home-next-route"><p>${appIcon('mappin.and.ellipse')}${escapeHTML(upcoming[0].location_start || '—')}</p><p>${appIcon('flag.checkered')}${escapeHTML(upcoming[0].location_end || '—')}</p></div><button class="button small" data-action="view-trip" data-id="${escapeHTML(upcoming[0].id)}">${escapeHTML(ui('详细信息'))}${appIcon('chevron.right')}</button></aside>` : ''}
     </div>`;
 }
 
@@ -1271,6 +1271,15 @@ function toggleTripAmounts(tripID) {
   renderApp();
 }
 
+function tripAgencyBadge(trip) {
+  const name = String(trip.travel_agency_name || "").trim();
+  if (trip.order_source !== "旅行社订单" || !name) return "";
+  const initial = typeof Intl.Segmenter === "function"
+    ? new Intl.Segmenter().segment(name)[Symbol.iterator]().next().value.segment
+    : Array.from(name)[0];
+  return `<span class="trip-agency-badge" title="${escapeHTML(name)}" aria-label="${escapeHTML(name)}">${escapeHTML(initial)}</span>`;
+}
+
 function renderTripCard(trip, { readOnly = false } = {}) {
   const hidden = !readOnly && tripAmountsHidden(trip.id);
   const money = value => hidden ? "••••" : currency(value);
@@ -1281,7 +1290,7 @@ function renderTripCard(trip, { readOnly = false } = {}) {
   return `<article class="trip-card trip-card-full" ${readOnly ? "" : `data-action="view-trip" data-id="${trip.id}"`}>
     <div class="trip-time"><strong>${timeOnly(trip.appointment_time)}</strong><small>${dateOnly(trip.appointment_date)}</small></div>
     <div class="trip-main">
-      <div class="trip-heading"><div class="trip-title">${readOnly ? `<strong>${escapeHTML(trip.customer_name || "未填写客户")}</strong>` : `<button class="trip-guest-toggle" data-action="toggle-trip-contact" data-id="${escapeHTML(trip.id)}" aria-expanded="${expandedTripContacts.has(trip.id)}">${escapeHTML(trip.customer_name || "未填写客户")}${appIcon(expandedTripContacts.has(trip.id) ? "chevron.up" : "chevron.down")}</button>`}<span class="trip-service">${appIcon(serviceSymbol(trip.service_type))} ${escapeHTML(trip.service_type || "行程")}</span></div><div class="trip-price-controls"><strong class="trip-price">${money(trip.price)}</strong>${readOnly ? "" : `<button type="button" class="trip-amount-visibility" data-action="toggle-trip-amounts" data-id="${escapeHTML(trip.id)}" aria-label="${hidden ? "显示金额" : "隐藏金额"}">${appIcon(hidden ? "eye.slash" : "eye")}</button>`}</div></div>
+      <div class="trip-heading"><div class="trip-title">${readOnly ? `<strong>${escapeHTML(trip.customer_name || "未填写客户")}</strong>` : `<button class="trip-guest-toggle" data-action="toggle-trip-contact" data-id="${escapeHTML(trip.id)}" aria-expanded="${expandedTripContacts.has(trip.id)}">${escapeHTML(trip.customer_name || "未填写客户")}${appIcon(expandedTripContacts.has(trip.id) ? "chevron.up" : "chevron.down")}</button>`}<span class="trip-service">${appIcon(serviceSymbol(trip.service_type))} ${escapeHTML(trip.service_type || "行程")}${tripAgencyBadge(trip)}</span></div><div class="trip-price-controls"><strong class="trip-price">${money(trip.price)}</strong>${readOnly ? "" : `<button type="button" class="trip-amount-visibility" data-action="toggle-trip-amounts" data-id="${escapeHTML(trip.id)}" aria-label="${hidden ? "显示金额" : "隐藏金额"}">${appIcon(hidden ? "eye.slash" : "eye")}</button>`}</div></div>
       ${expandedTripContacts.has(trip.id) ? tripContactActionsHTML(trip) : ""}
       <div class="trip-facts"><span>${appIcon("person.fill")} ${escapeHTML(trip.customer_count || "1")} 位乘客</span><span>${appIcon("suitcase.fill")} ${escapeHTML(trip.customer_stuff || "0")} 件行李</span>${trip.order_source ? `<span>订单：${escapeHTML(trip.order_source)}</span>` : ""}${trip.order_source === '旅行社订单' && trip.travel_agency_order_number ? `<span>旅行社订单号：${escapeHTML(trip.travel_agency_order_number)}</span>` : ''}${trip.customer_contact ? `<span>联系：${escapeHTML(trip.customer_contact)}</span>` : ""}</div>
       <div class="trip-route trip-route-full"><div class="route-point start"><span class="route-icon">${appIcon("mappin.and.ellipse")}</span><span class="trip-route-label">起始点</span><span class="trip-route-value">${escapeHTML(trip.location_start || "—")}</span></div>
@@ -1352,6 +1361,8 @@ function flightResultHTML(number, flight = {}, fallback = {}, showDates = false)
   return `<div class="app-flight-result" aria-label="${escapeHTML(ui("航班查询结果"))}">
     <div class="app-flight-airline"><span class="app-flight-logo" aria-hidden="true">${code ? escapeHTML(code) : appIcon("airplane")}</span><div><strong>${escapeHTML(number || "—")}</strong>${flight.airlineName ? `<small>${escapeHTML(flightDisplayName(flight.airlineName,"airline",uiLanguage()))}</small>` : ""}</div></div>
     <div class="app-flight-schedule"><div class="app-flight-time departure"><div><strong>${escapeHTML(timeDisplay(departure))}</strong><small>${escapeHTML(flightOffsetLabel(departure))}</small></div><span>${escapeHTML(ui(departureLabel))}</span>${localDate(departure, flight.scheduledDeparture) ? `<span>${escapeHTML(localDate(departure, flight.scheduledDeparture))}</span>` : ""}</div><div class="app-flight-direction" aria-label="${escapeHTML(flightStatusLabel(flight.status,uiLanguage()))}"><div><i></i><span>${appIcon("airplane")}</span><i></i></div><small>${escapeHTML(flightStatusLabel(flight.status,uiLanguage()))}</small></div><div class="app-flight-time arrival"><div><small>${escapeHTML(flightOffsetLabel(arrival))}</small><strong>${escapeHTML(timeDisplay(arrival))}</strong></div><span>${escapeHTML(ui(arrivalLabel))}</span>${localDate(arrival, flight.scheduledArrival) ? `<span>${escapeHTML(localDate(arrival, flight.scheduledArrival))}</span>` : ""}</div></div>
+    ${flight.automaticDepartureState === "unconfirmed" && !flight.actualDeparture ? `<small class="muted">${escapeHTML(ui("起飞待确认"))}</small>` : ""}
+    ${flight.automaticRefreshState === "unconfirmed" ? `<small class="muted">${escapeHTML(ui("落地待确认"))}</small>` : ""}
     <div class="app-flight-airports"><div><small>${escapeHTML(ui("起飞机场"))}</small><strong>${escapeHTML(flightDisplayName(flight.departureAirport,"airport",uiLanguage()))}</strong><span>${escapeHTML(ui("出发航站楼"))} ${escapeHTML(flight.departureTerminal?.trim() || "—")}</span></div><div><small>${escapeHTML(ui("到达机场"))}</small><strong>${escapeHTML(flightDisplayName(flight.arrivalAirport,"airport",uiLanguage()))}</strong><span>${escapeHTML(ui("到达航站楼"))} ${escapeHTML(flight.arrivalTerminal?.trim() || fallback.arrivalTerminal?.trim() || "—")}</span></div></div>
   </div>`;
 }
@@ -1932,6 +1943,58 @@ function settingsCurrencyLabel(region, currency, symbol, fallbackRegion, fallbac
   } catch { /* Older browsers retain readable source labels and the stable currency code. */ }
   return `${country} · ${symbol} ${name} (${currency})`;
 }
+function flightAutoSettingsHTML(settings) {
+  const fields = [
+    ["international", "国际航班首查", "flight_international_lead", 60],
+    ["domestic", "国内航班首查", "flight_domestic_lead", 40],
+    ["followup", "落地复查", "flight_followup_delay", 3]
+  ];
+  return `<form id="flightAutoSettingsForm"><fieldset class="form-section"><legend>${escapeHTML(ui("自动读取时间（分钟）"))}</legend><div class="form-grid">${fields.map(([id,label,column,fallback]) =>
+    `<div class="field"><label for="flight-auto-${id}">${escapeHTML(ui(label))}</label><input id="flight-auto-${id}" name="flight_${id}" type="number" min="0" max="360" step="1" required value="${escapeHTML(settings[column] ?? fallback)}"></div>`
+  ).join("")}</div><p class="muted">${escapeHTML(ui("首查按计划落地时间提前读取；复查按最新预计落地时间延后读取一次。"))}</p><button type="submit" class="button primary">${escapeHTML(ui("保存设置"))}</button></fieldset></form>`;
+}
+
+const flightBeansVisible = false;
+const beanEntryLabels = {subscription:"订阅发放",refresh:"航班刷新",referral:"邀请奖励",
+  subscription_refund:"退款扣回",referral_refund:"退款扣回"};
+const silverBean = '<span class="silver-bean" aria-hidden="true"></span>';
+
+async function openBeanWallet() {
+  const owner = state.user?.id, generation = workspaceGeneration;
+  if (!owner) return;
+  const wallet = await request("rpc/flight_bean_wallet",{method:"POST",body:{},queueOffline:false});
+  if (state.user?.id!==owner || generation!==workspaceGeneration) return;
+  const entries = (wallet.entries || []).map(entry => `<li><span>${escapeHTML(ui(beanEntryLabels[entry.kind] || "云豆"))}</span>
+    <strong>${entry.amount > 0 ? "+" : ""}${escapeHTML(entry.amount)}</strong><small>${escapeHTML(dateOnly(entry.created_at))}</small></li>`).join("");
+  showModal(ui("云豆"),`<section class="form-section"><h3>${silverBean} ${escapeHTML(ui("云豆余额"))} · ${escapeHTML(wallet.balance)}</h3>
+    ${wallet.period_end ? `<p>${escapeHTML(ui("当前订阅周期结束"))} · ${escapeHTML(dateOnly(wallet.period_end))}</p>` : ""}
+    <h3>${silverBean} ${escapeHTML(ui("邀请赚云豆"))}</h3><p><code>${escapeHTML(wallet.invite_code)}</code></p>
+    ${!wallet.referral_bound ? `<form id="flightBeanInviteForm"><div class="field"><label for="flightBeanInvite">${escapeHTML(ui("邀请码"))}</label>
+      <input id="flightBeanInvite" name="code" required maxlength="32" autocomplete="off"></div>
+      <button type="submit" class="button primary">${escapeHTML(ui("绑定邀请码"))}</button></form>` : ""}
+    <h3>${silverBean} ${escapeHTML(ui("云豆明细"))}</h3><ul class="bean-entries">${entries}</ul></section>`);
+}
+
+async function bindBeanInvite(form) {
+  const owner = state.user?.id, generation = workspaceGeneration;
+  const code = String(new FormData(form).get("code") || "").trim().toUpperCase();
+  if (!/^[A-F0-9]{32}$/.test(code)) throw Error(ui("暂时无法完成操作，请重试。"));
+  const bound = await request("rpc/bind_flight_bean_invite",{method:"POST",body:{p_code:code},queueOffline:false});
+  if (state.user?.id!==owner || generation!==workspaceGeneration) return;
+  if (bound !== true) throw Error(ui("暂时无法完成操作，请重试。"));
+  await openBeanWallet();
+}
+
+async function openFlightInbox() {
+  const owner = state.user?.id, generation = workspaceGeneration;
+  if (!owner) return;
+  const messages = await request("rpc/flight_message_inbox",{method:"POST",body:{},queueOffline:false});
+  if (state.user?.id!==owner || generation!==workspaceGeneration) return;
+  const rows = messages.map(message=>`<section class="form-section"><h3>${escapeHTML(message.title)}</h3>
+    <p>${escapeHTML(message.body)}</p><small>${escapeHTML(dateOnly(message.created_at))}</small></section>`).join("");
+  showModal(ui("航班管家"), rows || `<p>${escapeHTML(ui("暂无航班消息"))}</p>`);
+}
+
 function renderSettings() {
   const settings = state.settings || defaultSettings();
   const countries = [["US", "美国", "美元", "US Dollar", "USD", "$"], ["CA", "加拿大", "加拿大元", "Canadian Dollar", "CAD", "CA$"], ["CN", "中国", "人民币", "Chinese Yuan", "CNY", "¥"], ["GB", "英国", "英镑", "British Pound", "GBP", "£"], ["JP", "日本", "日元", "Japanese Yen", "JPY", "¥"], ["KR", "韩国", "韩元", "South Korean Won", "KRW", "₩"], ["ES", "西班牙", "欧元", "Euro", "EUR", "€"], ["FR", "法国", "欧元", "Euro", "EUR", "€"], ["DE", "德国", "欧元", "Euro", "EUR", "€"], ["AU", "澳大利亚", "澳元", "Australian Dollar", "AUD", "A$"], ["HK", "中国香港", "港元", "Hong Kong Dollar", "HKD", "HK$"], ["TW", "中国台湾", "新台币", "New Taiwan Dollar", "TWD", "NT$"], ["SG", "新加坡", "新加坡元", "Singapore Dollar", "SGD", "S$"], ["MX", "墨西哥", "墨西哥比索", "Mexican Peso", "MXN", "MX$"], ["IN", "印度", "印度卢比", "Indian Rupee", "INR", "₹"], ["CH", "瑞士", "瑞士法郎", "Swiss Franc", "CHF", "CHF"]];
@@ -1939,7 +2002,9 @@ function renderSettings() {
   const navigation = getAccountPreference("navigation") || (configuredNavigation === "apple_maps" ? "appleMaps" : configuredNavigation || "appleMaps");
   const selectedCurrency = countries.find(([code]) => code === settings.currency_country_code) || countries[0];
   const languageCode = normalizedLanguageCode(settings.language_code);
-  return `<section class="panel" style="max-width:760px"><div class="section-heading" style="margin-top:0"><h2>${escapeHTML(ui('账户偏好'))}</h2></div><form id="settingsForm"><div class="form-grid"><div class="field"><label for="language">${escapeHTML(ui('语言偏好'))}</label><select id="language" name="language_code"><option value="zh-Hans" ${languageCode === "zh-Hans" ? "selected" : ""}>简体中文</option><option value="zh-Hant" ${languageCode === "zh-Hant" ? "selected" : ""}>繁體中文</option><option value="en" ${languageCode === "en" ? "selected" : ""}>English</option><option value="ja" ${languageCode === "ja" ? "selected" : ""}>日本語</option><option value="ko" ${languageCode === "ko" ? "selected" : ""}>한국어</option><option value="es" ${languageCode === "es" ? "selected" : ""}>Español</option></select><small>${escapeHTML(ui('偏好保存至云端；导航、设置、对账单和部分账号页面支持所选语言，其余业务页面仍在补齐翻译。'))}</small></div><div class="field"><label for="currency">${escapeHTML(ui('国家和地区 · 本位币'))}</label><select id="currency" name="currency_country_code">${countries.map(([code, country, currencyName, currencyEnglish, currencyCode, symbol]) => `<option value="${code}" ${settings.currency_country_code === code ? "selected" : ""}>${escapeHTML(settingsCurrencyLabel(code,currencyCode,symbol,country,currencyName))}</option>`).join("")}</select><small>${escapeHTML(settingsCurrencyLabel(selectedCurrency[0],selectedCurrency[4],selectedCurrency[5],selectedCurrency[1],selectedCurrency[2]))}</small></div><div class="field"><label for="navigation_provider">${escapeHTML(ui('默认导航'))}</label><select id="navigation_provider" name="navigation_provider"><option value="appleMaps" ${navigation === "appleMaps" ? "selected" : ""}>${escapeHTML(ui('Apple 地图'))}</option><option value="googleMaps" ${navigation === "googleMaps" ? "selected" : ""}>Google Maps</option></select></div></div><p class="muted">${escapeHTML(ui('航班查询由云端安全代理处理，无需在浏览器保存飞友密钥。'))}</p><button class="button primary" type="submit">${escapeHTML(ui('保存设置'))}</button></form></section>
+  return `<section class="panel" style="max-width:760px"><div class="section-heading" style="margin-top:0"><h2>${escapeHTML(ui('账户偏好'))}</h2></div><form id="settingsForm"><div class="form-grid"><div class="field"><label for="language">${escapeHTML(ui('语言偏好'))}</label><select id="language" name="language_code"><option value="zh-Hans" ${languageCode === "zh-Hans" ? "selected" : ""}>简体中文</option><option value="zh-Hant" ${languageCode === "zh-Hant" ? "selected" : ""}>繁體中文</option><option value="en" ${languageCode === "en" ? "selected" : ""}>English</option><option value="ja" ${languageCode === "ja" ? "selected" : ""}>日本語</option><option value="ko" ${languageCode === "ko" ? "selected" : ""}>한국어</option><option value="es" ${languageCode === "es" ? "selected" : ""}>Español</option></select><small>${escapeHTML(ui('偏好保存至云端；导航、设置、对账单和部分账号页面支持所选语言，其余业务页面仍在补齐翻译。'))}</small></div><div class="field"><label for="currency">${escapeHTML(ui('国家和地区 · 本位币'))}</label><select id="currency" name="currency_country_code">${countries.map(([code, country, currencyName, currencyEnglish, currencyCode, symbol]) => `<option value="${code}" ${settings.currency_country_code === code ? "selected" : ""}>${escapeHTML(settingsCurrencyLabel(code,currencyCode,symbol,country,currencyName))}</option>`).join("")}</select><small>${escapeHTML(settingsCurrencyLabel(selectedCurrency[0],selectedCurrency[4],selectedCurrency[5],selectedCurrency[1],selectedCurrency[2]))}</small></div><div class="field"><label for="navigation_provider">${escapeHTML(ui('默认导航'))}</label><select id="navigation_provider" name="navigation_provider"><option value="appleMaps" ${navigation === "appleMaps" ? "selected" : ""}>${escapeHTML(ui('Apple 地图'))}</option><option value="googleMaps" ${navigation === "googleMaps" ? "selected" : ""}>Google Maps</option></select></div></div><p class="muted">${escapeHTML(ui('航班查询由云端安全代理处理，无需在浏览器保存飞友密钥。'))}</p><button class="button primary" type="submit">${escapeHTML(ui('保存设置'))}</button></form>${flightAutoSettingsHTML(settings)}
+    <div class="form-actions">${flightBeansVisible ? `<button class="button" data-action="flight-bean-wallet">${silverBean} ${escapeHTML(ui("邀请赚云豆"))}</button>` : ""}
+    <button class="button" data-action="flight-message-inbox">${escapeHTML(ui("航班管家"))}</button></div></section>
     <section class="panel expense-catalog-panel" style="max-width:760px;margin-top:14px"><div class="section-heading" style="margin-top:0"><div><h2>${escapeHTML(ui('费用项目'))}</h2><p>${escapeHTML(ui('这些名称会用于财务结算选择。默认包含居间费和高速通行费。'))}</p></div><button class="button small" data-action="add-expense-name">${appIcon("plus")} ${escapeHTML(ui('添加项目'))}</button></div><div class="expense-name-list">${expenseCatalog().map(name => `<div class="expense-name-row"><input data-expense-name value="${escapeHTML(name)}"><button class="button small danger" data-action="remove-expense-name">−</button></div>`).join("")}</div><button class="button primary" data-action="save-expense-catalog" style="margin-top:12px">${escapeHTML(ui('保存费用项目'))}</button></section>
     <section class="panel" style="max-width:760px;margin-top:14px"><div class="section-heading" style="margin-top:0"><h2>${escapeHTML(ui('版本信息'))}</h2></div><button class="button" data-action="build-information">${escapeHTML(ui('版本信息'))}</button></section>
     <section class="panel" style="max-width:760px;margin-top:14px"><div class="section-heading" style="margin-top:0"><h2>${escapeHTML(ui('云端账户'))}</h2></div><div class="customer-info"><strong>${escapeHTML(state.user?.email || "")}</strong><small>${escapeHTML(ui('使用同一云端账号与 iPhone 应用同步。'))}</small></div><button class="button danger" data-action="delete-cloud-account">${escapeHTML(ui('删除云端账号'))}</button><p><a href="./privacy.html" target="_blank">${escapeHTML(ui('隐私政策'))}</a> · <a href="./support.html" target="_blank">${escapeHTML(ui('帮助与支持'))}</a></p></section>`;
@@ -2111,7 +2176,11 @@ async function queryFlights(number, date, airport, forceRefresh) {
   const response = await networkFetch(`${SUPABASE_URL}/functions/v1/variflight-lookup`, { method:'POST', headers:{ apikey:SUPABASE_PUBLISHABLE_KEY,Authorization:`Bearer ${session.access_token}`,'Content-Type':'application/json' },body:JSON.stringify({flightNumber:number,flightDate:date,...airport,forceRefresh}) });
   if ((state.user?.id !== ownerID || workspaceGeneration !== generation)) throw Error('账号已切换，已忽略航班结果。');
   const raw = await response.text();
-  if (!response.ok) throw Error(`航班查询失败（${response.status}），请重试。`);
+  if (!response.ok) {
+    let message;
+    try { message = JSON.parse(raw).error; } catch {}
+    throw Error(message || `航班查询失败（${response.status}），请重试。`);
+  }
   let payload; try {payload=JSON.parse(raw);} catch {payload=raw.split(/\n\s*\n/).map(block=>block.split('\n').filter(line=>line.startsWith('data:')).map(line=>line.slice(5).trim()).join('\n')).filter(Boolean);}
   const candidates = parseFlights(payload);
   await airportCrosswalkReady;
@@ -2122,12 +2191,17 @@ async function queryTripFlights(number, date, trip, { forceRefresh = false } = {
   const ownerID = state.user?.id;
   const generation = workspaceGeneration;
   await airportCrosswalkReady;
-  const candidates = await lookupTripFlightCandidates(airport => {
+  const lookup = (airport) => {
     if (!ownerID || state.user?.id !== ownerID || workspaceGeneration !== generation) {
       throw Error('账号会话已变化，已忽略旧航班结果。');
     }
     return queryFlights(number, date, airport, forceRefresh);
-  }, trip, airportCrosswalk);
+  };
+  const saved = forceRefresh && readFlightSnapshot(trip, airportCrosswalk);
+  const candidates = forceRefresh
+    ? (await lookup({ departureAirport: saved?.departureAirportCode, arrivalAirport: saved?.arrivalAirportCode }))
+        .filter(flight => routeMatches(flight, trip, airportCrosswalk))
+    : await lookupTripFlightCandidates(lookup, trip, airportCrosswalk);
   if (!candidates.length) throw Error('未查到可用航段，原航班信息已保留。');
   return candidates;
 }
@@ -2769,11 +2843,35 @@ async function submitSettings(form) {
   const data = Object.fromEntries(new FormData(form));
   const currencies = { US: ["美元", "US Dollar", "USD", "$"], CN: ["人民币", "Chinese Yuan", "CNY", "¥"], CA: ["加拿大元", "Canadian Dollar", "CAD", "CA$"], JP: ["日元", "Japanese Yen", "JPY", "¥"], GB: ["英镑", "British Pound", "GBP", "£"], AU: ["澳元", "Australian Dollar", "AUD", "A$"], KR: ["韩元", "South Korean Won", "KRW", "₩"], ES: ["欧元", "Euro", "EUR", "€"], FR: ["欧元", "Euro", "EUR", "€"], DE: ["欧元", "Euro", "EUR", "€"], HK: ["港元", "Hong Kong Dollar", "HKD", "HK$"], TW: ["新台币", "New Taiwan Dollar", "TWD", "NT$"], SG: ["新加坡元", "Singapore Dollar", "SGD", "S$"], MX: ["墨西哥比索", "Mexican Peso", "MXN", "MX$"], IN: ["印度卢比", "Indian Rupee", "INR", "₹"], CH: ["瑞士法郎", "Swiss Franc", "CHF", "CHF"] };
   const [name, , code, symbol] = currencies[data.currency_country_code] || currencies.US;
-  const settings = { ...(state.settings || {}), owner_id: ownerID, language_code: data.language_code, currency_country_code: data.currency_country_code, currency_name: name, currency_code: code, currency_symbol: symbol, navigation_provider: data.navigation_provider || "appleMaps", updated_at: new Date().toISOString() };
+  const {flight_international_lead, flight_domestic_lead, flight_followup_delay, ...ordinarySettings} = state.settings || {};
+  const settings = { ...ordinarySettings, owner_id: ownerID, language_code: data.language_code, currency_country_code: data.currency_country_code, currency_name: name, currency_code: code, currency_symbol: symbol, navigation_provider: data.navigation_provider || "appleMaps", updated_at: new Date().toISOString() };
   await upsert("user_settings", settings, "owner_id");
   if (state.user?.id !== ownerID) return;
   setAccountPreference("navigation", data.navigation_provider || "appleMaps");
-  state.settings = settings; renderApp(); showToast(ui("设置已保存。"));
+  state.settings = { ...state.settings, ...settings };
+  renderApp(); showToast(ui("设置已保存。"));
+}
+
+async function submitFlightAutoSettings(form) {
+  const ownerID = state.user?.id;
+  const generation = workspaceGeneration;
+  if (!ownerID) return;
+  const data = new FormData(form);
+  const minutes = ["international", "domestic", "followup"].map(key => {
+    const raw = data.get(`flight_${key}`);
+    return typeof raw === "string" && raw.trim() ? Number(raw) : NaN;
+  });
+  if (minutes.some(value => !Number.isInteger(value) || value < 0 || value > 360)) {
+    throw Error(ui("自动读取设置暂不可用，请重试。"));
+  }
+  const [p_international, p_domestic, p_followup] = minutes;
+  const saved = await request("rpc/flight_auto_preferences", {
+    method: "POST", body: {p_international, p_domestic, p_followup}, queueOffline: false
+  });
+  if (state.user?.id !== ownerID || generation !== workspaceGeneration) return;
+  state.settings = {...state.settings, flight_international_lead: saved.international,
+    flight_domestic_lead: saved.domestic, flight_followup_delay: saved.followup};
+  renderApp(); showToast(ui("设置已保存。"));
 }
 
 async function logout() {
@@ -2823,6 +2921,8 @@ document.addEventListener("submit", async event => {
     if (form.id === "tripForm") return await submitTrip(form);
     if (form.id === "settlementForm") return await submitSettlement(form, event.submitter?.dataset.settlementMode === "settle");
     if (form.id === "settingsForm") return await submitSettings(form);
+    if (form.id === "flightBeanInviteForm") return await bindBeanInvite(form);
+    if (form.id === "flightAutoSettingsForm") return await submitFlightAutoSettings(form);
   } catch (error) { showToast(ui(error.message || "操作失败，请稍后重试。"), true); }
   finally { form.dataset.submitting = 'false'; submitButtons.forEach(button => button.disabled = false); }
 });
@@ -3131,6 +3231,8 @@ document.addEventListener("click", async event => {
       const rows = [...parent.children];
       rows.forEach((item, index) => { const radio = item.querySelector('input[type="radio"]'); radio.value = index; if (defaultWasRemoved && index === 0) radio.checked = true; });
     }
+    else if (action === "flight-bean-wallet" && flightBeansVisible) await openBeanWallet();
+    else if (action === "flight-message-inbox") await openFlightInbox();
     else if (action === "build-information") showModal(escapeHTML(ui('版本信息')), `<p class="completion-prompt-copy">${escapeHTML(ui('Web 构建'))}<br><strong>${escapeHTML(WEB_BUILD)}</strong></p><div class="form-actions"><button class="button primary" data-action="close-modal">${escapeHTML(ui('关闭'))}</button></div>`, "completion-prompt-modal");
     else if (action === "edit-agency") openAgencyForm(state.agencies.find(item => item.id === button.dataset.id));
     else if (action === "navigate-saved-address") {
@@ -3272,11 +3374,11 @@ document.addEventListener("click", async event => {
       if (!ownerID) throw new Error("请先登录云端账号。");
       const names = [...document.querySelectorAll("[data-expense-name]")].map(input => input.value.trim()).filter(Boolean);
       const unique = [...new Set(names)];
-      const settings = { ...(state.settings || defaultSettings()), owner_id: ownerID, expense_catalog: unique, updated_at: new Date().toISOString() };
+      const settings = { owner_id: ownerID, expense_catalog: unique, updated_at: new Date().toISOString() };
       await upsert("user_settings", settings, "owner_id");
       if (state.user?.id !== ownerID) return;
       localStorage.setItem(accountPreferenceKey("expense-catalog", ownerID), JSON.stringify(unique));
-      state.settings = settings;
+      state.settings = { ...state.settings, ...settings };
       updatePageContent(); showToast(ui("费用项目已保存。"));
     }
     else if (action === "remove-expense") {

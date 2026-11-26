@@ -7,3 +7,7 @@ verify_jwt = true
 
 [functions.storekit-notifications]
 verify_jwt = false
+
+[functions.flight-auto-refresh]
+# Only the server-side cron secret authorizes this function.
+verify_jwt = false
