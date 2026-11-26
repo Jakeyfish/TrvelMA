@@ -82,8 +82,9 @@ declare
     is_monthly boolean := new.product_id = 'com.yunshengtech.travelmanager.cloud.monthly';
     inviter uuid;
     credited text;
-    grant_key text := 'subscription:' || new.transaction_id;
-    reward_key text := 'referral:' || new.transaction_id;
+    period_key text := new.original_transaction_id || ':' || extract(epoch from new.purchased_at)::text;
+    grant_key text := 'subscription:' || period_key;
+    reward_key text := 'referral:' || period_key;
 begin
     if new.environment <> 'Production' then return new; end if;
     perform public.flight_bean_lock(new.owner_id);
@@ -100,10 +101,10 @@ begin
     on conflict(event_key) do nothing;
     select inviter_id,credited_transaction into inviter,credited from public.flight_bean_referrals
     where invitee_id=new.owner_id for update;
-    if inviter is not null and credited is null and not exists (
+    if inviter is not null and credited is null and new.transaction_id = new.original_transaction_id and not exists (
         select 1 from public.storekit_transactions
         where owner_id=new.owner_id and environment='Production' and transaction_id<>new.transaction_id
-          and purchased_at <= new.purchased_at
+          and purchased_at < new.purchased_at
     ) then
         insert into public.flight_bean_entries(owner_id,event_key,kind,amount)
         values(inviter,reward_key,'referral',case when is_monthly then 5 else 30 end)
@@ -118,7 +119,7 @@ for each row execute function public.earn_flight_beans();
 
 -- Credit an existing live paid period once when the ledger is introduced.
 insert into public.flight_bean_entries(owner_id,event_key,kind,amount)
-select distinct on (owner_id) owner_id,'subscription:'||transaction_id,'subscription',
+select distinct on (owner_id) owner_id,'subscription:'||original_transaction_id||':'||extract(epoch from purchased_at)::text,'subscription',
        case when product_id='com.yunshengtech.travelmanager.cloud.monthly' then 20 else 300 end
 from public.storekit_transactions where environment='Production' and revoked_at is null and not upgraded and expires_at > now()
 order by owner_id,purchased_at desc,transaction_id;
@@ -129,6 +130,8 @@ declare
     available bigint;
 begin
     perform public.flight_bean_lock(p_owner);
+    if exists(select 1 from public.flight_bean_entries
+              where event_key='refresh:'||p_owner::text||':'||p_hold::text) then return false; end if;
     delete from public.flight_bean_holds where owner_id=p_owner and expires_at <= now();
     select coalesce(sum(amount),0) - (select count(*) from public.flight_bean_holds where owner_id=p_owner)
       into available from public.flight_bean_entries where owner_id=p_owner;
@@ -142,13 +145,13 @@ create function public.finish_flight_bean(p_owner uuid,p_hold uuid,p_charge bool
 language plpgsql security definer set search_path = '' as $$
 begin
     perform public.flight_bean_lock(p_owner);
-    delete from public.flight_bean_holds where id=p_hold and owner_id=p_owner;
+    delete from public.flight_bean_holds where id=p_hold and owner_id=p_owner and expires_at > now();
     if not found then
-        return exists(select 1 from public.flight_bean_entries where owner_id=p_owner and event_key='refresh:'||p_hold::text);
+        return exists(select 1 from public.flight_bean_entries where owner_id=p_owner and event_key='refresh:'||p_owner::text||':'||p_hold::text);
     end if;
     if p_charge then
         insert into public.flight_bean_entries(owner_id,event_key,kind,amount)
-        values(p_owner,'refresh:'||p_hold::text,'refresh',-1) on conflict(event_key) do nothing;
+        values(p_owner,'refresh:'||p_owner::text||':'||p_hold::text,'refresh',-1) on conflict(event_key) do nothing;
     end if;
     return true;
 end;

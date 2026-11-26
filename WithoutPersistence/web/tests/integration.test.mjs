@@ -869,3 +869,22 @@ test('a forced refresh makes one upstream lookup for the selected flight leg', a
   assert.equal(c.calls[0][2].departureAirport,'TPE');
   assert.equal(c.calls[0][3],true);
 });
+
+test('invite wallet renders balance and asks the server to bind the normalized code', async () => {
+  const c = boot();
+  c.calls = [];
+  c.form = {values:{code:'  ' + 'ab'.repeat(16) + '  '}};
+  vm.runInContext(`request=async(path,options)=>{
+    calls.push({path,...options});
+    if(path.endsWith('bind_flight_bean_invite')) return true;
+    return {balance:25,invite_code:'A'.repeat(32),referral_bound:true,
+      entries:[{kind:'referral',amount:5,created_at:'2026-11-26T00:00:00Z'}]};
+  }; showModal=(title,html)=>{globalThis.walletMarkup=html;};`,c);
+  await vm.runInContext('bindBeanInvite(form)',c);
+  assert.equal(c.calls[0].path,'rpc/bind_flight_bean_invite');
+  assert.equal(c.calls[0].body.p_code,'AB'.repeat(16));
+  assert.equal(c.calls[0].queueOffline,false);
+  assert.match(c.walletMarkup,/云豆余额.*25/);
+  assert.match(c.walletMarkup,/邀请奖励/);
+  assert.doesNotMatch(c.walletMarkup,/flightBeanInviteForm/);
+});

@@ -45,11 +45,17 @@ test('verified subscription periods and first referral grant once; refunds rever
       await assert.rejects(db.query("select reserve_flight_bean($1,$2)",[inviter,hold]),/permission denied/);
       await db.exec("reset role");
     }
+    // Apple can deliver a renewal before the original purchase is replayed.
+    await apply(monthly,'11',{original_transaction_id:'10',purchased_at:date(-5000),expires_at:date(172800000)});
+    assert.equal(await balance(inviter),0);
     await apply(monthly,'10');
     await apply(monthly,'10');
+    await apply(monthly,'12',{original_transaction_id:'10'});
+    assert.equal(await balance(monthly),40, 'restore for the same paid period must not issue a second grant');
+    assert.equal(await balance(inviter),5, 'restore must not issue another invitation reward');
     await apply(yearly,'20',{product_id:'com.yunshengtech.travelmanager.cloud.yearly'});
     await apply(sandbox,'30',{environment:'Sandbox'});
-    assert.equal(await balance(monthly),20);
+    assert.equal(await balance(monthly),40);
     assert.equal(await balance(yearly),300);
     assert.equal(await balance(inviter),35);
     assert.equal(await balance(sandbox),0);
@@ -63,6 +69,20 @@ test('verified subscription periods and first referral grant once; refunds rever
     await db.query("select finish_flight_bean($1,$2,true)",[monthly,hold]);
     await db.query("select finish_flight_bean($1,$2,true)",[monthly,hold]);
     assert.equal(await balance(monthly),39);
+    const expiredHold = '66666666-6666-4666-8666-666666666666';
+    await db.query("select reserve_flight_bean($1,$2)",[monthly,expiredHold]);
+    await db.query("update flight_bean_holds set expires_at=now()-interval '1 second' where id=$1",[expiredHold]);
+    assert.equal((await db.query("select finish_flight_bean($1,$2,true) as charged",[monthly,expiredHold])).rows[0].charged,false);
+    assert.equal(await balance(monthly),39);
+
+    // One remaining bean can be reserved by only one request.
+    await db.query("insert into flight_bean_entries(owner_id,event_key,kind,amount) values($1,'qa:aggregate-spend','refresh',-299)",[yearly]);
+    assert.equal((await db.query("select reserve_flight_bean($1,$2) as held",[yearly,hold])).rows[0].held,true);
+    assert.equal((await db.query("select reserve_flight_bean($1,$2) as held",[yearly,expiredHold])).rows[0].held,false);
+    await db.query("select finish_flight_bean($1,$2,true)",[yearly,hold]);
+    assert.equal(await balance(yearly),0);
+    assert.equal((await db.query("select reserve_flight_bean($1,$2) as held",[yearly,expiredHold])).rows[0].held,false);
+
     await apply(monthly,'10',{revoked_at:date(500),signed_at:date(1000)});
     await apply(monthly,'10',{revoked_at:date(500),signed_at:date(1000)});
     assert.equal(await balance(monthly),19);
