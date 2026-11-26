@@ -66,6 +66,19 @@ enum LegacyLocalAccessPolicy {
         return decision == .firstAcquiredAfterCutover ? .readOnlyNeedsPurchase : .readOnlyNeedsVerification
     }
 
+    static func sandboxReviewAccess(enabled: Bool, verifiedSandboxApp: Bool,
+                                    hasVerifiedSandboxPurchase: Bool) -> WorkspaceAccess? {
+        guard enabled else { return nil }
+        guard verifiedSandboxApp else { return .readOnlyNeedsVerification }
+        return hasVerifiedSandboxPurchase ? .editable : .readOnlyNeedsPurchase
+    }
+
+    static func validPaidCutover(_ cutoff: String, currentBuild: String) -> Bool {
+        guard let cutoff = AppBuildVersion(cutoff), let current = AppBuildVersion(currentBuild),
+              let firstValidBuild = AppBuildVersion("1") else { return false }
+        return cutoff >= firstValidBuild && cutoff <= current
+    }
+
     static func allowsLocalPurchase(decision: LegacyLocalAccessDecision, hasPurchase: Bool, cutoverConfigured: Bool) -> Bool {
         guard !hasPurchase else { return false }
         // Existing sandbox acceptance remains available while production sales are off.

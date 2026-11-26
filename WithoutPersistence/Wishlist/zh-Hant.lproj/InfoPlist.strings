@@ -1,3 +1,4 @@
 "CFBundleDisplayName" = "行程管家";
 "CFBundleName" = "行程管家";
 "NSLocationWhenInUseUsageDescription" = "用於填入目前位置並提供附近地址建議。";
+"NSFaceIDUsageDescription" = "用於安全登入您在此裝置上已啟用 Face ID 的行程管家帳號。";

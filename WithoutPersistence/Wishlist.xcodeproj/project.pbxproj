@@ -308,6 +308,7 @@
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_KEY_CFBundleDisplayName = "行程管家";
 				INFOPLIST_KEY_CFBundleName = "行程管家";
+				INFOPLIST_KEY_NSFaceIDUsageDescription = "用于安全登录您在此设备上已启用 Face ID 的行程管家账号。";
 				INFOPLIST_KEY_NSLocationWhenInUseUsageDescription = "用于填入当前位置并提供附近地址建议。";
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
 				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
@@ -349,6 +350,7 @@
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_KEY_CFBundleDisplayName = "行程管家";
 				INFOPLIST_KEY_CFBundleName = "行程管家";
+				INFOPLIST_KEY_NSFaceIDUsageDescription = "用于安全登录您在此设备上已启用 Face ID 的行程管家账号。";
 				INFOPLIST_KEY_NSLocationWhenInUseUsageDescription = "用于填入当前位置并提供附近地址建议。";
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
 				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;

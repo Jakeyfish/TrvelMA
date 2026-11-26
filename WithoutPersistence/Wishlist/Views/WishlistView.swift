@@ -643,6 +643,7 @@ struct FlightInformationPanel: View {
     let arrivalFallback: String
     let departureTimeZone: String
     let arrivalTimeZone: String
+    var showsCandidateDates = false
 
     var body: some View {
         Group {
@@ -679,16 +680,18 @@ struct FlightInformationPanel: View {
             }
             HStack(spacing: 8) {
                 timeColumn(
-                    result.departureTime ?? departureFallback,
-                    label: "起飞时间",
+                    result.displayDeparture.time ?? departureFallback,
+                    label: result.displayDeparture.label,
+                    scheduledTime: result.scheduledDeparture,
                     timeZone: departureTimeZone,
                     alignment: .leading,
                     timeZoneOnLeading: false
                 )
                 directionIndicator(result.status)
                 timeColumn(
-                    result.estimatedArrivalTime ?? arrivalFallback,
-                    label: "预计到达时间",
+                    result.displayArrival.time ?? arrivalFallback,
+                    label: result.displayArrival.label,
+                    scheduledTime: result.scheduledArrival,
                     timeZone: arrivalTimeZone,
                     alignment: .trailing,
                     timeZoneOnLeading: true
@@ -722,10 +725,12 @@ struct FlightInformationPanel: View {
     }
 
     private var airlineLogo: some View {
-        let code = String(flightNumber.prefix(while: \.isLetter)).uppercased()
+        let normalized = flightNumber.uppercased()
+        let prefix = normalized.range(of: #"^([A-Z]{2,3}|[A-Z][0-9]|[0-9][A-Z])(?=\d)"#, options: .regularExpression)
+        let code = prefix.map { String(normalized[$0]) } ?? ""
         let url = URL(string: "https://www.gstatic.com/flights/airline_logos/70px/\(code).png")
         return Group {
-            if let url {
+            if let url, !code.isEmpty {
                 AsyncImage(url: url) { phase in
                     if let image = phase.image { image.resizable().scaledToFit().padding(3) }
                     else { airlineMonogram(code) }
@@ -763,6 +768,7 @@ struct FlightInformationPanel: View {
     private func timeColumn(
         _ value: String,
         label: String,
+        scheduledTime: String?,
         timeZone: String,
         alignment: HorizontalAlignment,
         timeZoneOnLeading: Bool
@@ -779,6 +785,10 @@ struct FlightInformationPanel: View {
             }
             .lineLimit(1)
             .minimumScaleFactor(0.75)
+            if let date = FlightPresentation.providerDate(value),
+               showsCandidateDates || scheduledTime.flatMap(FlightPresentation.providerDate).map({ $0 != date }) == true {
+                Text(date).font(.caption2).foregroundStyle(.secondary)
+            }
             Text(LocalizedStringKey(label)).font(.caption2).foregroundStyle(.secondary)
         }
         .frame(maxWidth: .infinity)
@@ -1079,7 +1089,7 @@ private struct TripManagementCard: View {
             }
         }
         .sheet(isPresented: $isChoosingFlight) {
-            FlightCandidatePicker(candidates: flightCandidates, onSelect: selectFlight)
+            FlightCandidatePicker(flightNumber: booking.flightInfo, flightDate: booking.flightDate, candidates: flightCandidates, onSelect: selectFlight)
         }
         .padding(13)
         .background(Color(.secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 18, style: .continuous))
@@ -1950,7 +1960,7 @@ private struct TripBrowseView: View {
             )
         }
         .sheet(isPresented: $isChoosingFlight) {
-            FlightCandidatePicker(candidates: flightCandidates, onSelect: selectFlight)
+            FlightCandidatePicker(flightNumber: booking.flightInfo, flightDate: booking.flightDate, candidates: flightCandidates, onSelect: selectFlight)
         }
         .completionSettlementPrompt(
             isPresented: $isShowingCompletionSettlementPrompt,

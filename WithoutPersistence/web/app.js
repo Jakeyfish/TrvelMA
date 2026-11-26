@@ -1,13 +1,13 @@
-import { statementPDF } from "./statement-pdf.mjs?v=20261117-customer-net-v1";
-import { localized } from "./localization.mjs?v=20261117-customer-net-v1";
+import { statementPDF } from "./statement-pdf.mjs?v=20261125-flight-times-v1";
+import { localized } from "./localization.mjs?v=20261125-flight-times-v1";
 const uiLanguage = () => normalizedLanguageCode((state.archiveMode ? state.archiveData?.user_settings?.[0]?.language_code : null) || state.settings?.language_code || readInterfaceLanguage());
 const ui = (key, ...args) => localized(key, uiLanguage(), ...args);
-import { flightDisplayName, flightStatusLabel, safeNavigationURL, telephoneNumber, tripTelephoneContacts, financialCategoryGroups, statementMoney, agencyStatementTrips, statementAgencyKey, buildAgencyStatement, pickupReminders, recognizePickup, matchPickupAgency, partsInZone, zonedISO, parseFlights, flightID, makeFlightSnapshot, readFlightSnapshot, routeMatches, compareTrips, settlementPayload } from './parity.mjs?v=20261117-customer-net-v1';
+import { flightDisplayName, flightStatusLabel, safeNavigationURL, telephoneNumber, tripTelephoneContacts, financialCategoryGroups, statementMoney, agencyStatementTrips, statementAgencyKey, buildAgencyStatement, pickupReminders, recognizePickup, matchPickupAgency, partsInZone, zonedISO, parseFlights, flightID, makeFlightSnapshot, readFlightSnapshot, routeMatches, lookupTripFlightCandidates, compareTrips, settlementPayload, flightDisplayTimes } from './parity.mjs?v=20261125-flight-times-v1';
 let airportCrosswalk = [];
 const airportCrosswalkReady = fetch('./assets/airport-crosswalk.json').then(r => { if (!r.ok) throw Error('机场对照表不可用'); return r.json(); }).then(data => { airportCrosswalk = data.airports; }).catch(() => {});
 const SUPABASE_URL = "https://lbdfqzeiweqbsklklcqr.supabase.co";
 const SUPABASE_PUBLISHABLE_KEY = "sb_publishable_d4tmuPirsf8-wUDO0Frd7w_PcXME6rs";
-const WEB_BUILD = "20261117-customer-net-v1";
+const WEB_BUILD = "20261125-flight-times-v1";
 const SESSION_KEY = "yunsheng.web.session.v1";
 const OFFLINE_CACHE_PREFIX = "yunsheng.web.offline-cache.v1.";
 const OFFLINE_QUEUE_PREFIX = "yunsheng.web.offline-queue.v1.";
@@ -1342,13 +1342,16 @@ function flightOffsetLabel(value) {
   return `GMT${offset[1]}${Number(offset[2])}${offset[3] === "00" ? "" : `:${offset[3]}`}`;
 }
 
-function flightResultHTML(number, flight = {}, fallback = {}) {
+function flightResultHTML(number, flight = {}, fallback = {}, showDates = false) {
+  const flightDate = value => String(value || "").trim().match(/^\d{4}-\d{2}-\d{2}(?=[T ])/)?.[0] || "";
+  const localDate = (value, scheduled) => showDates || (flightDate(scheduled) && flightDate(scheduled) !== flightDate(value)) ? flightDate(value) : "";
   const code = String(number || "").toUpperCase().match(/^([A-Z]{2,3}|[A-Z][0-9]|[0-9][A-Z])(?=\d)/)?.[1] || "";
-  const departure = flight.departureTime || fallback.departureTime;
-  const arrival = flight.estimatedArrivalTime || fallback.estimatedArrivalTime;
+  const times = flightDisplayTimes(flight);
+  const [departure, departureLabel] = [times.departure[0] || fallback.departureTime, times.departure[1]];
+  const [arrival, arrivalLabel] = [times.arrival[0] || fallback.estimatedArrivalTime, times.arrival[1]];
   return `<div class="app-flight-result" aria-label="${escapeHTML(ui("航班查询结果"))}">
     <div class="app-flight-airline"><span class="app-flight-logo" aria-hidden="true">${code ? escapeHTML(code) : appIcon("airplane")}</span><div><strong>${escapeHTML(number || "—")}</strong>${flight.airlineName ? `<small>${escapeHTML(flightDisplayName(flight.airlineName,"airline",uiLanguage()))}</small>` : ""}</div></div>
-    <div class="app-flight-schedule"><div class="app-flight-time departure"><div><strong>${escapeHTML(timeDisplay(departure))}</strong><small>${escapeHTML(flightOffsetLabel(departure))}</small></div><span>${escapeHTML(ui("起飞时间"))}</span></div><div class="app-flight-direction" aria-label="${escapeHTML(flightStatusLabel(flight.status,uiLanguage()))}"><div><i></i><span>${appIcon("airplane")}</span><i></i></div><small>${escapeHTML(flightStatusLabel(flight.status,uiLanguage()))}</small></div><div class="app-flight-time arrival"><div><small>${escapeHTML(flightOffsetLabel(arrival))}</small><strong>${escapeHTML(timeDisplay(arrival))}</strong></div><span>${escapeHTML(ui("预计到达时间"))}</span></div></div>
+    <div class="app-flight-schedule"><div class="app-flight-time departure"><div><strong>${escapeHTML(timeDisplay(departure))}</strong><small>${escapeHTML(flightOffsetLabel(departure))}</small></div><span>${escapeHTML(ui(departureLabel))}</span>${localDate(departure, flight.scheduledDeparture) ? `<span>${escapeHTML(localDate(departure, flight.scheduledDeparture))}</span>` : ""}</div><div class="app-flight-direction" aria-label="${escapeHTML(flightStatusLabel(flight.status,uiLanguage()))}"><div><i></i><span>${appIcon("airplane")}</span><i></i></div><small>${escapeHTML(flightStatusLabel(flight.status,uiLanguage()))}</small></div><div class="app-flight-time arrival"><div><small>${escapeHTML(flightOffsetLabel(arrival))}</small><strong>${escapeHTML(timeDisplay(arrival))}</strong></div><span>${escapeHTML(ui(arrivalLabel))}</span>${localDate(arrival, flight.scheduledArrival) ? `<span>${escapeHTML(localDate(arrival, flight.scheduledArrival))}</span>` : ""}</div></div>
     <div class="app-flight-airports"><div><small>${escapeHTML(ui("起飞机场"))}</small><strong>${escapeHTML(flightDisplayName(flight.departureAirport,"airport",uiLanguage()))}</strong><span>${escapeHTML(ui("出发航站楼"))} ${escapeHTML(flight.departureTerminal?.trim() || "—")}</span></div><div><small>${escapeHTML(ui("到达机场"))}</small><strong>${escapeHTML(flightDisplayName(flight.arrivalAirport,"airport",uiLanguage()))}</strong><span>${escapeHTML(ui("到达航站楼"))} ${escapeHTML(flight.arrivalTerminal?.trim() || fallback.arrivalTerminal?.trim() || "—")}</span></div></div>
   </div>`;
 }
@@ -2099,30 +2102,42 @@ function renumberStopFields(form) {
 function flightContext(form) {
   return JSON.stringify(['flight_info','flight_date','service_type','location_start','location_end'].map(k => form.elements[k].value));
 }
-async function queryFlights(number, date) {
+async function queryFlights(number, date, airport, forceRefresh) {
   const ownerID = state.user?.id;
   const generation=workspaceGeneration;
   const session = await currentSession();
   if (!ownerID || (state.user?.id !== ownerID || workspaceGeneration !== generation) || session?.user?.id !== ownerID) throw Error('登录状态已变化，请重试。');
   if (!state.entitlementResolved || !['cloud','sync'].includes(state.productEdition)) throw Error('此账号没有有效的航班查询权限。');
-  const response = await networkFetch(`${SUPABASE_URL}/functions/v1/variflight-lookup`, { method:'POST', headers:{ apikey:SUPABASE_PUBLISHABLE_KEY,Authorization:`Bearer ${session.access_token}`,'Content-Type':'application/json' },body:JSON.stringify({flightNumber:number,flightDate:date}) });
+  const response = await networkFetch(`${SUPABASE_URL}/functions/v1/variflight-lookup`, { method:'POST', headers:{ apikey:SUPABASE_PUBLISHABLE_KEY,Authorization:`Bearer ${session.access_token}`,'Content-Type':'application/json' },body:JSON.stringify({flightNumber:number,flightDate:date,...airport,forceRefresh}) });
   if ((state.user?.id !== ownerID || workspaceGeneration !== generation)) throw Error('账号已切换，已忽略航班结果。');
   const raw = await response.text();
   if (!response.ok) throw Error(`航班查询失败（${response.status}），请重试。`);
   let payload; try {payload=JSON.parse(raw);} catch {payload=raw.split(/\n\s*\n/).map(block=>block.split('\n').filter(line=>line.startsWith('data:')).map(line=>line.slice(5).trim()).join('\n')).filter(Boolean);}
   const candidates = parseFlights(payload);
-  if(!candidates.length) throw Error('未查到可用航段，原航班信息已保留。');
   await airportCrosswalkReady;
   if(state.user?.id!==ownerID || workspaceGeneration!==generation)throw Error('账号会话已变化，已忽略旧航班结果。');
   return candidates;
 }
-function flightCandidateRows(candidates) {
-  return candidates.map((flight, index) => `<button type="button" class="picker-row app-flight-choice" data-action="select-flight-candidate" data-index="${index}"><span class="app-flight-choice-copy"><span class="app-flight-choice-route"><strong>${escapeHTML(flightDisplayName(flight.departureAirport,"airport",uiLanguage()))} → ${escapeHTML(flightDisplayName(flight.arrivalAirport,"airport",uiLanguage()))}</strong>${appIcon("chevron.right")}</span>${flight.airlineName ? `<small>${escapeHTML(flightDisplayName(flight.airlineName,"airline",uiLanguage()))}</small>` : ""}<span class="app-flight-choice-times">${flight.departureTime ? `<small>${appIcon("airplane.departure")} ${escapeHTML(timeDisplay(flight.departureTime))}</small>` : ""}${flight.estimatedArrivalTime ? `<small>${appIcon("airplane.arrival")} ${escapeHTML(timeDisplay(flight.estimatedArrivalTime))}</small>` : ""}</span></span></button>`).join("");
+async function queryTripFlights(number, date, trip, { forceRefresh = false } = {}) {
+  const ownerID = state.user?.id;
+  const generation = workspaceGeneration;
+  await airportCrosswalkReady;
+  const candidates = await lookupTripFlightCandidates(airport => {
+    if (!ownerID || state.user?.id !== ownerID || workspaceGeneration !== generation) {
+      throw Error('账号会话已变化，已忽略旧航班结果。');
+    }
+    return queryFlights(number, date, airport, forceRefresh);
+  }, trip, airportCrosswalk);
+  if (!candidates.length) throw Error('未查到可用航段，原航班信息已保留。');
+  return candidates;
+}
+function flightCandidateRows(number, candidates) {
+  return candidates.map((flight, index) => `<button type="button" class="picker-row app-flight-choice" data-action="select-flight-candidate" data-index="${index}">${flightResultHTML(number, flight, {}, true)}${appIcon("chevron.right")}</button>`).join("");
 }
 
-function chooseFlight(candidates, select) {
+function chooseFlight(number, candidates, select) {
   state.flightPicker = { candidates, select, ownerID: state.user?.id };
-  pickerOverlay("选择航段", flightCandidateRows(candidates));
+  pickerOverlay("选择航段", flightCandidateRows(number, candidates));
   const picker = document.querySelector("#picker-backdrop .picker-modal");
   picker?.classList.add("app-flight-picker");
   const close = picker?.querySelector('[data-action="close-picker"]');
@@ -2137,12 +2152,12 @@ async function lookupFlight(form) {
   const feedback=form.querySelector('[data-flight-feedback]');
   if(feedback){feedback.textContent='正在查询航班信息…';feedback.classList.remove('hidden');}
   try {
-    const candidates=await queryFlights(number,date);
+    const trip={service_type:form.elements.service_type.value,location_start:form.elements.location_start.value,location_end:form.elements.location_end.value};
+    const candidates=await queryTripFlights(number,date,trip);
     if(!form.isConnected || flightContext(form)!==context || ownerID!==state.user?.id)return;
     if(feedback) feedback.classList.add('hidden');
-    chooseFlight(candidates, candidate=>{
+    chooseFlight(number, candidates, candidate=>{
       if(!form.isConnected || flightContext(form)!==context || ownerID!==state.user?.id)throw Error('行程已变化，请重新查询航班。');
-      const trip={service_type:form.elements.service_type.value,location_start:form.elements.location_start.value,location_end:form.elements.location_end.value};
       if(!routeMatches(candidate,trip,airportCrosswalk))throw Error('此航段与行程机场不符，请选择正确航段。');
       form.elements.flight_selection_snapshot.value=JSON.stringify(makeFlightSnapshot(number,date,candidate));
       form.elements.flight_departure_time.value=flightTimeInput(candidate.departureTime);
@@ -2159,8 +2174,8 @@ async function lookupFlight(form) {
 async function refreshFlightCard(trip) {
   if(!trip) return;
   const ownerID=state.user?.id, context=JSON.stringify([trip.flight_info,trip.flight_date,trip.service_type,trip.location_start,trip.location_end]);
-  const candidates=await queryFlights(trip.flight_info,dateInput(trip.flight_date));
-  chooseFlight(candidates,async candidate=>{
+  const candidates=await queryTripFlights(trip.flight_info,dateInput(trip.flight_date),trip,{forceRefresh:true});
+  chooseFlight(trip.flight_info, candidates,async candidate=>{
     if(state.user?.id!==ownerID)throw Error('账号已变化。');
     const latest=state.trips.find(t=>t.id===trip.id);
     if(!latest || context!==JSON.stringify([latest.flight_info,latest.flight_date,latest.service_type,latest.location_start,latest.location_end]))throw Error('行程已变化，请刷新后重试。');

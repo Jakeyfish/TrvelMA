@@ -42,6 +42,7 @@ struct CloudAccountDeletionView: View {
         do {
             guard let token = await auth.refreshCloudAccessToken() else { error = AppLocalization.text("请退出并重新登录后再试。"); return }
             try await SupabaseAuthClient.deleteCloudAccount(accessToken: token, password: password)
+            RememberedLogins.forget(.init(email: email, isCloud: true))
             guard auth.currentEmail == email else { dismiss(); return }
             // The server confirmed deletion first. Local cleanup never runs on a failed request.
             try? auth.clearCurrentCloudAccountLocalData(context: context)

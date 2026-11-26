@@ -7,7 +7,7 @@ import { edgeCompatibleCertificate } from './x509-edge-compat.mjs';
 import { Environment, SignedDataVerifier } from 'npm:@apple/app-store-server-library@3.1.0';
 import { createClient } from 'npm:@supabase/supabase-js@2.118.0';
 import { appleRootDERBase64 } from './apple-root-certificates.ts';
-import { storekitEnvironment } from './storekit-environment.mjs';
+import { storekitEnvironment, checkPurchaseAvailability } from './storekit-environment.mjs';
 import { bundleID } from '../storekit-verify/core.mjs';
 
 // Apple 3.1.0 uses the CommonJS crypto object; retain the official verifier
@@ -41,7 +41,12 @@ export function context() {
  const admin=createClient(url,key,{auth:{persistSession:false,autoRefreshToken:false}});
  const auth=createClient(url,pub,{auth:{persistSession:false,autoRefreshToken:false}});
  const sandboxOwners=new Set((Deno.env.get('STOREKIT_SANDBOX_OWNER_IDS')||'').split(',').map(s=>s.trim().toLowerCase()).filter(Boolean));
- return { auth, forPayload(signed: unknown, notification: boolean) {
+ return {
+  auth,
+  purchaseAvailability(environment: unknown, ownerID: string) {
+   return checkPurchaseAvailability(mode, productionEnabled, environment, ownerID, sandboxOwners);
+  },
+  forPayload(signed: unknown, notification: boolean) {
   const environment = storekitEnvironment(mode, productionEnabled, signed, notification);
   const Verifier = environment === 'Sandbox' ? SandboxDiagnosticVerifier : SignedDataVerifier;
   const verifier = new Verifier(appleRootDERBase64.map(value => Buffer.from(value, 'base64')), true,

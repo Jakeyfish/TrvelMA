@@ -68,10 +68,16 @@ export function recognizePickup(raw, now = new Date()) {
 const aliases={
  status:["flightstate","flightstatus","status","航班状态","航班狀態"],
  airlineName:['airline','airlinename','carrier','carriername','airlinetitle','flightcompany'],
- departureAirport:['departureairport','departureairportname','depairport','depairportname','departurestation','depname','dep','flightdept','起飞机场','出发机场','origin','from'],
- arrivalAirport:['arrivalairport','arrivalairportname','arrairport','arrairportname','arrivalstation','arrname','arr','flightarr','到达机场','目的机场','destination','to'],
- departureTime:['flightdeptimeplandate','flightdeptimereadydate','departuretime','departuredatetime','scheduleddeparture','scheduleddeparturetime','std','deptime','depttime'],
- estimatedArrivalTime:['flightarrtimeplandate','flightarrtimereadydate','estimatedarrivaltime','arrivalestimatedtime','arrivaldatetime','arrivaltime','scheduledarrival','scheduledarrivaltime','sta','eta','arrtime'],
+ departureAirport:['departureairport','departureairportname','depairport','depairportname','departurestation','depname','dep','flightdept','flightdep','flightdepairport','flightdepcode','起飞机场','出发机场','origin','from'],
+ arrivalAirport:['arrivalairport','arrivalairportname','arrairport','arrairportname','arrivalstation','arrname','arr','flightarr','flightarrairport','flightarrcode','到达机场','目的机场','destination','to'],
+ departureTime:['departuretime','departuredatetime','deptime','depttime'],
+ estimatedArrivalTime:['arrivaldatetime','arrivaltime','arrtime'],
+ actualDeparture:['flightdeptimedate', 'actualdeparturetime', 'actualdeparture', 'atd', '实际起飞'],
+ estimatedDeparture:['flightdeptimereadydate', 'estimateddeparturetime', 'estimateddeparture', 'etd', '预计起飞'],
+ scheduledDeparture:['flightdeptimeplandate', 'scheduleddeparturetime', 'scheduleddeparture', 'std', '计划起飞'],
+ actualArrival:['flightarrtimedate', 'actualarrivaltime', 'actualarrival', 'ata', '实际到达'],
+ estimatedArrival:['flightarrtimereadydate', 'estimatedarrivaltime', 'estimatedarrivedtime', 'arrivalestimatedtime', 'eta', '预计到达'],
+ scheduledArrival:['flightarrtimeplandate', 'scheduledarrivaltime', 'scheduledarrival', 'sta', '计划到达'],
  departureTerminal:['flighthterminal','flightdeptterminal','flightdeptterminalname','departureterminal','departureterminalname','depterminal','depterminalname','deptterminal','terminaldeparture','terminal','出发航站楼','起飞航站楼'],
  arrivalTerminal:['flightterminal','flightarrterminal','flightarrterminalname','arrivalterminal','arrivalterminalname','arrterminal','arrterminalname','terminalarrival','terminalarr','arriveterminal','到达航站楼','到达航站区'],
  baggageCarousel:['baggagecarousel','flightarrbaggagecarousel','carousel','baggageclaim','baggageclaimbelt','luggagecarousel']
@@ -79,12 +85,35 @@ const aliases={
 const fieldFor=new Map(Object.entries(aliases).flatMap(([field,names])=>names.map(n=>[n,field])));
 const normalizedKey=k=>k.toLowerCase().replace(/[^\p{L}\p{N}]/gu,'');
 export function flightID(f){return [f.airlineName,f.departureAirport,f.arrivalAirport,f.departureTime,f.estimatedArrivalTime].map(x=>(x||'').trim().toLowerCase()).join('|');}
+export function flightDisplayTimes(flight) {
+  return {
+    departure: flight.actualDeparture ? [flight.actualDeparture, "实际起飞"]
+      : flight.estimatedDeparture ? [flight.estimatedDeparture, "预计起飞"]
+      : flight.scheduledDeparture ? [flight.scheduledDeparture, "计划起飞"]
+      : [flight.departureTime, "起飞时间"],
+    arrival: flight.actualArrival ? [flight.actualArrival, "实际到达"]
+      : flight.estimatedArrival ? [flight.estimatedArrival, "预计到达时间"]
+      : flight.scheduledArrival ? [flight.scheduledArrival, "计划到达"]
+      : [flight.estimatedArrivalTime, "到达时间"]
+  };
+}
+
 export function parseFlights(payload) {
+  function record(fields) {
+    const departure = fields.scheduledDeparture || fields.departureTime || fields.estimatedDeparture || fields.actualDeparture;
+    if (departure) fields.departureTime = departure;
+    const arrival = fields.estimatedArrival || fields.scheduledArrival || fields.estimatedArrivalTime || fields.actualArrival;
+    if (arrival) fields.estimatedArrivalTime = arrival;
+    return fields.departureAirport || fields.arrivalAirport || fields.departureTime || fields.estimatedArrivalTime || fields.airlineName ? [fields] : [];
+  }
   function extract(v){
     if(typeof v==='string'){
       try{return extract(JSON.parse(v));}catch{}
-      const fields={};for(const [field,names] of Object.entries(aliases)){const regex=new RegExp(`(?<![A-Za-z])(?:${names.sort((a,b)=>b.length-a.length).join('|')})["']?\\s*[:：]\\s*["']?([^"'\\n,，;；}]+)`,'i');const match=v.match(regex);if(match)fields[field]=match[1].trim();}
-      return fields.departureAirport||fields.arrivalAirport||fields.departureTime||fields.estimatedArrivalTime?[fields]:[];
+      // Provider MCP text can wrap multiple single-quoted flight dictionaries.
+      const records = v.split(/}\s*,\s*(?=\{\s*['"]fcategory['"]\s*:)/i);
+      if (records.length > 1) return records.flatMap(extract);
+      const fields={};for(const [field,names] of Object.entries(aliases)){const regex=new RegExp(`(?<![A-Za-z])(?:${names.sort((a,b)=>b.length-a.length).join('|')})["']?\\s*[:：]\\s*["']?([^"'\\n,，;；}]+)`,'i');const match=v.match(regex);if(match && !/^(?:null|--)?$/i.test(match[1].trim()))fields[field]=match[1].trim();}
+      return record(fields);
     }
     if(Array.isArray(v))return v.flatMap(extract);
     if(!v||typeof v!=='object')return [];
@@ -96,8 +125,8 @@ export function parseFlights(payload) {
     if(!nested.length&&Array.isArray(v.content))return v.content.flatMap(c=>extract(c.text||''));
     if(nested.length)return nested;
     if(v.type==='text'&&typeof v.text==='string')return extract(v.text);
-    const fields={};for(const [k,value]of Object.entries(v)){const field=fieldFor.get(normalizedKey(k));if(!field)continue;if(typeof value==='string'&&value.trim())fields[field]=value.trim();else if(field.endsWith('Terminal')&&Number.isInteger(value)&&value>=0)fields[field]=String(value);}
-    return fields.departureAirport||fields.arrivalAirport||fields.departureTime||fields.estimatedArrivalTime||fields.airlineName?[fields]:[];
+    const fields={};for(const [k,value]of Object.entries(v)){const field=fieldFor.get(normalizedKey(k));if(!field)continue;if(typeof value==='string'&&!/^(?:null|--)?$/i.test(value.trim()))fields[field]=value.trim();else if(field.endsWith('Terminal')&&Number.isInteger(value)&&value>=0)fields[field]=String(value);}
+    return record(fields);
   }
   const unique=new Map();for(const f of extract(payload)){const id=flightID(f);unique.set(id,{...unique.get(id),...f});}return [...unique.values()];
 }
@@ -113,6 +142,20 @@ export function airportCodes(label,airports=[]){
   const matches=airports.flatMap(a=>[a.name,a.municipality,...a.keywords||[]].filter(n=>n&&text.includes(n.toLowerCase())).map(n=>({length:n.length,code:a.iata_code})));
   const longest=Math.max(0,...matches.map(m=>m.length));
   return new Set(longest?matches.filter(m=>m.length===longest).map(m=>m.code):hits);
+}
+export async function lookupTripFlightCandidates(query, trip, airports) {
+  const arrival = trip.service_type === '接机';
+  const label = arrival ? trip.location_start : trip.service_type === '送机' ? trip.location_end : '';
+  const explicit = /airport|terminal|机场|機場|航站/i.test(label || '') || /^\s*[A-Za-z]{3}\s*$/.test(label || '') || /^[A-Z]{3}\b/.test(label || '');
+  const codes = explicit ? airportCodes(label, airports) : new Set();
+  const initial = await query({});
+  if (codes.size !== 1) return initial;
+  const [code] = codes;
+  const matchesAirport = flight => airportCodes(arrival ? flight.arrivalAirport : flight.departureAirport, airports).has(code);
+  const matching = initial.filter(matchesAirport);
+  if (matching.length) return matching;
+  const supplemental = await query(arrival ? { arrivalAirport: code } : { departureAirport: code });
+  return supplemental.filter(matchesAirport);
 }
 export function routeMatches(f,trip,airports=[]){const label=trip.service_type==='接机'?trip.location_start:trip.service_type==='送机'?trip.location_end:'';const streetAddress=/\d/.test(label||'')&&!/airport|terminal|机场|機場|航站/i.test(label||'')&&!/^[A-Z]{3}\b/.test(label||'');const expected=streetAddress?new Set():airportCodes(label,airports);if(!expected.size)return true;const actual=airportCodes(trip.service_type==='接机'?f.arrivalAirport:f.departureAirport,airports);return !actual.size||[...actual].some(c=>expected.has(c));}
 export function readFlightSnapshot(trip,airports=[]){let s=trip.flight_selection_snapshot;try{if(typeof s==='string')s=JSON.parse(s);}catch{return null;}if(!s||s.formatVersion!==2||s.flightNumber!==String(trip.flight_info||'').trim().toUpperCase()||s.flightDate!==String(trip.flight_date||'').slice(0,10)||!s.selected||!routeMatches(s.selected,trip,airports))return null;return s.selected;}

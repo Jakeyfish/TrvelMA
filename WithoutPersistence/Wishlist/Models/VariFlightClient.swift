@@ -13,6 +13,27 @@ struct VariFlightLookupResult: Codable, Hashable, Identifiable {
     let estimatedArrivalTime: String?
     let baggageCarousel: String?
     var status: String? = nil
+    var actualDeparture: String? = nil
+    var estimatedDeparture: String? = nil
+    var scheduledDeparture: String? = nil
+    var actualArrival: String? = nil
+    var estimatedArrival: String? = nil
+    var scheduledArrival: String? = nil
+
+    var displayDeparture: (time: String?, label: String) {
+        if let actualDeparture { return (actualDeparture, "实际起飞") }
+        if let estimatedDeparture { return (estimatedDeparture, "预计起飞") }
+        if let scheduledDeparture { return (scheduledDeparture, "计划起飞") }
+        return (departureTime, "起飞时间")
+    }
+
+    var displayArrival: (time: String?, label: String) {
+        if let actualArrival { return (actualArrival, "实际到达") }
+        if let estimatedArrival { return (estimatedArrival, "预计到达时间") }
+        if let scheduledArrival { return (scheduledArrival, "计划到达") }
+        return (estimatedArrivalTime, "到达时间")
+    }
+
 
     var id: String {
         [airlineName, departureAirport, arrivalAirport, departureTime, estimatedArrivalTime]
@@ -91,6 +112,12 @@ private struct AirportCodeCrosswalkAirport: Decodable {
 
 /// Presentation only: preserve provider values in snapshots and never infer live status from the clock.
 enum FlightPresentation {
+    static func providerDate(_ value: String) -> String? {
+        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let range = trimmed.range(of: #"^\d{4}-\d{2}-\d{2}(?=[T ])"#, options: .regularExpression) else { return nil }
+        return String(trimmed[range])
+    }
+
     static func languageIndex(_ locale: Locale) -> Int {
         let id = locale.identifier.lowercased().replacingOccurrences(of: "_", with: "-")
         if id.hasPrefix("zh") { return id.contains("hant") || id.contains("tw") || id.contains("hk") ? 1 : 0 }
@@ -139,41 +166,30 @@ enum FlightPresentation {
 
 struct FlightCandidatePicker: View {
     @Environment(\.dismiss) private var dismiss
-    @Environment(\.locale) private var locale
+    let flightNumber: String
+    let flightDate: Date
     let candidates: [VariFlightLookupResult]
     let onSelect: (VariFlightLookupResult) -> Void
 
-    private var preferredHeight: CGFloat {
-        min(184 + CGFloat(candidates.count) * 112, 660)
-    }
-
     var body: some View {
         NavigationStack {
-            List(Array(candidates.enumerated()), id: \.element.id) { index, candidate in
+            List(candidates) { candidate in
                 Button {
                     onSelect(candidate)
                     dismiss()
                 } label: {
-                    VStack(alignment: .leading, spacing: 6) {
-                        HStack {
-                            Text(candidate.routeLabel.isEmpty ? "航段 \(index + 1)" : [FlightPresentation.name(candidate.departureAirport, kind: "airport", locale: locale), FlightPresentation.name(candidate.arrivalAirport, kind: "airport", locale: locale)].joined(separator: " → "))
-                                .font(.headline)
-                            Spacer()
-                            Image(systemName: "chevron.right").font(.caption).foregroundStyle(.tertiary)
-                        }
-                        if let airline = candidate.airlineName, !airline.isEmpty {
-                            Text(FlightPresentation.name(airline, kind: "airline", locale: locale)).font(.subheadline).foregroundStyle(.secondary)
-                        }
-                        HStack(spacing: 12) {
-                            if let time = candidate.departureTime, !time.isEmpty {
-                                Label(time, systemImage: "airplane.departure")
-                            }
-                            if let time = candidate.estimatedArrivalTime, !time.isEmpty {
-                                Label(time, systemImage: "airplane.arrival")
-                            }
-                        }
-                        .font(.caption).foregroundStyle(.secondary)
+                    HStack(spacing: 8) {
+                        FlightInformationPanel(
+                            flightNumber: flightNumber, flightDate: flightDate, result: candidate,
+                            isLoading: false, error: nil, departureFallback: "", arrivalFallback: "",
+                            departureTimeZone: "", arrivalTimeZone: "", showsCandidateDates: true
+                        )
+                        Image(systemName: "chevron.right")
+                            .font(.caption.weight(.semibold))
+                            .foregroundStyle(Color.accentColor)
+                            .accessibilityHidden(true)
                     }
+                    .padding(.vertical, 8)
                     .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
@@ -185,7 +201,7 @@ struct FlightCandidatePicker: View {
                     Button("取消") { dismiss() }
                 }
             }
-            .presentationDetents([.height(preferredHeight)])
+            .presentationDetents([.large])
             .presentationDragIndicator(.visible)
         }
     }
@@ -404,12 +420,17 @@ struct VariFlightClient {
             airportHint = nil
         }
 
-        let initial = try await lookupCandidates(
-            flightNumber: flightNumber,
-            flightDate: flightDate,
-            cloudAccessToken: cloudAccessToken,
-            forceRefresh: forceRefresh
-        )
+        let initial: [VariFlightLookupResult]
+        do {
+            initial = try await lookupCandidates(
+                flightNumber: flightNumber,
+                flightDate: flightDate,
+                cloudAccessToken: cloudAccessToken,
+                forceRefresh: forceRefresh
+            )
+        } catch VariFlightClientError.flightNotFound where airportHint != nil {
+            initial = []
+        }
         guard let airportHint else { return initial }
 
         var supplemental: [VariFlightLookupResult] = []
@@ -738,8 +759,15 @@ struct VariFlightClient {
             if let data = text.data(using: .utf8), let json = try? JSONSerialization.jsonObject(with: data) {
                 return extractFlights(from: json)
             }
-            if let fields = fieldsFromText(text) { return [makeResult(fields)] }
-            return []
+            // MCP text may contain several single-quoted provider dictionaries.
+            let separated = text.replacingOccurrences(
+                of: #"\}\s*,\s*(?=\{\s*['"]fcategory['"]\s*:)"#,
+                with: "\u{1E}", options: [.regularExpression, .caseInsensitive]
+            )
+            return unique(separated.components(separatedBy: "\u{1E}").compactMap {
+                guard let fields = fieldsFromText($0), isFlightRecord(fields) else { return nil }
+                return makeResult(fields)
+            })
         }
         if let array = value as? [Any] { return unique(array.flatMap(extractFlights(from:))) }
         guard let object = value as? [String: Any] else { return [] }
@@ -769,7 +797,7 @@ struct VariFlightClient {
 
     private func isFlightRecord(_ fields: [FlightField: String]) -> Bool {
         fields[.departureAirport] != nil || fields[.arrivalAirport] != nil
-            || fields[.departure] != nil || fields[.arrival] != nil
+            || [.departure, .arrival, .actualDeparture, .estimatedDeparture, .scheduledDeparture, .actualArrival, .estimatedArrival, .scheduledArrival].contains { fields[$0] != nil }
             || fields[.airline] != nil
     }
 
@@ -777,7 +805,15 @@ struct VariFlightClient {
         VariFlightLookupResult(
             airlineName: fields[.airline], departureAirport: fields[.departureAirport], arrivalAirport: fields[.arrivalAirport],
             departureTerminal: fields[.departureTerminal], arrivalTerminal: fields[.arrivalTerminal],
-            departureTime: fields[.departure], estimatedArrivalTime: fields[.arrival], baggageCarousel: fields[.baggage], status: fields[.status]
+            departureTime: fields[.scheduledDeparture] ?? fields[.departure] ?? fields[.estimatedDeparture] ?? fields[.actualDeparture],
+            estimatedArrivalTime: fields[.estimatedArrival] ?? fields[.scheduledArrival] ?? fields[.arrival] ?? fields[.actualArrival],
+            baggageCarousel: fields[.baggage], status: fields[.status],
+            actualDeparture: fields[.actualDeparture],
+            estimatedDeparture: fields[.estimatedDeparture],
+            scheduledDeparture: fields[.scheduledDeparture],
+            actualArrival: fields[.actualArrival],
+            estimatedArrival: fields[.estimatedArrival],
+            scheduledArrival: fields[.scheduledArrival]
         )
     }
 
@@ -798,7 +834,13 @@ struct VariFlightClient {
                     departureTime: previous.departureTime ?? result.departureTime,
                     estimatedArrivalTime: previous.estimatedArrivalTime ?? result.estimatedArrivalTime,
                     baggageCarousel: previous.baggageCarousel ?? result.baggageCarousel,
-                    status: result.status ?? previous.status
+                    status: result.status ?? previous.status,
+                    actualDeparture: result.actualDeparture ?? previous.actualDeparture,
+                    estimatedDeparture: result.estimatedDeparture ?? previous.estimatedDeparture,
+                    scheduledDeparture: result.scheduledDeparture ?? previous.scheduledDeparture,
+                    actualArrival: result.actualArrival ?? previous.actualArrival,
+                    estimatedArrival: result.estimatedArrival ?? previous.estimatedArrival,
+                    scheduledArrival: result.scheduledArrival ?? previous.scheduledArrival
                 )
             } else {
                 positions[result.id] = merged.count
@@ -808,7 +850,9 @@ struct VariFlightClient {
         return merged
     }
 
-    private enum FlightField { case airline, departureAirport, arrivalAirport, departureTerminal, arrivalTerminal, departure, arrival, baggage, status }
+    private enum FlightField { case airline, departureAirport, arrivalAirport, departureTerminal, arrivalTerminal, departure, arrival, baggage, status
+        case actualDeparture, estimatedDeparture, scheduledDeparture, actualArrival, estimatedArrival, scheduledArrival
+    }
 
     private func fields(from value: Any) -> [FlightField: String]? {
         if let string = value as? String {
@@ -842,13 +886,25 @@ struct VariFlightClient {
                 field = .status
             case "airline", "airlinename", "carrier", "carriername", "airlinetitle", "flightcompany":
                 field = .airline
-            case "departureairport", "departureairportname", "depairport", "depairportname", "departurestation", "depname", "dep", "flightdept":
+            case "departureairport", "departureairportname", "depairport", "depairportname", "departurestation", "depname", "dep", "flightdept", "flightdep", "flightdepairport", "flightdepcode":
                 field = .departureAirport
-            case "arrivalairport", "arrivalairportname", "arrairport", "arrairportname", "arrivalstation", "arrname", "arr", "flightarr":
+            case "arrivalairport", "arrivalairportname", "arrairport", "arrairportname", "arrivalstation", "arrname", "arr", "flightarr", "flightarrairport", "flightarrcode":
                 field = .arrivalAirport
-            case "flightdeptimeplandate", "departuretime", "departuredatetime", "scheduleddeparture", "scheduleddeparturetime", "estimateddeparture", "estimateddeparturetime", "plantime", "plantimeofdeparture", "plantimedeparture", "depttime", "deptdatetime", "deptime", "std", "flightdeptimereadydate":
+            case "flightdeptimedate", "actualdeparturetime", "actualdeparture", "atd":
+                field = .actualDeparture
+            case "flightdeptimereadydate", "estimateddeparturetime", "estimateddeparture", "etd":
+                field = .estimatedDeparture
+            case "flightdeptimeplandate", "scheduleddeparturetime", "scheduleddeparture", "std":
+                field = .scheduledDeparture
+            case "flightarrtimedate", "actualarrivaltime", "actualarrival", "ata":
+                field = .actualArrival
+            case "flightarrtimereadydate", "estimatedarrivaltime", "estimatedarrivedtime", "arrivalestimatedtime", "eta":
+                field = .estimatedArrival
+            case "flightarrtimeplandate", "scheduledarrivaltime", "scheduledarrival", "sta":
+                field = .scheduledArrival
+            case "departuretime", "departuredatetime", "plantime", "plantimeofdeparture", "plantimedeparture", "depttime", "deptdatetime", "deptime":
                 field = .departure
-            case "flightarrtimeplandate", "estimatedarrivaltime", "estimatedarrivedtime", "arrivalestimatedtime", "arrivaldatetime", "arrivaltime", "scheduledarrival", "scheduledarrivaltime", "plantimearrival", "arrtime", "arrdatetime", "arrivetime", "sta", "eta", "flightarrtimereadydate":
+            case "arrivaldatetime", "arrivaltime", "plantimearrival", "arrtime", "arrdatetime", "arrivetime":
                 field = .arrival
             // Provider fields FlightHTerminal / FlightTerminal identify departure
             // and arrival respectively. The unqualified `terminal` alias is the
@@ -875,7 +931,7 @@ struct VariFlightClient {
                 continue
             }
             let string = raw.trimmingCharacters(in: .whitespacesAndNewlines)
-            guard !string.isEmpty else { continue }
+            guard !string.isEmpty, string.lowercased() != "null", string != "--" else { continue }
             if result[field] == nil { result[field] = string }
         }
         return result.isEmpty ? nil : result
@@ -885,10 +941,16 @@ struct VariFlightClient {
         let patterns: [(FlightField, String)] = [
             (.status, #"(?:FlightState|FlightStatus|航班状态|航班狀態|status)[\"']?\s*[:：]\s*[\"']?([^\"'\n,，;；}]+)"#),
             (.airline, #"(?:FlightCompany|航空公司|航司|airline(?:\s*name)?|carrier)[\"']?\s*[:：]\s*[\"']?([^\"'\n,，;；}]+)"#),
-            (.departureAirport, #"(?:FlightDept|departureAirport|departureAirportName|depAirport|depAirportName|departureStation|起飞机场|出发机场|出发地|departure\s*airport|origin|from)[\"']?\s*[:：]\s*[\"']?([^\"'\n,，;；}]+)"#),
-            (.arrivalAirport, #"(?:FlightArr|arrivalAirport|arrivalAirportName|arrAirport|arrAirportName|arrivalStation|到达机场|目的机场|到达地|arrival\s*airport|destination|to)[\"']?\s*[:：]\s*[\"']?([^\"'\n,，;；}]+)"#),
-            (.departure, #"(?:FlightDeptimePlanDate|FlightDeptimeReadyDate|起飞时间|计划起飞|预计起飞|departure(?:\s*time)?|scheduled\s*departure|estimated\s*departure|STD)[\"']?\s*[:：]\s*[\"']?([^\"'\n,，;；}]+)"#),
-            (.arrival, #"(?:FlightArrtimePlanDate|FlightArrtimeReadyDate|预计到达时间|到达时间|计划到达|预计到达|arrival(?:\s*time)?|estimated\s*arrival|scheduled\s*arrival|ETA|STA)[\"']?\s*[:：]\s*[\"']?([^\"'\n,，;；}]+)"#),
+            (.departureAirport, #"(?:FlightDepcode|FlightDepAirport|FlightDep|FlightDept|departureAirport|departureAirportName|depAirport|depAirportName|departureStation|起飞机场|出发机场|出发地|departure\s*airport|origin|from)[\"']?\s*[:：]\s*[\"']?([^\"'\n,，;；}]+)"#),
+            (.arrivalAirport, #"(?:FlightArrcode|FlightArrAirport|FlightArr|arrivalAirport|arrivalAirportName|arrAirport|arrAirportName|arrivalStation|到达机场|目的机场|到达地|arrival\s*airport|destination|to)[\"']?\s*[:：]\s*[\"']?([^\"'\n,，;；}]+)"#),
+            (.actualDeparture, #"(?<![A-Za-z])(?:FlightDeptimeDate|actualDepartureTime|actualDeparture|ATD|actual\s+departure(?:\s*time)?|实际起飞(?:时间)?)[\"']?\s*[:：]\s*[\"']?([^\"'\n,，;；}]+)"#),
+            (.estimatedDeparture, #"(?<![A-Za-z])(?:FlightDeptimeReadyDate|estimatedDepartureTime|estimatedDeparture|ETD|estimated\s+departure(?:\s*time)?|预计起飞(?:时间)?)[\"']?\s*[:：]\s*[\"']?([^\"'\n,，;；}]+)"#),
+            (.scheduledDeparture, #"(?<![A-Za-z])(?:FlightDeptimePlanDate|scheduledDepartureTime|scheduledDeparture|STD|scheduled\s+departure(?:\s*time)?|计划起飞(?:时间)?)[\"']?\s*[:：]\s*[\"']?([^\"'\n,，;；}]+)"#),
+            (.departure, #"(?<![A-Za-z])(?:起飞时间|departure(?:\s*time)?)[\"']?\s*[:：]\s*[\"']?([^\"'\n,，;；}]+)"#),
+            (.actualArrival, #"(?<![A-Za-z])(?:FlightArrtimeDate|actualArrivalTime|actualArrival|ATA|actual\s+arrival(?:\s*time)?|实际到达(?:时间)?)[\"']?\s*[:：]\s*[\"']?([^\"'\n,，;；}]+)"#),
+            (.estimatedArrival, #"(?<![A-Za-z])(?:FlightArrtimeReadyDate|estimatedArrivalTime|estimatedArrivedTime|arrivalEstimatedTime|ETA|estimated\s+arrival(?:\s*time)?|预计到达(?:时间)?)[\"']?\s*[:：]\s*[\"']?([^\"'\n,，;；}]+)"#),
+            (.scheduledArrival, #"(?<![A-Za-z])(?:FlightArrtimePlanDate|scheduledArrivalTime|scheduledArrival|STA|scheduled\s+arrival(?:\s*time)?|计划到达(?:时间)?)[\"']?\s*[:：]\s*[\"']?([^\"'\n,，;；}]+)"#),
+            (.arrival, #"(?<![A-Za-z])(?:到达时间|arrival(?:\s*time)?)[\"']?\s*[:：]\s*[\"']?([^\"'\n,，;；}]+)"#),
             (.departureTerminal, #"(?:FlightHTerminal|FlightDeptTerminal(?:Name)?|departureTerminalName|depTerminalName|出发航站楼|出发航站|departure\s*terminal|dep\s*terminal|(?<!arrival )(?<!arr )(?<!到达)(?<![A-Za-z])terminal)\s*[\"']?\s*[:：]\s*[\"']?([^\"'\n,，;；}]+)"#),
             (.arrivalTerminal, #"(?:FlightTerminal|FlightArrTerminal(?:Name)?|arrivalTerminalName|arrTerminalName|到达航站楼|到达航站|到达航站区|arrival\s*terminal|arr\s*terminal)\s*[\"']?\s*[:：]\s*[\"']?([^\"'\n,，;；}]+)"#),
             (.baggage, #"(?:行李转盘|行李提取转盘|baggage\s*carousel|baggage\s*claim|carousel)\s*[:：]\s*[\"']?([^\"'\n,，;；}]+)"#)
@@ -899,7 +961,7 @@ struct VariFlightClient {
                   let match = expression.firstMatch(in: text, range: NSRange(text.startIndex..., in: text)),
                   let range = Range(match.range(at: 1), in: text) else { continue }
             let value = String(text[range]).trimmingCharacters(in: .whitespacesAndNewlines.union(CharacterSet(charactersIn: "`*")))
-            if !value.isEmpty && result[field] == nil { result[field] = value }
+            if !value.isEmpty, value.lowercased() != "null", value != "--", result[field] == nil { result[field] = value }
         }
         return result.isEmpty ? nil : result
     }

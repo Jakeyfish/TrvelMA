@@ -614,7 +614,7 @@ private struct CloudTripManagementCard: View {
             NavigationStack { CloudTripEditor(directory: directory, trip: trip, settlementOnly: true) }
         }
         .sheet(isPresented: $isChoosingFlight) {
-            FlightCandidatePicker(candidates: flightCandidates, onSelect: selectFlight)
+            FlightCandidatePicker(flightNumber: trip.flightInfo, flightDate: trip.flightDate.cloudDate, candidates: flightCandidates, onSelect: selectFlight)
         }
         .alert("无法更新行程", isPresented: Binding(
             get: { directory.errorMessage != nil },
@@ -1161,7 +1161,7 @@ private struct CloudTripDetailView: View {
             NavigationStack { CloudTripEditor(directory: directory, trip: trip, copyAsNew: true) }
         }
         .sheet(isPresented: $isChoosingFlight) {
-            FlightCandidatePicker(candidates: flightCandidates, onSelect: selectFlight)
+            FlightCandidatePicker(flightNumber: trip.flightInfo, flightDate: trip.flightDate.cloudDate, candidates: flightCandidates, onSelect: selectFlight)
         }
         .confirmationDialog("确定删除该行程？", isPresented: $isConfirmingDelete, titleVisibility: .visible) {
             Button("删除", role: .destructive) {
@@ -1476,8 +1476,9 @@ private struct CloudTripEditor: View {
         _ title: String,
         icon: String,
         @ViewBuilder content: () -> Content
-    ) -> some View {
-        VStack(alignment: .leading, spacing: 14) {
+    ) -> AnyView {
+        // Keep the editor’s outer view type shallow on physical iPads.
+        AnyView(VStack(alignment: .leading, spacing: 14) {
             Label(LocalizedStringKey(title), systemImage: icon)
                 .font(.subheadline.weight(.semibold))
             content()
@@ -1485,7 +1486,7 @@ private struct CloudTripEditor: View {
         .padding()
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(Color.primary.opacity(0.025), in: RoundedRectangle(cornerRadius: 14))
-        .overlay(RoundedRectangle(cornerRadius: 14).stroke(Color.primary.opacity(0.10), lineWidth: 1))
+        .overlay(RoundedRectangle(cornerRadius: 14).stroke(Color.primary.opacity(0.10), lineWidth: 1)))
     }
 
     private func labeledInput(
@@ -2081,7 +2082,7 @@ private struct CloudTripEditor: View {
             }
         }
         .sheet(isPresented: $isChoosingFlight) {
-            FlightCandidatePicker(candidates: flightCandidates, onSelect: selectFlight)
+            FlightCandidatePicker(flightNumber: flightNumber, flightDate: flightDate, candidates: flightCandidates, onSelect: selectFlight)
         }
         .presentationDetents([.large])
     }

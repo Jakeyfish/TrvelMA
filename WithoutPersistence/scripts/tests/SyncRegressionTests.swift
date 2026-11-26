@@ -97,7 +97,7 @@ final class SandboxBillingBuildPolicyTests: XCTestCase {
     func testSandboxAllowlistIsExplicitAndAbsentFromNormalBuild() {
         let developer = UUID(uuidString: "71b164e4-7dbf-4433-8503-84ed156171de")!
         let lifecycle = UUID(uuidString: "86361373-d4ba-4fc6-8f38-420367b6484e")!
-        #if DEBUG && STOREKIT_SANDBOX_ACCEPTANCE
+        #if (DEBUG && STOREKIT_SANDBOX_ACCEPTANCE) || STOREKIT_CLOUD_REVIEW
         XCTAssertEqual(BillingReleaseConfiguration.sandboxOwnerIDs, [developer, lifecycle])
         #else
         XCTAssertTrue(BillingReleaseConfiguration.sandboxOwnerIDs.isEmpty)
@@ -105,7 +105,7 @@ final class SandboxBillingBuildPolicyTests: XCTestCase {
         XCTAssertFalse(BillingReleaseConfiguration.sandboxOwnerIDs.contains(UUID()))
     }
     func testDefaultBuildDoesNotExposePurchases() {
-        #if !STOREKIT_SANDBOX_ACCEPTANCE
+        #if !STOREKIT_SANDBOX_ACCEPTANCE && !STOREKIT_CLOUD_REVIEW && !STOREKIT_LOCAL_REVIEW
         XCTAssertFalse(BillingReleaseConfiguration.sandboxAcceptanceBuild)
         XCTAssertFalse(BillingReleaseConfiguration.salesEnabled)
         XCTAssertFalse(BillingReleaseConfiguration.plansVisible)
@@ -115,6 +115,25 @@ final class SandboxBillingBuildPolicyTests: XCTestCase {
     func testProductionLocalGateRemainsDisabledUntilAcceptance() {
         XCTAssertFalse(BillingReleaseConfiguration.localAccessEnforcementEnabled)
         XCTAssertNil(BillingReleaseConfiguration.firstPaidLocalBuild)
+    }
+    func testReviewProductsRequireMatchingModeAndVerifiedSandbox() {
+        typealias Configuration = BillingReleaseConfiguration
+        for productionProduct in StoreProductCatalog.all {
+            XCTAssertFalse(Configuration.permitsReviewProduct(productionProduct,
+                verifiedSandbox: false, localReview: true, cloudReview: true))
+        }
+        for subscription in [StoreProductCatalog.monthly, StoreProductCatalog.yearly] {
+            XCTAssertFalse(Configuration.permitsReviewProduct(subscription,
+                verifiedSandbox: true, localReview: true, cloudReview: false))
+            XCTAssertTrue(Configuration.permitsReviewProduct(subscription,
+                verifiedSandbox: true, localReview: true, cloudReview: true))
+        }
+        XCTAssertFalse(Configuration.permitsReviewProduct(StoreProductCatalog.local,
+            verifiedSandbox: true, localReview: false, cloudReview: true))
+        XCTAssertTrue(Configuration.permitsReviewProduct(StoreProductCatalog.local,
+            verifiedSandbox: true, localReview: true, cloudReview: true))
+        XCTAssertFalse(Configuration.permitsReviewProduct("unknown",
+            verifiedSandbox: true, localReview: true, cloudReview: true))
     }
     func testSandboxOnlyPolicyRejectsProductionTransactions() {
         XCTAssertFalse(BillingReleaseConfiguration.permits(environment: .production, sandboxOnly: true))
@@ -5059,5 +5078,33 @@ final class CustomerHistoryExpenseLoadingTests: XCTestCase {
         failExpenses = true
         do { _ = try await CloudOnlineRepository.fetchCustomerTrips(customerID: customer, account: account, accessToken: "fixture-only"); XCTFail("Cannot display fare as net when expenses fail") }
         catch { }
+    }
+}
+
+final class RememberedLoginTests: XCTestCase {
+    @MainActor func testMigratesPriorSingleAccountWithoutEnablingBiometrics() throws {
+        let suite = "TrvelMA.RememberedLoginTests.\(UUID())"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        defaults.set(true, forKey: "auth.rememberEmail")
+        defaults.set(" Local@Example.invalid ", forKey: "auth.rememberedEmail")
+        defaults.set(false, forKey: "auth.accountMode.cloud")
+        let accounts = RememberedLogins.load(defaults: defaults)
+        XCTAssertEqual(accounts, [.init(email: "local@example.invalid", isCloud: false)])
+        XCTAssertNil(defaults.string(forKey: "auth.rememberedEmail"))
+        XCTAssertEqual(RememberedLogins.load(defaults: defaults), accounts)
+    }
+
+    @MainActor func testHistoryKeepsLoginModesSeparateAndMovesRepeatToFront() throws {
+        let suite = "TrvelMA.RememberedLoginTests.\(UUID())"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let cloud = RememberedLogin(email: "same@example.invalid", isCloud: true, usesBiometrics: true)
+        let local = RememberedLogin(email: "same@example.invalid", isCloud: false)
+        RememberedLogins.record(cloud, defaults: defaults)
+        RememberedLogins.record(local, defaults: defaults)
+        XCTAssertEqual(RememberedLogins.load(defaults: defaults), [local, cloud])
+        RememberedLogins.record(.init(email: "SAME@example.invalid", isCloud: true), defaults: defaults)
+        XCTAssertEqual(RememberedLogins.load(defaults: defaults), [.init(email: cloud.email, isCloud: true), local])
     }
 }

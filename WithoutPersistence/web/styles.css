@@ -800,13 +800,8 @@ body { background: var(--bg); color: var(--text); }
 .app-flight-picker .picker-list { display: grid; gap: 10px; }
 .app-flight-choice { border: 0; background: #fff; color: #17171b; border-radius: 14px; padding: 14px; text-align: left; }
 .app-flight-choice:hover { background: #ece9fb; }
-.app-flight-choice-copy { display: grid; gap: 6px; width: 100%; min-width: 0; }
-.app-flight-choice-route { display: flex; align-items: center; gap: 10px; }
-.app-flight-choice-route strong { flex: 1; font-size: 16px; overflow-wrap: anywhere; }
-.app-flight-choice-route > span { color: #aaa8b0; }
-.app-flight-choice-copy > small { font-size: 13px; color: #8b8a94; }
-.app-flight-choice-times { display: flex; flex-wrap: wrap; gap: 12px; color: #8b8a94; }
-.app-flight-choice-times small { font-size: 11px; }
+.app-flight-choice > .app-flight-result { flex: 1; background: transparent; padding: 0; }
+.app-flight-choice > .app-symbol { flex: 0 0 16px; width: 16px; color: #6453bd; }
 .picker-backdrop:has(.app-flight-picker) { animation: finance-backdrop-in 420ms ease-out both; }
 .app-flight-picker { animation: finance-panel-in 460ms cubic-bezier(.22,.61,.36,1) both; }
 @media(max-width:360px) { .app-flight-result { padding: 12px; }.app-flight-time strong { font-size: 23px; }.app-flight-direction { flex-basis: 38px; }.app-flight-time small { font-size: 8px; } }
@@ -887,7 +882,7 @@ body { background: var(--bg); color: var(--text); }
 /* Same SF Symbols outlines as the native App; local alpha masks inherit UI color. */
 .app-symbol { display:inline-block; width:20px; height:20px; flex:0 0 auto; vertical-align:middle; background-color:currentColor; -webkit-mask-image:var(--app-symbol-image); mask-image:var(--app-symbol-image); -webkit-mask-size:contain; mask-size:contain; -webkit-mask-repeat:no-repeat; mask-repeat:no-repeat; -webkit-mask-position:center; mask-position:center; }
 .nav-icon .app-symbol { width:25px; height:25px; }
-.button .app-symbol, .trip-facts .app-symbol, .app-flight-choice-times .app-symbol { width:18px; height:18px; }
+.button .app-symbol, .trip-facts .app-symbol { width:18px; height:18px; }
 .service-type-icon .app-symbol { width:24px; height:24px; }
 .service-type-option.selected .service-type-icon { color:#258853; }
 .app-flight-direction .app-symbol { width:36px; height:30px; }

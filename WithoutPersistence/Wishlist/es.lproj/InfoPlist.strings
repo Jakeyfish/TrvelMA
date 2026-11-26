@@ -1,3 +1,4 @@
 "CFBundleDisplayName" = "Gestor de viajes";
 "CFBundleName" = "Gestor de viajes";
 "NSLocationWhenInUseUsageDescription" = "Tu ubicación se usa para completar la dirección actual y ofrecer sugerencias de lugares cercanos mientras usas la app.";
+"NSFaceIDUsageDescription" = "Usa Face ID para acceder de forma segura a las cuentas de Trip Manager habilitadas en este dispositivo.";

@@ -19,3 +19,14 @@ export function storekitEnvironment(mode, productionEnabled, signed, notificatio
   if (environment === 'Production' && !productionEnabled) throw Error('BILLING_DISABLED');
   return environment;
 }
+
+// Availability only. This claim selects a gate and cannot authorize transaction persistence.
+export function checkPurchaseAvailability(mode, productionEnabled, environment, ownerID, sandboxOwners) {
+  if (environment !== 'Sandbox' && environment !== 'Production') throw Error('ENVIRONMENT_REQUIRED');
+  if (mode !== 'Dual' && mode !== environment) throw Error('BILLING_DISABLED');
+  if (environment === 'Production' && !productionEnabled) throw Error('BILLING_DISABLED');
+  if (environment === 'Sandbox' && !sandboxOwners.has(ownerID.toLowerCase())) {
+    throw Error('SANDBOX_ACCOUNT_NOT_ALLOWED');
+  }
+  return { available: true, environment };
+}

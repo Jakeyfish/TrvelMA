@@ -18,6 +18,13 @@ enum LegacyLocalAccessReader {
         }
     }
 
+    static func hasVerifiedSandboxApp(expectedBundleID: String) async -> Bool {
+        guard let result = try? await AppTransaction.shared,
+              case .verified(let transaction) = result,
+              transaction.bundleID == expectedBundleID else { return false }
+        return transaction.environment == .sandbox
+    }
+
     static func decision(expectedBundleID: String, firstPaidBuild: String?) async -> LegacyLocalAccessDecision {
         guard firstPaidBuild != nil else { return .notConfigured }
         do {

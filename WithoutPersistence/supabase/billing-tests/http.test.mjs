@@ -217,3 +217,26 @@ test('dual purchase and notification dispatch preserve signature and environment
   assert.throws(() => storekitEnvironment('Production', false), /BILLING_DISABLED/);
   assert.throws(() => storekitEnvironment('Dual', true, 'bad'), /INVALID_JWS/);
 });
+
+test('authenticated purchase availability cannot bypass environment or account gates and never verifies or writes', async () => {
+  const { checkPurchaseAvailability } = await import('../functions/_shared/storekit-environment.mjs');
+  const allowed = new Set([owner]);
+  const { deps, calls } = fixture({
+    purchaseAvailability: (environment, id) => checkPurchaseAvailability('Dual', false, environment, id, allowed),
+  });
+  const handler = purchaseHandler(() => deps);
+  const sandbox = await handler(request({ action: 'preflight', environment: 'Sandbox', ownerID: 'ignored' }));
+  assert.equal(sandbox.status, 200);
+  assert.deepEqual(await sandbox.json(), { available: true, environment: 'Sandbox' });
+  const production = await handler(request({ action: 'preflight', environment: 'Production' }));
+  assert.equal(production.status, 503);
+  const invalid = await handler(request({ action: 'preflight', environment: 'Xcode' }));
+  assert.equal(invalid.status, 400);
+  assert.equal(calls.auth, 3);
+  assert.equal(calls.verify, 0);
+  assert.equal(calls.persist, 0);
+  assert.throws(() => checkPurchaseAvailability('Dual', false, 'Sandbox', 'other', allowed), /SANDBOX_ACCOUNT_NOT_ALLOWED/);
+  assert.throws(() => checkPurchaseAvailability('Sandbox', true, 'Production', owner, allowed), /BILLING_DISABLED/);
+  assert.deepEqual(checkPurchaseAvailability('Dual', true, 'Production', owner, allowed),
+                    { available: true, environment: 'Production' });
+});

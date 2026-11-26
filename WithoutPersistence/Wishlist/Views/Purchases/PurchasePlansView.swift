@@ -18,7 +18,7 @@ struct PurchasePlansView: View {
         NavigationStack {
             List {
                 Section {
-                    if BillingReleaseConfiguration.sandboxAcceptanceBuild {
+                    if BillingReleaseConfiguration.sandboxOnlyBuild {
                         Text("沙盒验收版本，仅供开发测试，不用于正式收费。")
                             .foregroundStyle(.orange)
                     }

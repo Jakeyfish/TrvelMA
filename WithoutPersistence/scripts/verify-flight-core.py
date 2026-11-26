@@ -32,6 +32,9 @@ func check(_ ok: Bool, _ name: String) { checks += 1; if !ok { print("FAIL: \(na
 func result(_ dep: String, _ arr: String) -> VariFlightLookupResult {
  VariFlightLookupResult(airlineName: "United", departureAirport: dep, arrivalAirport: arr, departureTerminal: nil, arrivalTerminal: "7", departureTime: "16:30", estimatedArrivalTime: "18:07", baggageCarousel: nil)
 }
+check(FlightPresentation.providerDate("2026-11-29T21:30:00-08:00") == "2026-11-29", "candidate departure date stays in airport local date")
+check(FlightPresentation.providerDate("2026-12-01 04:10:00+08:00") == "2026-12-01", "candidate arrival date survives crossing the date line")
+check(FlightPresentation.providerDate("04:10") == nil, "time without date does not invent a local date")
 let selected = result("乔治布什", "洛杉矶")
 let date = Date(timeIntervalSince1970: 1792861200)
 let saved = SavedFlightSelection(flightNumber: " ua1743 ", flightDate: date, selected: selected)
@@ -65,6 +68,13 @@ check(VariFlightClient.explicitAirportCode(in: "lax") == "LAX", "bare lowercase 
 check(VariFlightClient.explicitAirportCode(in: "Houston Airport") == nil, "ambiguous city has no single hint")
 check(!VariFlightClient.airportCodes(in: "Los Angeles International Airport").contains("LOS"), "Los is not mistaken for LOS")
 let parser = FlightParserHarness()
+let multiLegText = "Flight details: {'code': 200, 'data': [{'fcategory': '0', 'FlightDepcode': 'HGH', 'FlightArrcode': 'TFU', 'FlightState': '提前取消'}, {'fcategory': '1', 'FlightDepcode': 'LAX', 'FlightArrcode': 'TFU', 'FlightArrtimePlanDate': '2026-12-01 08:10:00'}, {'fcategory': '1', 'FlightDepcode': 'LAX', 'FlightArrcode': 'HGH', 'FlightArrtimePlanDate': '2026-12-01 04:10:00'}]}"
+let legs = parser.parse(multiLegText)
+check(legs.count == 3, "provider text keeps all three records")
+let laxLegs = legs.filter { $0.departureAirport == "LAX" }
+check(laxLegs.compactMap(\.arrivalAirport) == ["TFU", "HGH"], "provider text keeps both LAX itineraries")
+check(laxLegs.last?.estimatedArrivalTime == "2026-12-01 04:10:00", "second LAX record keeps its own arrival time")
+
 for input: Any in [["FlightArr": "LAX", "FlightState": "延误"], "FlightArr: LAX, FlightState: 延误"] {
  check(parser.parse(input).first?.status == "延误", "provider JSON/text status parsed")
 }
@@ -84,6 +94,16 @@ check(read.selected.status == nil, "legacy snapshot without status decodes")
 var live = selected; live.status = "延误"
 let liveRead = try JSONDecoder().decode(VariFlightLookupResult.self, from: JSONEncoder().encode(live))
 check(liveRead.status == "延误", "raw status snapshot round trip")
+let jx2Payload = ["FlightDepcode": "TPE", "FlightArrcode": "LAX",
+    "FlightDeptimePlanDate": "2026-11-25 23:40:00", "FlightDeptimeDate": "2026-11-26 00:12:00",
+    "FlightArrtimePlanDate": "2026-11-25 19:05:00", "FlightArrtimeReadyDate": "2026-11-25 18:58:00"]
+let jx2 = parser.parse(jx2Payload)[0]
+check(jx2.displayDeparture.time == "2026-11-26 00:12:00" && jx2.displayDeparture.label == "实际起飞", "JX2 actual departure crosses midnight")
+check(jx2.displayArrival.time == "2026-11-25 18:58:00" && jx2.displayArrival.label == "预计到达时间", "JX2 estimated arrival supersedes schedule")
+check(jx2.departureTime == "2026-11-25 23:40:00", "scheduled departure remains available for the original flight date")
+let jx2Text = jx2Payload.map { "'\($0.key)': '\($0.value)'" }.joined(separator: ", ")
+check(parser.parse("{\(jx2Text)}").first?.displayArrival.time == jx2.displayArrival.time, "MCP text also uses the estimated arrival")
+check(parser.parse(["FlightArrtimePlanDate": "19:05", "FlightArrtimeReadyDate": "--"]).first?.displayArrival.label == "计划到达", "scheduled arrival is explicitly labeled when estimate is missing")
 print("TOTAL: \(checks) passed")
 '''
 

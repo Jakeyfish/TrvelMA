@@ -258,7 +258,7 @@ struct RootView: View {
             }
             .padding(24)
             .frame(maxWidth: .infinity, maxHeight: .infinity)
-        } else if auth.isLoggedIn && !auth.isCloudAccount && BillingReleaseConfiguration.localAccessEnforcementEnabled {
+        } else if auth.isLoggedIn && !auth.isCloudAccount && (BillingReleaseConfiguration.localAccessEnforcementEnabled || BillingReleaseConfiguration.localReviewBuild) {
             LocalAccountWorkspace().id(storeTaskIdentity)
         } else if auth.isLoggedIn {
 

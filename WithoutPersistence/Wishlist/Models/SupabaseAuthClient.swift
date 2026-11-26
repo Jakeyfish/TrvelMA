@@ -211,6 +211,15 @@ enum SupabaseAuthClient {
         return try JSONDecoder().decode(PurchaseAccount.self, from: data)
     }
 
+    static func checkCloudStorePurchaseAvailability(accessToken: String, environment: String) async throws {
+        struct Result: Decodable { let available: Bool; let environment: String }
+        let result: Result = try await post(path: "/functions/v1/storekit-verify",
+            body: ["action": "preflight", "environment": environment], accessToken: accessToken)
+        guard result.available, result.environment == environment else {
+            throw AuthError.message(AppLocalization.text("购买暂未开放。"))
+        }
+    }
+
     static func verifyCloudStoreTransaction(accessToken: String, signedTransaction: String) async throws {
         struct Result: Decodable { let recorded: Bool }
         let result: Result = try await post(path: "/functions/v1/storekit-verify",

@@ -4,22 +4,55 @@ import Observation
 import UIKit
 
 enum BillingReleaseConfiguration {
-    // Explicit developer build only. Release cannot enable this via build flags.
     #if DEBUG && STOREKIT_SANDBOX_ACCEPTANCE
     static let sandboxAcceptanceBuild = true
+    #else
+    static let sandboxAcceptanceBuild = false
+    #endif
+    #if STOREKIT_CLOUD_REVIEW
+    static let cloudReviewBuild = true
+    #else
+    static let cloudReviewBuild = false
+    #endif
+
+    #if (DEBUG && STOREKIT_SANDBOX_ACCEPTANCE) || STOREKIT_CLOUD_REVIEW
     static let sandboxOwnerID = UUID(uuidString: "71b164e4-7dbf-4433-8503-84ed156171de")!
     static let sandboxOwnerIDs: Set<UUID> = [sandboxOwnerID, UUID(uuidString: "86361373-d4ba-4fc6-8f38-420367b6484e")!]
     #else
-    static let sandboxAcceptanceBuild = false
     static let sandboxOwnerID: UUID? = nil
     static let sandboxOwnerIDs: Set<UUID> = []
     #endif
-    // Set only after the first actually paid release/build boundary is approved.
-    static let firstPaidLocalBuild: String? = nil
-    // Keep off until the read-only/export route and production migration pass acceptance.
-    static let localAccessEnforcementEnabled = false
-    static let salesEnabled = sandboxAcceptanceBuild
-    static let plansVisible = sandboxAcceptanceBuild
+    // Production activation requires an explicit Release build and an approved version boundary.
+    static let firstPaidLocalBuild: String? = {
+        #if STOREKIT_PAID_RELEASE && !DEBUG && !STOREKIT_LOCAL_REVIEW && !STOREKIT_CLOUD_REVIEW
+        guard let cutoff = Bundle.main.object(forInfoDictionaryKey: "TrvelMAFirstPaidBuild") as? String,
+              let current = Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String,
+              LegacyLocalAccessPolicy.validPaidCutover(cutoff, currentBuild: current) else { return nil }
+        return cutoff
+        #else
+        return nil
+        #endif
+    }()
+    static let paidReleaseBuild = firstPaidLocalBuild != nil
+    static let localAccessEnforcementEnabled = paidReleaseBuild
+    #if STOREKIT_LOCAL_REVIEW
+    static let localReviewBuild = true
+    #else
+    static let localReviewBuild = false
+    #endif
+    static let reviewBuild = localReviewBuild || cloudReviewBuild
+    static let sandboxOnlyBuild = sandboxAcceptanceBuild || reviewBuild
+    static let salesEnabled = sandboxOnlyBuild || paidReleaseBuild
+    static let plansVisible = salesEnabled
+
+    static func permitsReviewProduct(_ productID: String, verifiedSandbox: Bool,
+                                     localReview: Bool = localReviewBuild,
+                                     cloudReview: Bool = cloudReviewBuild) -> Bool {
+        guard localReview || cloudReview else { return true }
+        guard verifiedSandbox else { return false }
+        return productID == StoreProductCatalog.local ? localReview
+            : cloudReview && StoreProductCatalog.isCloud(productID)
+    }
 
     static func permits(environment: AppStore.Environment, sandboxOnly: Bool) -> Bool {
         !sandboxOnly || environment == .sandbox
@@ -59,9 +92,14 @@ enum SandboxRefundPolicy {
     private(set) var hasLocalPurchase = false
     // Separate from sandbox UI state: test transactions never unlock production use.
     private(set) var hasProductionLocalPurchase = false
+    private var sandboxReviewVerified = false
+    private var hasSandboxReviewPurchase = false
     private(set) var legacyLocalDecision: LegacyLocalAccessDecision = .notConfigured
     var localWorkspaceAccess: LegacyLocalAccessPolicy.WorkspaceAccess {
-        LegacyLocalAccessPolicy.workspaceAccess(
+        if let reviewAccess = LegacyLocalAccessPolicy.sandboxReviewAccess(
+            enabled: BillingReleaseConfiguration.localReviewBuild || (BillingReleaseConfiguration.paidReleaseBuild && sandboxReviewVerified), verifiedSandboxApp: sandboxReviewVerified,
+            hasVerifiedSandboxPurchase: hasSandboxReviewPurchase) { return reviewAccess }
+        return LegacyLocalAccessPolicy.workspaceAccess(
             enforcementEnabled: BillingReleaseConfiguration.localAccessEnforcementEnabled,
             decision: legacyLocalDecision, hasProductionPurchase: hasProductionLocalPurchase)
     }
@@ -75,7 +113,7 @@ enum SandboxRefundPolicy {
     @ObservationIgnored private var listener: Task<Void, Never>?
 
     init(salesEnabled: Bool = false, cloudVerifier: CloudVerifier? = nil, cloudPurchasePreflight: CloudPurchasePreflight? = nil,
-         sandboxOnly: Bool = BillingReleaseConfiguration.sandboxAcceptanceBuild) {
+         sandboxOnly: Bool = BillingReleaseConfiguration.sandboxOnlyBuild) {
         self.salesEnabled = salesEnabled
         self.cloudVerifier = cloudVerifier
         self.cloudPurchasePreflight = cloudPurchasePreflight
@@ -92,9 +130,12 @@ enum SandboxRefundPolicy {
             listener = Task { [weak self] in
                 for await result in Transaction.updates {
                     guard let self else { return }
-                    if case .verified(let transaction) = result,
-                       StoreProductCatalog.isCloud(transaction.productID),
-                       (transaction.appAccountToken != self.accountID || self.cloudVerifier == nil) { continue }
+                    if case .verified(let transaction) = result {
+                        guard BillingReleaseConfiguration.permitsReviewProduct(transaction.productID,
+                            verifiedSandbox: transaction.environment == .sandbox) else { continue }
+                        if StoreProductCatalog.isCloud(transaction.productID),
+                           transaction.appAccountToken != self.accountID || self.cloudVerifier == nil { continue }
+                    }
                     // Pending cloud transactions remain unfinished until server validation succeeds.
                     do { try await self.deliver(result) } catch { self.message = error.localizedDescription }
                     await self.refreshLocalEntitlement()
@@ -113,9 +154,10 @@ enum SandboxRefundPolicy {
 
     func canPurchase(_ product: Product) -> Bool {
         salesEnabled && StoreProductCatalog.all.contains(product.id)
+            && BillingReleaseConfiguration.permitsReviewProduct(product.id, verifiedSandbox: sandboxReviewVerified)
             && (product.id != StoreProductCatalog.local || LegacyLocalAccessPolicy.allowsLocalPurchase(
                 decision: legacyLocalDecision, hasPurchase: hasLocalPurchase,
-                cutoverConfigured: BillingReleaseConfiguration.firstPaidLocalBuild != nil))
+                cutoverConfigured: BillingReleaseConfiguration.firstPaidLocalBuild != nil && !sandboxReviewVerified))
             && (!StoreProductCatalog.isCloud(product.id) || (cloudVerifier != nil && cloudPurchasePreflight != nil && accountID != nil))
     }
 
@@ -207,18 +249,24 @@ enum SandboxRefundPolicy {
             var restoredCloud = false
             var cloudNeedsConfiguration = false
             for await result in Transaction.currentEntitlements {
-                guard case .verified(let transaction) = result else { continue }
+                guard case .verified(let transaction) = result,
+                      BillingReleaseConfiguration.permitsReviewProduct(transaction.productID,
+                        verifiedSandbox: transaction.environment == .sandbox) else { continue }
                 if StoreProductCatalog.isCloud(transaction.productID), cloudVerifier == nil || accountID == nil {
                     cloudNeedsConfiguration = true
                 }
                 if StoreProductCatalog.isCloud(transaction.productID), cloudVerifier != nil,
                    let accountID, transaction.appAccountToken == accountID {
-                    try await deliver(result); restoredCloud = true
+                    try await deliver(result)
+                    if StoreProductCatalog.isActive(productID: transaction.productID,
+                        revokedAt: transaction.revocationDate, expiresAt: transaction.expirationDate,
+                        upgraded: transaction.isUpgraded) { restoredCloud = true }
                 }
             }
             await refreshLocalEntitlement()
             await refreshLegacyLocalEvidence()
-            if hasLocalPurchase || legacyLocalDecision.grantsLegacyLocalAccess || restoredCloud {
+            let restoredLocal = accountID == nil && (hasLocalPurchase || legacyLocalDecision.grantsLegacyLocalAccess)
+            if restoredLocal || restoredCloud {
                 message = AppLocalization.text("已恢复可用的购买权益。")
             } else if cloudNeedsConfiguration {
                 message = AppLocalization.text("未找到可恢复的购买。云端订阅恢复需完成账号和服务端验证配置。")
@@ -243,29 +291,56 @@ enum SandboxRefundPolicy {
     private func refreshLocalEntitlement() async {
         var active = false
         var productionActive = false
+        var sandboxActive = false
         for await result in Transaction.currentEntitlements {
             guard case .verified(let transaction) = result, transaction.productID == StoreProductCatalog.local,
                   StoreProductCatalog.isActive(productID: transaction.productID, revokedAt: transaction.revocationDate,
                                                expiresAt: transaction.expirationDate, upgraded: transaction.isUpgraded) else { continue }
             if BillingReleaseConfiguration.permits(environment: transaction.environment, sandboxOnly: sandboxOnly) { active = true }
             if transaction.environment == .production { productionActive = true }
+            if transaction.environment == .sandbox { sandboxActive = true }
         }
-        hasLocalPurchase = active
+        sandboxReviewVerified = false
+        if BillingReleaseConfiguration.reviewBuild || BillingReleaseConfiguration.paidReleaseBuild {
+            sandboxReviewVerified = await LegacyLocalAccessReader.hasVerifiedSandboxApp(
+                expectedBundleID: "com.yunshengtech.travelmanager")
+        }
+        hasSandboxReviewPurchase = sandboxReviewVerified && sandboxActive
+        if BillingReleaseConfiguration.localReviewBuild || (BillingReleaseConfiguration.paidReleaseBuild && sandboxReviewVerified) {
+            hasLocalPurchase = hasSandboxReviewPurchase
+        } else {
+            hasLocalPurchase = BillingReleaseConfiguration.paidReleaseBuild ? productionActive : active
+        }
         hasProductionLocalPurchase = productionActive
     }
 
     private func checkStoreEnvironment() async throws {
-        guard sandboxOnly else { return }
-        guard case .verified(let app) = try await AppTransaction.shared,
-              BillingReleaseConfiguration.permits(environment: app.environment, sandboxOnly: true) else {
-            throw PurchaseFailure.sandboxRequired
+        if BillingReleaseConfiguration.paidReleaseBuild {
+            _ = try await Self.verifiedPaidEnvironment()
+        } else if sandboxOnly || BillingReleaseConfiguration.reviewBuild {
+            guard case .verified(let app) = try await AppTransaction.shared,
+                  app.bundleID == Bundle.main.bundleIdentifier, app.environment == .sandbox else {
+                throw PurchaseFailure.sandboxRequired
+            }
         }
+    }
+
+    static func verifiedPaidEnvironment() async throws -> AppStore.Environment {
+        guard case .verified(let app) = try await AppTransaction.shared,
+              app.bundleID == "com.yunshengtech.travelmanager",
+              app.bundleID == Bundle.main.bundleIdentifier,
+              app.environment == .production || app.environment == .sandbox else {
+            throw PurchaseFailure.unverified
+        }
+        return app.environment
     }
 
     private func retryUnfinishedTransactions() async {
         for await result in Transaction.unfinished {
             guard case .verified(let transaction) = result,
-                  StoreProductCatalog.all.contains(transaction.productID) else { continue }
+                  StoreProductCatalog.all.contains(transaction.productID),
+                  BillingReleaseConfiguration.permitsReviewProduct(transaction.productID,
+                    verifiedSandbox: transaction.environment == .sandbox) else { continue }
             if StoreProductCatalog.isCloud(transaction.productID) {
                 guard cloudVerifier != nil, let accountID, transaction.appAccountToken == accountID else { continue }
             }
@@ -276,6 +351,15 @@ enum SandboxRefundPolicy {
 
     private func deliver(_ result: VerificationResult<Transaction>) async throws {
         guard case .verified(let transaction) = result else { throw PurchaseFailure.unverified }
+        if BillingReleaseConfiguration.paidReleaseBuild {
+            let environment = try await Self.verifiedPaidEnvironment()
+            guard transaction.environment == environment else { throw PurchaseFailure.unverified }
+        }
+        if BillingReleaseConfiguration.reviewBuild {
+            try await checkStoreEnvironment()
+            guard BillingReleaseConfiguration.permitsReviewProduct(transaction.productID,
+                verifiedSandbox: transaction.environment == .sandbox) else { throw PurchaseFailure.sandboxRequired }
+        }
         guard BillingReleaseConfiguration.permits(environment: transaction.environment, sandboxOnly: sandboxOnly) else {
             throw PurchaseFailure.sandboxRequired
         }

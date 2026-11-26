@@ -1,3 +1,4 @@
 "CFBundleDisplayName" = "여행 관리자";
 "CFBundleName" = "여행 관리자";
 "NSLocationWhenInUseUsageDescription" = "앱 사용 중 현재 주소를 입력하고 주변 장소를 추천하기 위해 위치 정보를 사용합니다.";
+"NSFaceIDUsageDescription" = "이 기기에서 Face ID를 켠 Trip Manager 계정에 안전하게 로그인합니다.";

@@ -80,6 +80,10 @@ export function purchaseHandler(context) {
       const { data, error } = await deps.auth.auth.getUser(match[1]);
       if (error || !data?.user?.id) return reply(401, { error: 'AUTH_REQUIRED' });
       const body = await readJSON(request, 70000);
+      if (body.action === 'preflight') {
+        if (typeof deps.purchaseAvailability !== 'function') throw Error('BILLING_DISABLED');
+        return reply(200, await deps.purchaseAvailability(body.environment, data.user.id));
+      }
       const result = await verifyPurchase({ signedTransaction: body.signedTransaction, ownerID: data.user.id },
         deps.forPayload ? deps.forPayload(body.signedTransaction, false) : deps);
       return reply(200, result);

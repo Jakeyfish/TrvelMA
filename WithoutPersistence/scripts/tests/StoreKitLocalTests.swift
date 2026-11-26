@@ -203,10 +203,21 @@ extension StoreKitLocalIntegrationTests {
         _ = try await session.buyProduct(identifier: StoreProductCatalog.monthly, options: [.appAccountToken(UUID())])
         _ = try await session.buyProduct(identifier: StoreProductCatalog.local)
         let store = StorePurchaseManager(cloudVerifier: { _, _ in XCTFail("Foreign account must never be delivered") })
-        await store.load(accountID: UUID())
+        await store.load()
         await store.restore()
         XCTAssertTrue(store.hasLocalPurchase)
         XCTAssertEqual(store.message, AppLocalization.text("已恢复可用的购买权益。"))
+    }
+
+    @MainActor func testLocalPurchaseAloneDoesNotReportCloudRestoreSuccess() async throws {
+        let session = try session()
+        defer { session.clearTransactions() }
+        _ = try await session.buyProduct(identifier: StoreProductCatalog.local)
+        let store = StorePurchaseManager(cloudVerifier: { _, _ in XCTFail("Local purchase must not be sent to the cloud") })
+        await store.load(accountID: UUID())
+        await store.restore()
+        XCTAssertTrue(store.hasLocalPurchase)
+        XCTAssertEqual(store.message, AppLocalization.text("未找到可恢复的有效购买。订阅可能已到期或退款。"))
     }
 
     @MainActor func testClientPurchaseFlowGrantsLocalEntitlement() async throws {

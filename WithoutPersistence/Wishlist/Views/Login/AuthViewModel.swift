@@ -1,4 +1,5 @@
 import Foundation
+import StoreKit
 import Observation
 import Security
 import SwiftData
@@ -299,7 +300,7 @@ final class AuthViewModel {
             throw SupabaseAuthClient.AuthError.message(AppLocalization.text("请重新登录后购买或恢复购买。"))
         }
         let account = try await SupabaseAuthClient.fetchPurchaseAccount(accessToken: token)
-        if BillingReleaseConfiguration.sandboxAcceptanceBuild,
+        if BillingReleaseConfiguration.sandboxAcceptanceBuild || BillingReleaseConfiguration.cloudReviewBuild,
            !BillingReleaseConfiguration.sandboxOwnerIDs.contains(account.id) {
             throw SupabaseAuthClient.AuthError.message(AppLocalization.text("此测试版本仅限开发测试账号使用。"))
         }
@@ -330,6 +331,14 @@ final class AuthViewModel {
                   current.id == expectedID, Self.normalize(current.email) == email,
                   case .granted(let entitlement) = grant, entitlement.status != .revoked else {
                 throw SupabaseAuthClient.AuthError.message(AppLocalization.text("购买签名未通过验证，没有变更权限。"))
+            }
+            if BillingReleaseConfiguration.paidReleaseBuild {
+                let environment = try await StorePurchaseManager.verifiedPaidEnvironment()
+                try await SupabaseAuthClient.checkCloudStorePurchaseAvailability(accessToken: token,
+                    environment: environment == .sandbox ? "Sandbox" : "Production")
+                guard self.isCloudAccount, Self.normalize(self.currentEmail) == email else {
+                    throw SupabaseAuthClient.AuthError.message(AppLocalization.text("购买暂未开放。"))
+                }
             }
         })
         await store.load(accountID: account.id)
@@ -497,6 +506,7 @@ final class AuthViewModel {
         guard PasswordKeychain.save(newPassword, for: normalizedEmail) else {
             return Self.localized("无法安全更新密码，请检查设备钥匙串状态。")
         }
+        RememberedLogins.disableBiometrics(.init(email: normalizedEmail, isCloud: false))
         account.updatedAt = .now
         do {
             try context.save()
@@ -627,8 +637,7 @@ final class AuthViewModel {
 
         PasswordKeychain.delete(for: email)
         logout()
-        UserDefaults.standard.removeObject(forKey: "auth.rememberEmail")
-        UserDefaults.standard.removeObject(forKey: "auth.rememberedEmail")
+        RememberedLogins.forget(.init(email: email, isCloud: false))
         AccountAssetStore.removeLocalAssets(email: email)
         clearLocalCaches()
     }

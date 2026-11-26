@@ -1287,7 +1287,7 @@ struct TripDeteilSection: View {
             addressPicker(for: $0)
         }
         .sheet(isPresented: $isChoosingFlight) {
-            FlightCandidatePicker(candidates: flightCandidates, onSelect: selectFlight)
+            FlightCandidatePicker(flightNumber: formData.flightInfo, flightDate: formData.flightdate, candidates: flightCandidates, onSelect: selectFlight)
         }
         .onChange(of: focusedAddressField) { _, target in
             guard let target else {

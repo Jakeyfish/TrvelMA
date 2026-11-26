@@ -7,6 +7,11 @@ import Foundation
             precondition(condition(), name)
             checks += 1
         }
+        check(LegacyLocalAccessPolicy.validPaidCutover("18", currentBuild: "18"), "First paid build can equal the cutoff")
+        check(LegacyLocalAccessPolicy.validPaidCutover("18", currentBuild: "20"), "Later builds keep the original cutoff")
+        check(!LegacyLocalAccessPolicy.validPaidCutover("18", currentBuild: "16"), "Cutoff cannot precede its release")
+        check(!LegacyLocalAccessPolicy.validPaidCutover("", currentBuild: "18"), "Missing cutover cannot activate")
+        check(!LegacyLocalAccessPolicy.validPaidCutover("0", currentBuild: "18"), "A zero cutoff cannot activate")
         let bundle = "com.yunshengtech.travelmanager"
         func evidence(_ build: String = "11", _ environment: LegacyLocalAccessEvidence.Environment = .production, _ id: String? = nil) -> LegacyLocalAccessEvidence {
             .init(bundleID: id ?? bundle, originalBuild: build, originalPurchaseDate: Date(timeIntervalSince1970: 1_375_340_400), environment: environment)
@@ -54,6 +59,33 @@ import Foundation
                 }
             }
         }
+        // Observed production originals on the old and newly acquired Apple accounts.
+        // Build 18 is a fixture boundary and does not configure the release.
+        let simulatedCutover = "18"
+        let routingCases: [(String, LegacyLocalAccessEvidence?, Bool, LegacyLocalAccessPolicy.WorkspaceAccess)] = [
+            ("Original launch build remains editable", evidence("11"), false, .editable),
+            ("Last verified free build remains editable", evidence("16"), false, .editable),
+            ("Any build below the hypothetical boundary remains eligible", evidence("17"), false, .editable),
+            ("First paid build offers purchase", evidence("18"), false, .readOnlyNeedsPurchase),
+            ("First paid build restores editing after buyout", evidence("18"), true, .editable),
+            ("Missing evidence offers verification", nil, false, .readOnlyNeedsVerification),
+            ("Sandbox 16 cannot substitute for production", evidence("16", .sandbox), false, .readOnlyNeedsVerification),
+        ]
+        for (name, proof, purchased, expected) in routingCases {
+            let result = decision(proof, simulatedCutover)
+            check(LegacyLocalAccessPolicy.workspaceAccess(enforcementEnabled: true,
+                decision: result, hasProductionPurchase: purchased) == expected, name)
+            check(LegacyLocalAccessPolicy.allowsLocalPurchase(decision: result, hasPurchase: purchased,
+                cutoverConfigured: true) == expected.allowsPurchase, name + " (purchase manager)")
+        }
+        check(LegacyLocalAccessPolicy.sandboxReviewAccess(enabled: false, verifiedSandboxApp: true,
+            hasVerifiedSandboxPurchase: true) == nil, "Ordinary builds ignore sandbox review evidence")
+        check(LegacyLocalAccessPolicy.sandboxReviewAccess(enabled: true, verifiedSandboxApp: false,
+            hasVerifiedSandboxPurchase: true) == .readOnlyNeedsVerification, "A sandbox transaction cannot unlock a non-sandbox app")
+        check(LegacyLocalAccessPolicy.sandboxReviewAccess(enabled: true, verifiedSandboxApp: true,
+            hasVerifiedSandboxPurchase: false) == .readOnlyNeedsPurchase, "Review sandbox offers the local buyout")
+        check(LegacyLocalAccessPolicy.sandboxReviewAccess(enabled: true, verifiedSandboxApp: true,
+            hasVerifiedSandboxPurchase: true) == .editable, "Verified review sandbox buyout unlocks editing")
         print("PASS: \(checks) legacy local policy checks; synthetic evidence only")
     }
 }
