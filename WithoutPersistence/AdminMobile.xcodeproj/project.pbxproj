@@ -1,0 +1,24 @@
+// !$*UTF8*$!
+{
+ archiveVersion = 1;
+ classes = {};
+ objectVersion = 77;
+ objects = {
+  A00000000000000000000001 = {isa = PBXProject; attributes = {LastUpgradeCheck = 2700;}; buildConfigurationList = A00000000000000000000009; compatibilityVersion = "Xcode 16.0"; developmentRegion = "zh-Hans"; knownRegions = ("zh-Hans", Base); mainGroup = A00000000000000000000002; productRefGroup = A00000000000000000000003; projectDirPath = ""; projectRoot = ""; targets = (A00000000000000000000005);};
+  A00000000000000000000002 = {isa = PBXGroup; children = (A00000000000000000000004, A00000000000000000000003); sourceTree = "<group>";};
+  A00000000000000000000003 = {isa = PBXGroup; children = (A00000000000000000000006); name = Products; sourceTree = "<group>";};
+  A00000000000000000000004 = {isa = PBXFileSystemSynchronizedRootGroup; path = AdminMobile; sourceTree = "<group>";};
+  A00000000000000000000005 = {isa = PBXNativeTarget; buildConfigurationList = A0000000000000000000000A; buildPhases = (A00000000000000000000007, A00000000000000000000008); buildRules = (); dependencies = (); fileSystemSynchronizedGroups = (A00000000000000000000004); name = AdminMobile; productName = AdminMobile; productReference = A00000000000000000000006; productType = "com.apple.product-type.application";};
+  A00000000000000000000006 = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = AdminMobile.app; sourceTree = BUILT_PRODUCTS_DIR;};
+  A00000000000000000000007 = {isa = PBXSourcesBuildPhase; buildActionMask = 2147483647; files = (); runOnlyForDeploymentPostprocessing = 0;};
+  A00000000000000000000008 = {isa = PBXResourcesBuildPhase; buildActionMask = 2147483647; files = (); runOnlyForDeploymentPostprocessing = 0;};
+  A00000000000000000000009 = {isa = XCConfigurationList; buildConfigurations = (A0000000000000000000000B, A0000000000000000000000C); defaultConfigurationIsVisible = 0; defaultConfigurationName = Release;};
+  A0000000000000000000000A = {isa = XCConfigurationList; buildConfigurations = (A0000000000000000000000D, A0000000000000000000000E); defaultConfigurationIsVisible = 0; defaultConfigurationName = Release;};
+  A0000000000000000000000B = {isa = XCBuildConfiguration; buildSettings = {SDKROOT = iphoneos; IPHONEOS_DEPLOYMENT_TARGET = 17.0; SWIFT_VERSION = 5.0; SWIFT_OPTIMIZATION_LEVEL = "-Onone";}; name = Debug;};
+  A0000000000000000000000C = {isa = XCBuildConfiguration; buildSettings = {SDKROOT = iphoneos; IPHONEOS_DEPLOYMENT_TARGET = 17.0; SWIFT_VERSION = 5.0; SWIFT_COMPILATION_MODE = wholemodule;}; name = Release;};
+  A0000000000000000000000D = {isa = XCBuildConfiguration; baseConfigurationReference = A0000000000000000000000F; buildSettings = {}; name = Debug;};
+  A0000000000000000000000E = {isa = XCBuildConfiguration; baseConfigurationReference = A0000000000000000000000F; buildSettings = {}; name = Release;};
+  A0000000000000000000000F = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = AdminMobile.xcconfig; sourceTree = SOURCE_ROOT;};
+ };
+ rootObject = A00000000000000000000001;
+}

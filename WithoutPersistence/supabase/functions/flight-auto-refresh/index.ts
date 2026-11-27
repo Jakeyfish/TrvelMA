@@ -1,7 +1,7 @@
 import { deliverFlightPush } from "./push.ts";
 import { createClient } from "npm:@supabase/supabase-js@2";
 import { queryVariFlight } from "../_shared/variflight-provider.ts";
-import { selectFlightUpdate } from "./selection.mjs";
+import { lookupAutomaticFlight } from "./lookup.mjs";
 
 type FlightAutoJob = {
   owner_id: string;
@@ -42,20 +42,17 @@ Deno.serve(async (request) => {
   const results = await Promise.all(jobs.map(async ({job, departure}) => {
     const checkedAt = new Date().toISOString();
     let update = null;
+    let lookupFailed = false;
     try {
-      const { data: allowed, error: quotaError } = await supabase.rpc("consume_variflight_quota_for", { p_owner: job.owner_id });
-      if (quotaError) throw quotaError;
-      if (allowed) {
-        const { data: admitted, error: admissionError } = await supabase.rpc("admit_flight_auto_attempt", {
-          p_lease: job.lease_id, p_departure: departure
-        });
-        if (admissionError) throw admissionError;
-        if (admitted) {
-          const upstream = await queryVariFlight(providerKey, job.flight_number, job.departure_date, job.departure, job.arrival);
-          if (upstream.ok) update = selectFlightUpdate(await upstream.text(), job);
-        }
-      }
+      update = await lookupAutomaticFlight({
+        rpc: (name: string, args: Record<string, unknown>) => supabase.rpc(name, args),
+        query: () => queryVariFlight(providerKey, job.flight_number, job.departure_date, job.departure, job.arrival),
+        charge: Deno.env.get("FLIGHT_BEANS_ENFORCED") === "true",
+        job,
+        departure,
+      });
     } catch {
+      lookupFailed = true;
       console.error("Automatic flight lookup failed");
     }
 
@@ -65,7 +62,7 @@ Deno.serve(async (request) => {
       : await supabase.rpc("finish_flight_auto_job", {...result,
         p_state: update?.state ?? (job.stage === 1 ? "tracking" : "unconfirmed")});
     if (finishError) console.error("Unable to persist automatic flight check", finishError.code);
-    return !finishError;
+    return !finishError && !lookupFailed;
   }));
   try { await deliverFlightPush(supabase); }
   catch { console.error("Flight push is unavailable"); }

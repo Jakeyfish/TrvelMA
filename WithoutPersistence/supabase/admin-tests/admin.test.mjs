@@ -1,3 +1,4 @@
+import {lookupAutomaticFlight} from '../functions/flight-auto-refresh/lookup.mjs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {readFile} from 'node:fs/promises';
@@ -44,6 +45,71 @@ await test('admin backend isolation and atomic mutation regression',async t=>{
  await t.test('delayed verified Apple event preserves later manual grant',async()=>{const event={owner_id:ids.ordinary,environment:'Sandbox',transaction_id:'qa-t1',original_transaction_id:'qa-o1',product_id:'com.yunshengtech.travelmanager.cloud.monthly',purchased_at:'2026-11-01T00:00:00Z',expires_at:'2027-01-01T00:00:00Z',signed_at:'2026-11-11T00:00:00Z',revoked_at:null,upgraded:false,grace_expires_at:null};await db.query('select public.apply_verified_storekit_event($1)',[JSON.stringify(event)]);const grant=(await db.query('select * from public.account_entitlements where owner_id=$1',[ids.ordinary])).rows[0];assert.equal(grant.max_devices,5);assert.equal(new Date(grant.expires_at).getUTCFullYear(),2035);});
  await t.test('audit insertion failure rolls back the actual entitlement mutation',async()=>{const before=(await db.query('select * from public.account_entitlements where owner_id=$1',[ids.ordinary])).rows[0];await db.exec(`create function admin_private.reject_audit() returns trigger language plpgsql as $$begin raise exception 'AUDIT_WRITE_FAILED';end$$;create trigger fail_audit before insert on admin_private.audit for each row execute function admin_private.reject_audit();`);await denied('select public.admin_set_entitlement($1,$2,$3,$4,$5,$6,$7,$8,$9)',['trvelma-production',ids.ordinary,before.updated_at,'cloud','revoked',null,5,'40000000-0000-4000-8000-000000000004','隔离失败回滚'],/AUDIT_WRITE_FAILED/);assert.deepEqual((await db.query('select * from public.account_entitlements where owner_id=$1',[ids.ordinary])).rows[0],before);await db.exec('drop trigger fail_audit on admin_private.audit;drop function admin_private.reject_audit()');});
  await t.test('expired active grant is reported effectively expired',async()=>{await db.query("update public.account_entitlements set status='active',expires_at=now()-interval '1 day' where owner_id=$1",[ids.ordinary]);const data=(await db.query("select public.admin_users('trvelma-production','ordinary') as value")).rows[0].value;assert.equal(data.users[0].effective_status,'expired');});
+ await t.test('admin pricing applies to both refresh paths and preserves in-flight reservations', async () => {
+  const app = 'trvelma-production';
+  const owner = ids.ordinary;
+  const balance = async () => (await db.query(
+   'select coalesce(sum(amount),0)::int as amount from public.flight_bean_entries where owner_id=$1', [owner]
+  )).rows[0].amount;
+  const reserve = async hold => (await db.query(
+   'select public.reserve_flight_bean($1,$2) as held', [owner,hold]
+  )).rows[0].held;
+  const settle = async (hold, charge) => db.query('select public.finish_flight_bean($1,$2,$3)', [owner,hold,charge]);
+  for (const file of ['202611260001_flight_beans.sql','202611270001_shared_flight_bean_wallet.sql']) {
+   await db.exec(await readFile(new URL('../migrations/'+file,import.meta.url),'utf8'));
+   if (file === '202611260001_flight_beans.sql') {
+    await db.query("insert into public.flight_bean_entries(owner_id,event_key,kind,amount) values($1,'qa:shared-wallet','subscription',10)",[owner]);
+    assert.equal(await reserve(ids.device),true);
+   }
+  }
+  await settle(ids.device,true);
+  assert.equal(await balance(),9,'pre-migration reservation settles at its original price');
+  const getSQL = 'select public.admin_flight_bean_policy($1) as value';
+  const setSQL = 'select public.admin_set_flight_bean_policy($1,$2,$3,$4,$5) as value';
+  await claims();
+  const original = (await db.query(getSQL,[app])).rows[0].value;
+  assert.equal(original.cost,2);
+  const args = [app,3,original.updated_at,crypto.randomUUID(),'调整测试费率'];
+  await claims(ids.ordinary);
+  await denied(setSQL,args);
+  await claims(ids.admin,'aal2',false);
+  await denied(setSQL,args,/RECENT_MFA/);
+  await claims();
+  await denied(setSQL,[app,0,...args.slice(2)],/INVALID_FLIGHT_BEAN_COST/);
+
+  const manualHold = crypto.randomUUID();
+  assert.equal(await reserve(manualHold),true);
+  const saved = (await db.query(setSQL,args)).rows[0].value;
+  assert.equal(saved.cost,3);
+  assert.deepEqual((await db.query(setSQL,args)).rows[0].value,saved);
+  await denied(setSQL,[...args.slice(0,3),crypto.randomUUID(),args[4]],/POLICY_CHANGED_REFRESH/);
+  assert.equal((await db.query("select count(*)::int as count from admin_private.audit where action='set_flight_bean_policy'")).rows[0].count,1);
+
+  const rpc = async (name, params) => {
+   if (name === 'reserve_flight_bean') return {data:await reserve(params.p_hold)};
+   if (name === 'finish_flight_bean') return {data:(await settle(params.p_hold,params.p_charge)).rows[0].finish_flight_bean};
+   assert.ok(['consume_variflight_quota_for','admit_flight_auto_attempt'].includes(name));
+   return {data:true};
+  };
+  const query = async () => Response.json([{flightNumber:'JX2',departureAirportCode:'TPE',arrivalAirportCode:'LAX',status:'landed'}]);
+  const auto = (provider=query, departure=false) => lookupAutomaticFlight({
+   rpc, query:provider, charge:true, departure,
+   job:{owner_id:owner,lease_id:crypto.randomUUID(),flight_number:'JX2',departure:'TPE',arrival:'LAX'}
+  });
+  assert.equal((await auto()).state,'landed');
+  assert.equal(await balance(),6);
+  assert.equal(await auto(async () => new Response(null,{status:503}),true),null);
+  assert.equal(await balance(),6);
+  await settle(manualHold,true);
+  await settle(manualHold,true);
+  assert.equal(await balance(),4,'manual hold settles once at the previous price');
+  const lastHold = crypto.randomUUID();
+  assert.equal(await reserve(lastHold),true);
+  assert.equal(await auto(() => assert.fail('remaining available balance cannot pay for the provider')),null);
+  await settle(lastHold,false);
+  assert.equal((await auto(query,true)).state,'landed');
+  assert.equal(await balance(),1);
+ });
  await t.test('emergency disable preserves audit and revokes authenticated RPC execution',async()=>{const before=(await db.query('select count(*)::int as n from admin_private.audit')).rows[0].n;await db.exec(await readFile(new URL('../verification/20261111_admin_disable.sql',import.meta.url),'utf8'));await db.exec('set role authenticated');await assert.rejects(()=>db.exec('select public.admin_context()'),/permission denied/);await db.exec('reset role');assert.equal((await db.query('select count(*)::int as n from admin_private.audit')).rows[0].n,before);});
  await db.close();
 });
