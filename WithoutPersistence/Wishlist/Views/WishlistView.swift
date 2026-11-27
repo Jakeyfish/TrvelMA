@@ -9,6 +9,7 @@ import SwiftUI
 import SwiftData
 import UserNotifications
 import CoreLocation
+import Combine
 
 /// The main wishlist view displaying trip-related content.
 ///
@@ -27,6 +28,40 @@ struct WishlistView: View {
     @State private var isPresentingSettings = false
     @State private var isPerson = false
     @State private var pendingPurchasePlans = false
+    @Environment(\.scenePhase) private var scenePhase
+    @State private var showsBeanWallet = false
+    @State private var beanBalance: Int?
+    @State private var beanOwner: String?
+    @State private var beanRefresh = 0
+
+    private var showsCloudBeans: Bool {
+        BillingReleaseConfiguration.salesEnabled && auth.isCloudAccount
+    }
+
+    private var beanBadge: some View {
+        Button {
+            showsBeanWallet = true
+        } label: {
+            HStack(spacing: 4) {
+                SilverBeanIcon()
+                    .scaleEffect(0.65)
+                    .frame(width: 14, height: 13)
+                if beanOwner == auth.currentEmail, let beanBalance {
+                    Text(beanBalance, format: .number)
+                } else {
+                    Text(verbatim: "—")
+                }
+            }
+            .font(.system(size: 10, weight: .semibold).monospacedDigit())
+            .padding(.vertical, 2)
+            .fixedSize()
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("云豆余额")
+        .accessibilityValue(beanOwner == auth.currentEmail ? beanBalance?.formatted() ?? "—" : "—")
+        .accessibilityHint("邀请赚云豆")
+    }
 
     /// The namespace used for coordinating a navigation transition.
     @Namespace private var namespace
@@ -103,12 +138,20 @@ struct WishlistView: View {
                                             Text(days > 0 ? AppLocalization.format("剩余 %ld 天", days) : AppLocalization.text("已到期"))
                                                 .font(.system(size: 10, weight: .semibold))
                                                 .foregroundStyle(.red)
+                                                .lineLimit(1)
                                                 .help(AppLocalization.format("到期：%@", end.formatted(Date.FormatStyle(date: .numeric, time: .shortened).locale(AppLanguageSettings.currentLocale))))
                                                 .accessibilityLabel(AppLocalization.format("剩余 %ld 天，到期：%@", days, end.formatted(Date.FormatStyle(date: .numeric, time: .shortened).locale(AppLanguageSettings.currentLocale))))
                                         }
                                     }
                                 }
+
+                                if showsCloudBeans {
+                                    Spacer(minLength: 4)
+                                    beanBadge
+                                        .layoutPriority(1)
+                                }
                             }
+                            .frame(width: showsCloudBeans ? accountEmailWidth : nil, alignment: .leading)
 
                             HStack(spacing: 4) {
                                 Image(systemName: "envelope.fill")
@@ -119,11 +162,12 @@ struct WishlistView: View {
                                     .truncationMode(.middle)
                             }
                             .foregroundStyle(.secondary)
+                            .accessibilityElement(children: .combine)
                             .frame(width: accountEmailWidth, alignment: .leading)
                         }
                     }
                     .fixedSize(horizontal: true, vertical: false)
-                    .accessibilityElement(children: .combine)
+                    .accessibilityElement(children: showsCloudBeans ? .contain : .combine)
                 }
 
                 ToolbarItemGroup(placement: .topBarTrailing) {
@@ -174,6 +218,34 @@ struct WishlistView: View {
                 })
             }
 
+            .sheet(isPresented: $showsBeanWallet, onDismiss: { beanRefresh += 1 }) {
+                NavigationStack {
+                    FlightBeanWalletView()
+                        .toolbar {
+                            ToolbarItem(placement: .cancellationAction) {
+                                Button("关闭") { showsBeanWallet = false }
+                            }
+                        }
+                }
+                .id(auth.currentEmail)
+            }
+            .onChange(of: auth.currentEmail) {
+                showsBeanWallet = false
+                beanBalance = nil
+                beanOwner = nil
+            }
+            .onReceive(NotificationCenter.default.publisher(for: .flightBeanBalanceChanged).receive(on: RunLoop.main)) { _ in
+                beanRefresh += 1
+            }
+            .task(id: [auth.currentEmail, String(beanRefresh), String(scenePhase == .active), String(showsCloudBeans)]) {
+                guard showsCloudBeans, scenePhase == .active,
+                      let token = auth.cloudAccessToken else { return }
+                let owner = auth.currentEmail
+                let wallet = try? await SupabaseAuthClient.flightBeanWallet(accessToken: token)
+                guard !Task.isCancelled, auth.currentEmail == owner else { return }
+                beanOwner = owner
+                beanBalance = wallet?.balance
+            }
             .toolbarTitleDisplayMode(.inline)
             .toolbarRole(.editor)
             .font(.system(size: 12))

@@ -258,3 +258,29 @@ button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible
 .top-actions .connection.offline::before { background: #d65161; box-shadow: 0 0 0 4px #d6516114; }
 @media(max-width:760px) { .top-actions { justify-content: flex-end; width: 100%; } .topbar-user .user-copy { max-width: 155px; } .topbar-user { padding-left: 10px; margin-left: 0; gap: 7px; } }
 @media(max-width:370px) { .topbar-user .user-copy { max-width: 115px; } .top-actions { gap: 5px; } }
+
+.topbar-user .user-name-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.home-bean-badge {
+  display: inline-flex;
+  align-items: center;
+  flex: none;
+  gap: 4px;
+  margin-inline-start: auto;
+  padding: 2px 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  font-size: 11px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  cursor: pointer;
+}
+.home-bean-badge .silver-bean {
+  width: 12px;
+  height: 8px;
+}

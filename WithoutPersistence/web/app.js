@@ -1090,12 +1090,13 @@ function renderApp() {
 
       </aside>
       <main class="main ${state.page === "wallet" ? "finance-main" : ""}">
-        <header class="topbar"><div><h1>${escapeHTML(ui(title))}</h1><p>${escapeHTML(ui(subtitle))}</p></div><div class="top-actions"><span class="connection" role="status" aria-live="polite">${escapeHTML(ui('云端已连接'))}</span><button class="button quiet small top-icon-button" data-action="refresh-data" title="${escapeHTML(ui('刷新'))}" aria-label="${escapeHTML(ui('刷新'))}">${appIcon("arrow.clockwise")}</button><button class="button quiet small top-icon-button" data-action="signout" title="${escapeHTML(ui('退出登录'))}" aria-label="${escapeHTML(ui('退出登录'))}">${appIcon("rectangle.portrait.and.arrow.right")}</button><div class="topbar-user"><span class="avatar">${escapeHTML((state.user?.user_metadata?.salutation || state.user?.email || "云").slice(0, 1))}</span><span class="user-copy"><strong>${escapeHTML(state.user?.user_metadata?.salutation || ui("已登录"))}</strong><small>${escapeHTML(state.user?.email || "")}</small></span></div></div></header>
+        <header class="topbar"><div><h1>${escapeHTML(ui(title))}</h1><p>${escapeHTML(ui(subtitle))}</p></div><div class="top-actions"><span class="connection" role="status" aria-live="polite">${escapeHTML(ui('云端已连接'))}</span><button class="button quiet small top-icon-button" data-action="refresh-data" title="${escapeHTML(ui('刷新'))}" aria-label="${escapeHTML(ui('刷新'))}">${appIcon("arrow.clockwise")}</button><button class="button quiet small top-icon-button" data-action="signout" title="${escapeHTML(ui('退出登录'))}" aria-label="${escapeHTML(ui('退出登录'))}">${appIcon("rectangle.portrait.and.arrow.right")}</button><div class="topbar-user"><span class="avatar">${escapeHTML((state.user?.user_metadata?.salutation || state.user?.email || "云").slice(0, 1))}</span><span class="user-copy"><span class="user-name-row"><strong>${escapeHTML(state.user?.user_metadata?.salutation || ui("已登录"))}</strong>${renderHomeBeanBadge()}</span><small>${escapeHTML(state.user?.email || "")}</small></span></div></div></header>
         <section id="pageContent">${renderPage()}</section>
       </main>
     </div>`;
   renderConnectionStatus();
   positionTripDateStrip();
+  void refreshHomeBeanBadge();
 }
 
 function renderPage() {
@@ -1959,11 +1960,37 @@ const beanEntryLabels = {subscription:"订阅发放",refresh:"航班刷新",refe
   subscription_refund:"退款扣回",referral_refund:"退款扣回"};
 const silverBean = '<span class="silver-bean" aria-hidden="true"></span>';
 
+function renderHomeBeanBadge() {
+  if (!flightBeansVisible || state.page !== "home" || !state.user?.id) return "";
+  return `<button type="button" class="home-bean-badge" data-action="flight-bean-wallet" aria-label="${escapeHTML(ui("邀请赚云豆"))}">
+    ${silverBean}<span data-home-bean-balance>—</span>
+  </button>`;
+}
+
+function showHomeBeanBalance(label, balance) {
+  const value = new Intl.NumberFormat(uiLanguage()).format(balance);
+  label.textContent = value;
+  label.parentElement.setAttribute("aria-label", `${ui("云豆余额")} ${value}，${ui("邀请赚云豆")}`);
+}
+
+async function refreshHomeBeanBadge() {
+  const label = document.querySelector("[data-home-bean-balance]");
+  if (!label) return;
+  try {
+    const wallet = await request("rpc/flight_bean_wallet", {method:"POST", body:{}, queueOffline:false});
+    if (label.isConnected) showHomeBeanBalance(label, wallet.balance);
+  } catch {
+    // The wallet remains available for another attempt through the badge.
+  }
+}
+
 async function openBeanWallet() {
   const owner = state.user?.id, generation = workspaceGeneration;
   if (!owner) return;
   const wallet = await request("rpc/flight_bean_wallet",{method:"POST",body:{},queueOffline:false});
   if (state.user?.id!==owner || generation!==workspaceGeneration) return;
+  const badgeBalance = document.querySelector("[data-home-bean-balance]");
+  if (badgeBalance) showHomeBeanBalance(badgeBalance, wallet.balance);
   const entries = (wallet.entries || []).map(entry => `<li><span>${escapeHTML(ui(beanEntryLabels[entry.kind] || "云豆"))}</span>
     <strong>${entry.amount > 0 ? "+" : ""}${escapeHTML(entry.amount)}</strong><small>${escapeHTML(dateOnly(entry.created_at))}</small></li>`).join("");
   showModal(ui("云豆"),`<section class="form-section"><h3>${silverBean} ${escapeHTML(ui("云豆余额"))} · ${escapeHTML(wallet.balance)}</h3>
@@ -2182,6 +2209,7 @@ async function queryFlights(number, date, airport, forceRefresh) {
     throw Error(message || `航班查询失败（${response.status}），请重试。`);
   }
   let payload; try {payload=JSON.parse(raw);} catch {payload=raw.split(/\n\s*\n/).map(block=>block.split('\n').filter(line=>line.startsWith('data:')).map(line=>line.slice(5).trim()).join('\n')).filter(Boolean);}
+  if (forceRefresh && flightBeansVisible) void refreshHomeBeanBadge();
   const candidates = parseFlights(payload);
   await airportCrosswalkReady;
   if(state.user?.id!==ownerID || workspaceGeneration!==generation)throw Error('账号会话已变化，已忽略旧航班结果。');

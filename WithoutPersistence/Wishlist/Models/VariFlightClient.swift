@@ -401,6 +401,9 @@ struct VariFlightClient {
             }
             throw VariFlightClientError.requestFailed(message)
         }
+        if forceRefresh && BillingReleaseConfiguration.salesEnabled {
+            NotificationCenter.default.post(name: .flightBeanBalanceChanged, object: nil)
+        }
         return (try decodeMCPBody(data), responseSessionID)
     }
 
@@ -1006,4 +1009,8 @@ struct VariFlightClient {
     private func normalizedKey(_ key: String) -> String {
         key.lowercased().filter { $0.isLetter || $0.isNumber }
     }
+}
+
+extension Notification.Name {
+    static let flightBeanBalanceChanged = Notification.Name("flightBeanBalanceChanged")
 }
